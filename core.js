@@ -2,26 +2,40 @@ import {
   PROGRAMS,
   VERSION,
   DETAIL_RULES,
-  WEAPON_FAMILY,
+  NON_SAR,
   isCS,
   profileFor,
-  stages,
+  weaponsFor,
+  weaponGroup,
+  typeLabel,
 } from "./profiles.js";
 export const uid = () => crypto.randomUUID();
 export const now = () => new Date().toISOString();
+export const typeKey = (program, variant = "standard") =>
+  program === "APS" ? `APS:${variant}` : program;
 export function newStore() {
   return {
-    schema: 2,
+    schema: 3,
     enabled: [],
     active: null,
-    aps: "standard",
-    shoots: {},
-    archives: [],
+    presets: {},
+    shoots: [],
   };
 }
-export function newShoot(program, variant = "standard") {
+export function preset(store, program, variant = "standard") {
+  return (store.presets[typeKey(program, variant)] ??= {
+    weapon: weaponsFor(program, variant)[0],
+    objective: "marksman",
+    targets: {},
+  });
+}
+export function newShoot(program, variant = "standard", name = "") {
+  const weapon = weaponsFor(program, variant)[0];
+  if (!PROGRAMS[program] || !weapon) throw Error("Unknown shoot type.");
   return {
     id: uid(),
+    name: name.trim() || typeLabel(program, variant),
+    createdAt: now(),
     program,
     variant,
     participants: [],
@@ -31,14 +45,79 @@ export function newShoot(program, variant = "standard") {
     drafts: {},
     dispatches: [],
     manualQueue: [],
+    priorities: {},
     audit: [],
     settings: {
-      weapon: "SAR21",
+      weapon,
       objective: "marksman",
       order: "automatic",
       targets: {},
     },
   };
+}
+export function applyPreset(store, s) {
+  const p = preset(store, s.program, s.variant);
+  s.settings.objective = p.objective;
+  s.settings.targets = structuredClone(p.targets);
+  if (!weaponsFor(s.program, s.variant).includes(s.settings.weapon))
+    s.settings.weapon = p.weapon;
+}
+export function applyPresets(store) {
+  for (const s of store.shoots) applyPreset(store, s);
+}
+export function createShoot(store, program, variant = "standard", name = "") {
+  if (!store.enabled.includes(program))
+    throw Error(`Enable ${PROGRAMS[program] || program} in Settings first.`);
+  const s = newShoot(program, variant, name);
+  s.settings.weapon = preset(store, program, variant).weapon;
+  applyPreset(store, s);
+  store.shoots.push(s);
+  store.active = s.id;
+  audit(s, "Shoot created", { program, variant });
+  return s;
+}
+export function getShoot(store, id = store.active) {
+  return store.shoots.find((s) => s.id === id) || null;
+}
+export function enableShoot(store, program, on) {
+  if (!PROGRAMS[program]) throw Error("Unknown shoot.");
+  store.enabled = store.enabled.filter((p) => p !== program);
+  if (on) store.enabled.push(program);
+}
+export const hasScores = (s) => s.attempts.length > 0;
+export function changeShootType(s, program, variant = "standard") {
+  if (hasScores(s))
+    throw Error(
+      "Scores have been recorded. Start a new shoot to use a different type.",
+    );
+  const weapons = weaponsFor(program, variant);
+  if (!PROGRAMS[program] || !weapons.length) throw Error("Unknown shoot type.");
+  const previous = { program: s.program, variant: s.variant },
+    wasCS = isCS(s),
+    oldLabel = typeLabel(s.program, s.variant),
+    pick = (w) => {
+      const group = weaponGroup(program, variant, w);
+      return weapons.includes(group) ? group : weapons[0];
+    };
+  s.program = program;
+  s.variant = variant;
+  s.settings.weapon = pick(s.settings.weapon);
+  for (const p of s.participants) {
+    p.weapon = pick(p.weapon);
+    p.profile = profileFor(program, variant, p.weapon);
+    p.recordId = uid();
+  }
+  if (!isCS(s) || !wasCS) {
+    s.details = [];
+    for (const p of s.participants) p.detailId = null;
+  }
+  s.drafts = {};
+  s.dispatches = [];
+  s.manualQueue = [];
+  s.priorities = {};
+  if (s.name === oldLabel || s.name.startsWith(`${oldLabel} · `))
+    s.name = typeLabel(program, variant) + s.name.slice(oldLabel.length);
+  audit(s, "Shoot type changed", { previous, program, variant });
 }
 export function audit(s, action, data = {}) {
   s.audit.push({
@@ -49,26 +128,10 @@ export function audit(s, action, data = {}) {
     ...data,
   });
 }
-export function shootKey(program, variant = "standard") {
-  return program === "APS" ? `APS:${variant}` : program;
-}
-export function getShoot(store, program = store.active) {
-  if (!program) return null;
-  const variant = program === "APS" ? store.aps : "standard",
-    key = shootKey(program, variant);
-  return (store.shoots[key] ??= newShoot(program, variant));
-}
-export function enableShoot(store, program, on) {
-  if (!PROGRAMS[program]) throw Error("Unknown shoot.");
-  store.enabled = store.enabled.filter((p) => p !== program);
-  if (on) store.enabled.push(program);
-  if (!store.enabled.includes(store.active))
-    store.active = store.enabled[0] || null;
-}
-export function addDetail(s) {
+export function addDetail(s, number) {
   const d = {
     id: uid(),
-    name: `Detail ${Math.max(0, ...s.details.map((d) => Number(d.name.match(/\d+$/)?.[0]) || 0)) + 1}`,
+    name: `Detail ${number ?? Math.max(0, ...s.details.map(detailNumber)) + 1}`,
   };
   s.details.push(d);
   audit(s, "Detail added", { detail: structuredClone(d) });
@@ -77,8 +140,76 @@ export function addDetail(s) {
 export function members(s, detailId) {
   return s.participants.filter((p) => p.detailId === detailId);
 }
+export const detailNumber = (d) => Number(d.name.match(/\d+$/)?.[0]) || 0;
+export function sortedDetails(s) {
+  return s.details.toSorted((a, b) => detailNumber(a) - detailNumber(b));
+}
+export function ensureDetail(s, number) {
+  if (!Number.isInteger(number) || number < 1 || number > 500)
+    throw Error("Detail numbers must be whole numbers from 1.");
+  return (
+    s.details.find((d) => detailNumber(d) === number) ?? addDetail(s, number)
+  );
+}
+// Reads "Name", "Name,2", "Name<tab>2" or "Name 2". Numbers are only read for detailed shoots.
+export function parseRoster(text, detailed) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const m = detailed && line.match(/^(.*?)(?:\s*[,\t;]\s*|\s+)(\d{1,3})$/);
+      return m && m[1].trim()
+        ? { name: m[1].trim(), detail: Number(m[2]) }
+        : { name: line.replace(/[,\t;]+$/, "").trim(), detail: null };
+    });
+}
+export function assignDetail(s, id, number) {
+  const p = s.participants.find((p) => p.id === id);
+  if (!p) throw Error("Participant not found.");
+  if (hasActivity(s, p))
+    throw Error(
+      `${p.name} has recorded scores. Use their ⋯ menu to move them with a reason.`,
+    );
+  if (
+    s.dispatches.some(
+      (d) => d.status === "awaiting" && d.roster.some((m) => m.id === id),
+    )
+  )
+    throw Error(`${p.name} is awaiting scores. Cancel that first.`);
+  const previous = p.detailId,
+    d = ensureDetail(s, number);
+  p.detailId = d.id;
+  for (const [key, draft] of Object.entries(s.drafts))
+    if (
+      [previous, d.id].includes(draft.detailId) &&
+      draft.rows.every((r) => r.hits === "") &&
+      draft.aggregate === ""
+    )
+      delete s.drafts[key];
+  audit(s, "Detail assigned", { participantId: id, detail: d.name });
+}
+// Problems that stop a detailed shoot from being scored.
+export function detailIssues(s) {
+  if (!isCS(s)) return [];
+  const issues = [],
+    unassigned = s.participants.filter((p) => !p.detailId).length,
+    used = sortedDetails(s).filter((d) => members(s, d.id).length),
+    highest = Math.max(0, ...used.map(detailNumber));
+  if (unassigned)
+    issues.push(
+      `${unassigned} ${unassigned === 1 ? "participant needs" : "participants need"} a detail.`,
+    );
+  for (let n = 1; n < highest; n++)
+    if (!used.some((d) => detailNumber(d) === n))
+      issues.push(`Detail ${n} is skipped.`);
+  for (const d of used)
+    for (const e of compositionErrors(s, members(s, d.id)))
+      issues.push(`${d.name}: ${e}`);
+  return issues;
+}
 export function compositionErrors(s, people, { checkMinimum = true } = {}) {
-  const rule = DETAIL_RULES[s.program] || {},
+  const rule = (isCS(s) && DETAIL_RULES[s.program]) || {},
     errors = [];
   if (!people.length) return ["Detail has no participants."];
   if (checkMinimum && rule.min && people.length < rule.min)
@@ -93,9 +224,7 @@ export function compositionErrors(s, people, { checkMinimum = true } = {}) {
     } catch (e) {
       errors.push(e.message);
     }
-  const nonSAR = people.filter(
-    (p) => WEAPON_FAMILY[p.weapon] !== "SAR21",
-  ).length;
+  const nonSAR = people.filter((p) => NON_SAR.has(p.weapon)).length;
   if (rule.nonSAR && nonSAR > rule.nonSAR)
     errors.push(
       `Too many non-SAR21 weapons: ${nonSAR}/${rule.nonSAR} maximum in total.`,
@@ -106,22 +235,31 @@ function upperBounds(s, people) {
   const errors = compositionErrors(s, people, { checkMinimum: false });
   if (errors.length) throw Error(errors.join(" "));
 }
-export function addParticipants(s, names, weapon, detailId) {
-  if (!s.details.some((d) => d.id === detailId))
+export function addParticipants(s, lines, weapon, detailId = null) {
+  const cs = isCS(s);
+  if (detailId && !s.details.some((d) => d.id === detailId))
     throw Error("Choose a detail.");
-  const cleaned = names.map((n) => n.trim()).filter(Boolean);
-  if (!cleaned.length) throw Error("Enter full names, one per line.");
-  if (cleaned.length > 1000)
+  const entries = parseRoster(
+    Array.isArray(lines) ? lines.join("\n") : lines,
+    cs && !detailId,
+  );
+  if (!entries.length) throw Error("Enter full names, one per line.");
+  if (entries.length > 1000)
     throw Error("Add up to 1,000 participants at a time.");
-  const people = cleaned.map((name) => ({
+  profileFor(s.program, s.variant, weapon);
+  for (const e of entries)
+    if (e.detail !== null && (e.detail < 1 || e.detail > 500))
+      throw Error(`${e.name}: detail numbers start at 1.`);
+  const people = entries.map(({ name, detail }) => ({
     id: uid(),
     name,
-    detailId,
+    detailId: cs
+      ? (detailId ?? (detail ? ensureDetail(s, detail).id : null))
+      : null,
     weapon,
     recordId: uid(),
     profile: profileFor(s.program, s.variant, weapon),
   }));
-  upperBounds(s, [...members(s, detailId), ...people]);
   s.participants.push(...people);
   audit(s, "Participants added", { participants: structuredClone(people) });
   return people;
@@ -135,14 +273,16 @@ function hasActivity(s, p) {
 export function updateParticipant(
   s,
   id,
-  { name, weapon, detailId },
+  { name, weapon, detailId = null },
   reason = "",
 ) {
   const p = s.participants.find((p) => p.id === id);
   if (!p) throw Error("Participant not found.");
+  const cs = isCS(s);
+  if (!cs) detailId = null;
   name = name.trim();
   if (!name) throw Error("Enter a full name.");
-  if (!s.details.some((d) => d.id === detailId))
+  if (cs && detailId && !s.details.some((d) => d.id === detailId))
     throw Error("Choose a detail.");
   profileFor(s.program, s.variant, weapon);
   if (
@@ -157,12 +297,16 @@ export function updateParticipant(
     )
   )
     throw Error(
-      "Record or cancel the awaiting detail before editing this participant.",
+      "This participant is awaiting scores. Record or cancel that first.",
     );
   const changed = { ...p, name, weapon, detailId };
-  upperBounds(s, [...members(s, detailId).filter((x) => x.id !== id), changed]);
+  if (cs && detailId)
+    upperBounds(s, [
+      ...members(s, detailId).filter((x) => x.id !== id),
+      changed,
+    ]);
   const previous = structuredClone(p);
-  if (p.weapon !== weapon && !isCS(s)) {
+  if (p.weapon !== weapon && !cs) {
     changed.recordId = uid();
     changed.profile = profileFor(s.program, s.variant, weapon);
   } else if (p.weapon !== weapon)
@@ -178,18 +322,17 @@ export function fillWeapons(s, weapon) {
   profileFor(s.program, s.variant, weapon);
   if (s.participants.some((p) => p.weapon !== weapon && hasActivity(s, p)))
     throw Error(
-      "Some firers already have scores. Change their weapon individually to preserve previous records.",
+      "Some firers already have scores. Change their rifle individually to preserve previous records.",
     );
   if (s.dispatches.some((d) => d.status === "awaiting"))
-    throw Error(
-      "Record or cancel awaiting details before changing roster weapons.",
-    );
-  for (const d of s.details)
-    if (members(s, d.id).length)
-      upperBounds(
-        s,
-        members(s, d.id).map((p) => ({ ...p, weapon })),
-      );
+    throw Error("Record or cancel awaiting scores before changing rifles.");
+  if (isCS(s))
+    for (const d of s.details)
+      if (members(s, d.id).length)
+        upperBounds(
+          s,
+          members(s, d.id).map((p) => ({ ...p, weapon })),
+        );
   const previous = s.participants.map((p) => ({ id: p.id, weapon: p.weapon }));
   for (const p of s.participants) {
     if (p.weapon !== weapon) {
@@ -206,15 +349,16 @@ export function removeParticipant(s, id, reason = "") {
   if (!p) throw Error("Participant not found.");
   if (hasActivity(s, p))
     throw Error(
-      "This firer has recorded results. Move them with an audited roster correction instead.",
+      "This firer has recorded results. Correct their details with a reason instead.",
     );
   if (
     s.dispatches.some(
       (d) => d.status === "awaiting" && d.roster.some((m) => m.id === id),
     )
   )
-    throw Error("Cancel the awaiting detail first.");
+    throw Error("Cancel their awaiting scores first.");
   s.participants = s.participants.filter((p) => p.id !== id);
+  delete s.priorities[`person:${id}`];
   audit(s, "Participant removed", { participant: p, reason });
 }
 export const draftKey = (detailId, stage) => `${detailId}:${stage}`;
@@ -230,10 +374,22 @@ export function getDraft(s, detailId, stage) {
       participantId: p.id,
       weapon: p.weapon,
       hits: "",
-      accounted: false,
+      accounted: true,
     })),
     aggregate: "",
-    pasteErrors: [],
+  });
+}
+export function setPresent(s, detailId, stage, participantId, present) {
+  const row = getDraft(s, detailId, stage).rows.find(
+    (r) => r.participantId === participantId,
+  );
+  if (!row) throw Error("Participant not found in this detail.");
+  row.accounted = present;
+  if (!present) row.hits = "";
+  audit(s, present ? "Marked present" : "Marked not present", {
+    participantId,
+    detailId,
+    stage,
   });
 }
 export function resetDraft(s, detailId, stage) {
@@ -254,13 +410,13 @@ export function parseHits(input, max) {
 }
 export function validateDraft(s, draft) {
   const roster = members(s, draft.detailId),
-    errors = [...(draft.pasteErrors || [])],
+    errors = [],
     shared = isCS(s) && ["A", "C"].includes(draft.stage);
   const ids = roster.map((p) => p.id),
     rowIds = draft.rows.map((r) => r.participantId);
   if (!sameIds(ids, draft.rosterIds))
     errors.push(
-      "Roster changed. Reset this draft to use the current participant list.",
+      "Roster changed. Clear these entries to use the current participant list.",
     );
   if (new Set(rowIds).size !== rowIds.length)
     errors.push("Duplicate participant in score entry.");
@@ -280,50 +436,48 @@ export function validateDraft(s, draft) {
     }
     if (person && !isCS(s) && person.weapon !== row.weapon)
       errors.push(
-        `${person.name}: weapon must remain ${person.weapon} for this shoot record.`,
+        `${person.name}: rifle must remain ${person.weapon} for this record.`,
       );
     const parsed = component
       ? parseHits(row.hits, component.max)
       : { error: "Unsupported weapon." };
     return { ...row, person, profile, component, parsed };
   });
-  errors.push(
-    ...compositionErrors(
-      s,
-      rows.map((r) => ({ weapon: r.weapon })),
-    ),
-  );
+  // Firers marked not present are left out of this attempt and its average.
+  const present = rows.filter((r) => r.accounted !== false);
+  if (roster.length && !present.length)
+    errors.push("Everyone is marked not present.");
+  if (present.length)
+    errors.push(
+      ...compositionErrors(
+        s,
+        present.map((r) => ({ weapon: r.weapon })),
+      ),
+    );
   const hasAggregate =
     draft.aggregate !== "" &&
     draft.aggregate !== null &&
     draft.aggregate !== undefined;
-  const someHits = rows.some((r) => r.hits !== "");
+  const someHits = present.some((r) => r.hits !== "");
   let aggregate = null;
   if (shared && hasAggregate) {
-    const max = rows.reduce((n, r) => n + (r.component?.max || 0), 0),
+    const max = present.reduce((n, r) => n + (r.component?.max || 0), 0),
       p = parseHits(draft.aggregate, max);
     if (p.error) errors.push(`Detail total: ${p.error}`);
     else aggregate = p.value;
-    const accounted = rows
-      .filter((r) => r.accounted)
-      .map((r) => r.participantId);
-    if (!sameIds(ids, accounted))
-      errors.push(
-        `Account for every firer: ${accounted.length}/${ids.length} accounted for.`,
-      );
   }
   if (!shared && hasAggregate)
     errors.push(
       "Individual results are required; a detail total cannot supply individual scores.",
     );
   if (!shared || !hasAggregate || someHits) {
-    for (const r of rows)
+    for (const r of present)
       if (r.parsed.error)
         errors.push(
           `${r.person?.name || "Unknown participant"}: ${r.parsed.error}`,
         );
-    if (rows.every((r) => !r.parsed.error)) {
-      const sum = rows.reduce((n, r) => n + r.parsed.value, 0);
+    if (present.every((r) => !r.parsed.error)) {
+      const sum = present.reduce((n, r) => n + r.parsed.value, 0);
       if (shared && hasAggregate && aggregate !== null && sum !== aggregate)
         errors.push(
           `Total mismatch: individual hits ${sum}, detail total ${aggregate} (difference ${Math.abs(sum - aggregate)}).`,
@@ -335,12 +489,13 @@ export function validateDraft(s, draft) {
   return {
     errors: [...new Set(errors)],
     rows,
+    present,
     aggregate,
-    divisor: roster.length,
+    divisor: present.length,
     shared,
     score:
-      shared && aggregate !== null && roster.length
-        ? Math.floor(aggregate / roster.length)
+      shared && aggregate !== null && present.length
+        ? Math.floor(aggregate / present.length)
         : null,
     mode:
       shared && hasAggregate
@@ -359,69 +514,28 @@ export function sameIds(a, b) {
     a.every((id) => b.includes(id))
   );
 }
-export function pasteScores(s, draft, text) {
-  const roster = members(s, draft.detailId),
-    errors = [],
-    seen = new Set();
-  const updates = [];
-  for (const line of text.split(/\r?\n/).filter((l) => l.trim())) {
-    const cells = line.split(/\t|,/).map((c) => c.trim());
-    if (cells.length !== 2) {
-      errors.push(`Use a name or ID and hits on each line: ${line}`);
-      continue;
-    }
-    const [name, hits] = cells;
-    const matches = roster.filter(
-      (p) => p.id === name || p.name.toLowerCase() === name.toLowerCase(),
-    );
-    if (matches.length !== 1) {
-      errors.push(
-        matches.length
-          ? "Duplicate names: use participant IDs to distinguish them."
-          : `Unexpected participant: ${name}.`,
-      );
-      continue;
-    }
-    const p = matches[0];
-    if (seen.has(p.id)) {
-      errors.push(`Duplicate participant: ${name}.`);
-      continue;
-    }
-    seen.add(p.id);
-    updates.push({ id: p.id, hits });
-  }
-  for (const p of roster)
-    if (!seen.has(p.id)) errors.push(`Missing participant: ${p.name}.`);
-  for (const u of updates) {
-    const row = draft.rows.find((r) => r.participantId === u.id);
-    if (row) {
-      row.hits = u.hits;
-      row.accounted = true;
-    }
-  }
-  draft.pasteErrors = errors;
-  audit(s, "Results pasted", { draftId: draft.id, errors });
-  return errors;
-}
 export function saveDetail(s, draft) {
   const v = validateDraft(s, draft);
   if (v.errors.length) throw Error(v.errors.join("\n"));
   const at = now(),
     detailAttemptId = uid(),
-    roster = v.rows.map((r) => ({
+    roster = v.present.map((r) => ({
       id: r.person.id,
       name: r.person.name,
       recordId: r.person.recordId,
       weapon: r.weapon,
       profile: structuredClone(r.profile),
       rawHits: r.hits === "" ? null : r.parsed.value,
-      accounted: draft.aggregate !== "" ? r.accounted : true,
+      accounted: true,
     }));
   const detailAttempt = {
     id: detailAttemptId,
     detailId: draft.detailId,
     stage: draft.stage,
     roster,
+    absent: v.rows
+      .filter((r) => r.accounted === false)
+      .map((r) => r.participantId),
     program: s.program,
     variant: s.variant,
     aggregateHits: v.aggregate,
@@ -451,11 +565,10 @@ export function saveDetail(s, draft) {
       recordedAt: at,
       recorder: "Local device",
     });
-  closeDispatch(
+  detailAttempt.closedDispatches = closeDispatch(
     s,
-    draft.detailId,
     draft.stage,
-    roster.map((r) => r.id),
+    `detail:${draft.detailId}`,
   );
   s.manualQueue = s.manualQueue.filter(
     (q) => q.stage !== draft.stage || q.key !== `detail:${draft.detailId}`,
@@ -472,9 +585,7 @@ export function recordIndividual(
   weapon = p.weapon,
   reason = "",
 ) {
-  if (isCS(s)) throw Error("Save the detail to reconcile every participant.");
-  const errors = compositionErrors(s, members(s, p.detailId));
-  if (errors.length) throw Error(errors.join(" "));
+  if (isCS(s)) throw Error("Enter Combat Shoot scores for the whole detail.");
   const profile = profileFor(s.program, s.variant, weapon);
   const component = profile.components.find((c) => c.id === stage);
   if (!component) throw Error("Unknown stage.");
@@ -482,7 +593,7 @@ export function recordIndividual(
   if (parsed.error) throw Error(parsed.error);
   if (weapon !== p.weapon)
     throw Error(
-      `Use ${p.weapon} for this shoot record. Change the roster weapon to start a separate record.`,
+      `Use ${p.weapon} for this record. Change the participant's rifle to start a separate record.`,
     );
   const a = {
     id: uid(),
@@ -501,21 +612,21 @@ export function recordIndividual(
     reason,
   };
   s.attempts.push(a);
-  closeDispatch(s, p.detailId, stage, [p.id]);
+  a.closedDispatches = closeDispatch(s, stage, `person:${p.id}`);
   s.manualQueue = s.manualQueue.filter(
     (q) => q.stage !== stage || q.key !== `person:${p.id}`,
   );
   audit(s, "Individual score recorded", { attemptId: a.id, reason });
   return a;
 }
-function closeDispatch(s, detailId, stage, ids) {
+function closeDispatch(s, stage, key) {
+  const closed = [];
   for (const d of s.dispatches)
-    if (
-      d.stage === stage &&
-      d.status === "awaiting" &&
-      d.roster.every((p) => ids.includes(p.id))
-    )
+    if (d.stage === stage && d.status === "awaiting" && d.key === key) {
       d.status = "scored";
+      closed.push(d.id);
+    }
+  return closed;
 }
 export function eligible(s, p, a) {
   if (
@@ -541,10 +652,15 @@ export function eligible(s, p, a) {
         a.profile.id === p.profile.id &&
         a.profile.version === p.profile.version;
 }
+// Every counted score for a stage, oldest first.
+export function scoreHistory(s, p, stage) {
+  return s.attempts.filter((a) => a.stage === stage && eligible(s, p, a));
+}
 export function bestAttempt(s, p, stage) {
-  return s.attempts
-    .filter((a) => a.stage === stage && eligible(s, p, a))
-    .reduce((best, a) => (!best || a.score > best.score ? a : best), null);
+  return scoreHistory(s, p, stage).reduce(
+    (best, a) => (!best || a.score > best.score ? a : best),
+    null,
+  );
 }
 export function best(s, p, stage) {
   return bestAttempt(s, p, stage)?.score ?? null;
@@ -587,6 +703,17 @@ export function voidAttempt(s, id, reason) {
     reason,
   });
 }
+// Reverses a score just entered: voids it and puts its firers back to awaiting scores.
+export function undoAttempt(s, id) {
+  const a = s.attempts.find((a) => a.id === id);
+  if (!a || a.status !== "valid") throw Error("Nothing to undo.");
+  const closed = a.detailAttemptId
+    ? s.shared.find((d) => d.id === a.detailAttemptId)?.closedDispatches
+    : a.closedDispatches;
+  voidAttempt(s, id, "Entry undone");
+  for (const d of s.dispatches)
+    if (closed?.includes(d.id) && d.status === "scored") d.status = "awaiting";
+}
 export function target(s, p, stage, objective = s.settings.objective) {
   const c = p.profile.components.find((c) => c.id === stage);
   if (s.program === "BTP" && stage === "B") {
@@ -618,9 +745,9 @@ export function goal(s, p, stage) {
   }
   return null;
 }
-export function entities(s, stage) {
+export function entities(s) {
   return isCS(s)
-    ? s.details
+    ? sortedDetails(s)
         .filter((d) => members(s, d.id).length)
         .map((d) => ({
           key: `detail:${d.id}`,
@@ -629,7 +756,7 @@ export function entities(s, stage) {
         }))
     : s.participants.map((p) => ({
         key: `person:${p.id}`,
-        detail: s.details.find((d) => d.id === p.detailId),
+        detail: null,
         members: [p],
       }));
 }
@@ -643,6 +770,7 @@ export function stageMembers(s, detailId, stage) {
   }));
 }
 export function stageCompositionErrors(s, detailId, stage) {
+  if (!isCS(s)) return [];
   const draft = s.drafts[draftKey(detailId, stage)],
     roster = members(s, detailId);
   if (
@@ -652,11 +780,19 @@ export function stageCompositionErrors(s, detailId, stage) {
       roster.map((p) => p.id),
     )
   )
-    return ["Score draft roster changed. Reset the draft before detailing."];
+    return ["Score entries are out of date. Clear them before redetailing."];
   return compositionErrors(s, stageMembers(s, detailId, stage));
 }
+export function notYetShot(s, stage) {
+  return s.participants.filter((p) => best(s, p, stage) === null);
+}
+export function setPriority(s, key, tag) {
+  if (tag === "high" || tag === "low") s.priorities[key] = tag;
+  else delete s.priorities[key];
+  audit(s, "Priority changed", { key, tag: tag || null });
+}
 export function queue(s, stage) {
-  const rows = entities(s, stage)
+  const rows = entities(s)
     .filter(
       (e) =>
         !s.dispatches.some(
@@ -682,9 +818,10 @@ export function queue(s, stage) {
         }),
     );
   for (const e of rows) {
-    e.errors = stageCompositionErrors(s, e.detail.id, stage);
+    e.errors = e.detail ? stageCompositionErrors(s, e.detail.id, stage) : [];
     e.first = e.members.some((p) => best(s, p, stage) === null);
     e.best = Math.min(...e.members.map((p) => best(s, p, stage) ?? 0));
+    e.tag = s.priorities[e.key] || null;
     e.priority = e.members
       .map((p) => {
         const g = goal(s, p, stage),
@@ -710,6 +847,7 @@ export function queue(s, stage) {
       ...s.attempts
         .filter(
           (a) =>
+            a.status === "valid" &&
             e.members.some((p) => p.id === a.participantId) &&
             a.stage === stage,
         )
@@ -717,26 +855,32 @@ export function queue(s, stage) {
     );
   }
   const fraction = (e) =>
-    e.first
-      ? -1
-      : e.best /
-        e.members[0].profile.components.find((c) => c.id === stage).max;
-  return rows.sort((a, b) =>
-    s.settings.order === "lowest"
-      ? fraction(a) - fraction(b)
-      : s.settings.order === "highest"
-        ? fraction(b) - fraction(a)
-        : s.settings.order === "first"
-          ? a.last - b.last
-          : a.priority.rank - b.priority.rank ||
-            a.priority.gap - b.priority.gap,
+      e.first
+        ? -1
+        : e.best /
+          e.members[0].profile.components.find((c) => c.id === stage).max,
+    tier = (e) => (e.tag === "high" ? 0 : e.tag === "low" ? 2 : 1);
+  return rows.sort(
+    (a, b) =>
+      tier(a) - tier(b) ||
+      (s.settings.order === "lowest"
+        ? fraction(a) - fraction(b)
+        : s.settings.order === "highest"
+          ? fraction(b) - fraction(a)
+          : s.settings.order === "first"
+            ? a.last - b.last
+            : a.priority.rank - b.priority.rank ||
+              a.priority.gap - b.priority.gap),
   );
 }
 export function dispatch(s, stage, keys) {
-  const selected = entities(s, stage).filter((e) => keys.includes(e.key));
-  if (!selected.length) throw Error("Select firers to detail.");
+  const selected = entities(s).filter((e) => keys.includes(e.key));
+  if (!selected.length) throw Error("Select firers to redetail.");
+  const cap = !isCS(s) && DETAIL_RULES[s.program]?.max;
+  if (cap && selected.length > cap)
+    throw Error(`Up to ${cap} firers at a time.`);
   for (const e of selected) {
-    const errors = stageCompositionErrors(s, e.detail.id, stage);
+    const errors = e.detail ? stageCompositionErrors(s, e.detail.id, stage) : [];
     if (errors.length) throw Error(`${e.detail.name}: ${errors.join(" ")}`);
     if (
       s.dispatches.some(
@@ -750,12 +894,14 @@ export function dispatch(s, stage, keys) {
       id: uid(),
       key: e.key,
       stage,
-      detailId: e.detail.id,
+      detailId: e.detail?.id ?? null,
       roster: e.members.map((p) => ({
         id: p.id,
         recordId: p.recordId,
-        weapon: stageMembers(s, e.detail.id, stage).find((m) => m.id === p.id)
-          .weapon,
+        weapon: e.detail
+          ? stageMembers(s, e.detail.id, stage).find((m) => m.id === p.id)
+              .weapon
+          : p.weapon,
       })),
       status: "awaiting",
       at: now(),
@@ -763,7 +909,13 @@ export function dispatch(s, stage, keys) {
   s.manualQueue = s.manualQueue.filter(
     (q) => q.stage !== stage || !keys.includes(q.key),
   );
-  audit(s, "Firers detailed", { stage, keys });
+  audit(s, "Firers redetailed", { stage, keys });
+}
+export function cancelDispatch(s, id) {
+  const d = s.dispatches.find((d) => d.id === id && d.status === "awaiting");
+  if (!d) throw Error("Nothing awaiting scores.");
+  d.status = "canceled";
+  audit(s, "Redetail canceled", { dispatchId: id });
 }
 export function manualQueue(s, p, stage) {
   const key = isCS(s) ? `detail:${p.detailId}` : `person:${p.id}`;
@@ -772,23 +924,26 @@ export function manualQueue(s, p, stage) {
   audit(s, "Reshoot queued", { key, stage });
 }
 export function exportCsv(s) {
+  const components = profileFor(s.program, s.variant, s.settings.weapon)
+      .components,
+    cs = isCS(s);
   const rows = [
     [
       "Name",
-      "Detail",
-      "Weapon",
-      ...stages(s).map((c) => c.label),
+      ...(cs ? ["Detail"] : []),
+      "Rifle",
+      ...components.map((c) => c.label),
       "Total",
       "Out of",
       "Result",
-      ...stages(s).map((c) => `${c.label} attempt ID`),
+      ...components.map((c) => `${c.label} attempt ID`),
     ],
   ];
   for (const p of s.participants) {
     const r = result(s, p);
     rows.push([
       p.name,
-      s.details.find((d) => d.id === p.detailId)?.name,
+      ...(cs ? [s.details.find((d) => d.id === p.detailId)?.name] : []),
       p.weapon,
       ...r.scores,
       r.total,
@@ -812,25 +967,89 @@ export function exportCsv(s) {
     )
     .join("\r\n");
 }
+// Upgrades saved data from earlier app versions. Schema 2 kept one roster per
+// shoot type and listed rifles individually; rifles are now grouped.
+export function migrateStore(data) {
+  if (data?.schema === 3) return data;
+  if (data?.schema !== 2 || !data.shoots) throw Error("Invalid Detail IC backup.");
+  const store = newStore();
+  store.enabled = (data.enabled || []).filter((p) => PROGRAMS[p]);
+  const old = [
+    ...Object.values(data.shoots),
+    ...(data.archives || [])
+      .filter((a) => a.shoot)
+      .map((a) => ({ ...a.shoot, name: a.label })),
+  ];
+  for (const s of old) {
+    if (!s.participants?.length && !s.attempts?.length) continue;
+    const variant = s.variant || "standard",
+      map = (w) => weaponGroup(s.program, variant, w),
+      profile = (w) => profileFor(s.program, variant, w);
+    s.id ||= uid();
+    s.variant = variant;
+    s.name ||= typeLabel(s.program, variant);
+    s.createdAt ||= s.audit?.[0]?.at || now();
+    s.priorities ||= {};
+    for (const p of s.participants) {
+      p.weapon = map(p.weapon);
+      p.profile = profile(p.weapon);
+      if (!isCS(s)) p.detailId = null;
+    }
+    for (const a of s.attempts) {
+      a.weapon = map(a.weapon);
+      a.profile = profile(a.weapon);
+    }
+    for (const d of s.shared)
+      for (const m of d.roster) {
+        m.weapon = map(m.weapon);
+        m.profile = profile(m.weapon);
+      }
+    for (const d of s.dispatches)
+      for (const m of d.roster) m.weapon = map(m.weapon);
+    if (isCS(s))
+      for (const d of Object.values(s.drafts))
+        for (const r of d.rows) r.weapon = map(r.weapon);
+    else s.drafts = {};
+    s.settings.weapon = map(s.settings.weapon);
+    s.settings.targets = Object.fromEntries(
+      Object.entries(s.settings.targets || {}).map(([key, value]) => {
+        const [w, ...rest] = key.split(":");
+        return [[map(w), ...rest].join(":"), value];
+      }),
+    );
+    store.presets[typeKey(s.program, variant)] ??= {
+      weapon: s.settings.weapon,
+      objective: s.settings.objective,
+      targets: structuredClone(s.settings.targets),
+    };
+    store.shoots.push(s);
+  }
+  store.active = store.shoots[0]?.id ?? null;
+  return store;
+}
 export function validateStore(store) {
   if (
-    store?.schema !== 2 ||
+    store?.schema !== 3 ||
     !Array.isArray(store.enabled) ||
     store.enabled.some((p) => !PROGRAMS[p]) ||
-    !store.shoots ||
-    !Array.isArray(store.archives) ||
-    !["standard", "ns"].includes(store.aps)
+    !Array.isArray(store.shoots) ||
+    !store.presets ||
+    typeof store.presets !== "object"
   )
     throw Error("Invalid Detail IC backup.");
-  for (const s of Object.values(store.shoots)) {
+  for (const s of store.shoots) {
     if (
+      typeof s.id !== "string" ||
+      typeof s.name !== "string" ||
       !PROGRAMS[s.program] ||
+      !["standard", "ns"].includes(s.variant) ||
       !Array.isArray(s.participants) ||
       !Array.isArray(s.attempts) ||
       !Array.isArray(s.shared) ||
       !Array.isArray(s.details) ||
       !Array.isArray(s.audit) ||
       !s.drafts ||
+      !s.priorities ||
       !Array.isArray(s.dispatches) ||
       !Array.isArray(s.manualQueue) ||
       !s.settings ||
@@ -844,7 +1063,9 @@ export function validateStore(store) {
         typeof p.id !== "string" ||
         typeof p.name !== "string" ||
         !p.recordId ||
-        !s.details.some((d) => d.id === p.detailId) ||
+        (isCS(s) &&
+          p.detailId !== null &&
+          !s.details.some((d) => d.id === p.detailId)) ||
         p.profile?.version !== VERSION ||
         p.profile.id !== profile.id
       )
@@ -861,5 +1082,7 @@ export function validateStore(store) {
         throw Error("Invalid score record.");
     }
   }
+  if (store.active !== null && !store.shoots.some((s) => s.id === store.active))
+    store.active = null;
   return store;
 }

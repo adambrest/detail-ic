@@ -1,10 +1,9 @@
 import {
   PROGRAMS,
-  VERSION,
+  TYPES,
   DETAIL_RULES,
-  WEAPON_FAMILY,
-  PROFILES,
   isCS,
+  typeLabel,
   weaponsFor,
   profileFor,
   stages,
@@ -14,36 +13,47 @@ import {
   uid,
   now,
   newStore,
-  newShoot,
+  preset,
+  applyPreset,
+  applyPresets,
+  createShoot,
   getShoot,
-  shootKey,
   enableShoot,
+  hasScores,
+  changeShootType,
   audit,
   addDetail,
   members,
-  compositionErrors,
+  sortedDetails,
+  detailNumber,
+  assignDetail,
+  detailIssues,
   addParticipants,
   updateParticipant,
   fillWeapons,
   removeParticipant,
   getDraft,
+  setPresent,
   resetDraft,
-  draftKey,
   validateDraft,
-  pasteScores,
   saveDetail,
   recordIndividual,
   parseHits,
-  bestAttempt,
+  scoreHistory,
   best,
   result,
   voidAttempt,
+  undoAttempt,
   target,
-  goal,
+  stageCompositionErrors,
+  notYetShot,
+  setPriority,
   queue,
   dispatch,
+  cancelDispatch,
   manualQueue,
   exportCsv,
+  migrateStore,
   validateStore,
 } from "./core.js";
 const $ = (q) => document.querySelector(q),
@@ -63,24 +73,58 @@ const KEY = "detail-ic-v2";
 let store,
   lastSaved = null,
   storageError = false,
-  tab = "participants",
+  tab = "shoots",
   search = "",
   selected = new Set(),
   openPresets = new Set(),
-  offlineReady = false;
+  showScored = false,
+  apsView = "standard",
+  offlineReady = false,
+  busy = false,
+  pointerDown = false,
+  pending = null;
 try {
   lastSaved = localStorage.getItem(KEY);
-  store = lastSaved ? validateStore(JSON.parse(lastSaved)) : newStore();
+  store = lastSaved
+    ? validateStore(migrateStore(JSON.parse(lastSaved)))
+    : newStore();
+  applyPresets(store);
 } catch (e) {
   store = newStore();
   storageError = true;
 }
-const s = () =>
-  store.active && store.enabled.includes(store.active) ? getShoot(store) : null;
+const s = () => getShoot(store);
 const format = (v) => (v === null || v === undefined ? "—" : String(v));
 const ratio = (v, max) => `${format(v)}/${max}`;
-const programLabel = (p) =>
-  PROGRAMS[p] + (p === "APS" && store.aps === "ns" ? " (NS)" : "");
+const weapons = (c) => weaponsFor(c.program, c.variant);
+const dateLabel = (iso) =>
+  new Date(iso).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+const stageLabel = (c, stage) => stages(c).find((x) => x.id === stage).label;
+const reduceMotion = () =>
+  matchMedia("(prefers-reduced-motion: reduce)").matches;
+// Re-rendering while a button is pressed would swallow its click, so wait.
+function later(fn) {
+  if (pointerDown) pending = fn;
+  else fn();
+}
+document.addEventListener("pointerdown", () => (pointerDown = true), true);
+document.addEventListener(
+  "pointerup",
+  () => {
+    pointerDown = false;
+    if (pending)
+      setTimeout(() => {
+        const fn = pending;
+        pending = null;
+        fn?.();
+      });
+  },
+  true,
+);
 function option(values, value) {
   return values
     .map(
@@ -124,11 +168,26 @@ function save() {
     return false;
   }
 }
-function toast(text) {
-  $("#toast").textContent = text;
-  $("#toast").classList.add("show");
+function toast(text, undo) {
+  const t = $("#toast");
+  t.innerHTML = `<span>${esc(text)}</span>${undo ? '<button type="button" id="undo">Undo</button>' : ""}`;
+  t.classList.add("show");
+  if (undo)
+    $("#undo").onclick = () => {
+      t.classList.remove("show");
+      try {
+        undo();
+        save();
+        render();
+      } catch (e) {
+        toast(e.message);
+      }
+    };
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => $("#toast").classList.remove("show"), 3500);
+  toast.timer = setTimeout(
+    () => t.classList.remove("show"),
+    undo ? 6000 : 3500,
+  );
 }
 function info(text) {
   return `<button class="info" type="button" aria-label="${esc(text)}">i<span class="tooltip">${esc(text)}</span></button>`;
@@ -136,243 +195,544 @@ function info(text) {
 function empty(text, button = "") {
   return `<div class="empty"><h2>${esc(text)}</h2>${button}</div>`;
 }
-function shootPicker(extra = "") {
-  return `<div class="toolbar"><select class="shoot-select" id="shoot" aria-label="Shoot">${store.enabled.map((p) => `<option value="${p}" ${store.active === p ? "selected" : ""}>${esc(programLabel(p))}</option>`).join("")}</select>${extra}</div>`;
-}
 function filtered(p) {
   return `${p.name} ${p.weapon}`.toLowerCase().includes(search.toLowerCase());
+}
+function shootHead(extra = "", editable = false) {
+  const c = s(),
+    types = TYPES.filter(
+      ([p, v]) =>
+        store.enabled.includes(p) || (p === c.program && v === c.variant),
+    );
+  const type = editable
+    ? `<select id="shoot-type" class="shoot-select" aria-label="Shoot type" ${hasScores(c) ? "disabled" : ""}>${types.map(([p, v]) => `<option value="${p}|${v}" ${p === c.program && v === c.variant ? "selected" : ""}>${esc(typeLabel(p, v))}</option>`).join("")}</select>`
+    : `<span class="badge">${esc(typeLabel(c.program, c.variant))}</span>`;
+  return `<div class="toolbar"><strong class="shoot-name">${esc(c.name)}</strong>${type}${extra}</div>`;
+}
+function searchBox() {
+  return `<input type="search" id="search" placeholder="Find a participant" aria-label="Find a participant" value="${esc(search)}">`;
 }
 function render() {
   const current = s(),
     tabs = [
-      ["participants", "Participants"],
+      ["shoots", "Shoots"],
       ...(current
-        ? stages(current).map((c) => [`stage:${c.id}`, c.label])
+        ? [
+            ["participants", "Participants"],
+            ...stages(current).map((c) => [`stage:${c.id}`, c.label]),
+            ["final", "Final scores"],
+          ]
         : []),
-      ["final", "Final scores"],
       ["settings", "Settings"],
     ];
-  if (!tabs.some((t) => t[0] === tab)) tab = "participants";
+  if (!tabs.some((t) => t[0] === tab)) tab = "shoots";
   $("#tabs").innerHTML = tabs
     .map(
       ([key, label]) =>
         `<button data-tab="${key}" class="${tab === key ? "on" : ""}" ${tab === key ? 'aria-current="page"' : ""}>${esc(label)}</button>`,
     )
     .join("");
-  if (tab === "settings") renderSettings();
-  else if (!current)
-    $("#main").innerHTML = empty(
-      "Enable a shoot to get started",
-      '<p>Choose the shoots you need in Settings.</p><button class="primary" data-action="settings">Settings</button>',
-    );
+  if (tab === "shoots") renderShoots();
+  else if (tab === "settings") renderSettings();
   else if (tab === "participants") renderParticipants();
   else if (tab === "final") renderFinal();
   else renderStage(tab.split(":")[1]);
   status();
 }
-function renderParticipants() {
-  const current = s();
+function renderShoots() {
+  const types = TYPES.filter(([p]) => store.enabled.includes(p)),
+    list = store.shoots.toSorted(
+      (a, b) =>
+        (b.id === store.active) - (a.id === store.active) ||
+        b.createdAt.localeCompare(a.createdAt),
+    );
   $("#main").innerHTML =
-    shootPicker(
-      `<span class="spacer"></span><label class="muted" for="fill-weapon">Rifle</label><select id="fill-weapon" aria-label="Rifle for fill all">${option(weaponsFor(current.program, current.variant), current.settings.weapon)}</select><button data-action="fill-all">Fill all</button><button class="primary" data-action="add">＋ Add participants</button>`,
-    ) +
-    `<div class="toolbar"><input type="search" id="search" placeholder="Find a participant" aria-label="Find a participant" value="${esc(search)}"><span class="count">${current.participants.length} participants</span></div>` +
-    (current.participants.length
-      ? current.details
-          .filter((d) => members(current, d.id).some(filtered))
-          .map((d) => {
-            const people = members(current, d.id),
-              errors = compositionErrors(current, people);
-            return `<section class="panel"><div class="detail-head"><h3>${esc(d.name)}</h3><span class="count">${people.length} firers</span><div class="actions"><button data-add-detail="${d.id}">＋ Add</button></div></div>${errors.length ? `<div class="errors">${esc(errors.join("\n"))}</div>` : ""}<div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th><th></th></tr></thead><tbody>${people
-              .filter(filtered)
-              .map(
-                (p) =>
-                  `<tr><td class="name">${esc(p.name)}</td><td>${esc(p.weapon)}</td><td style="text-align:right"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`,
-              )
-              .join("")}</tbody></table></div></section>`;
-          })
-          .join("")
-      : empty(
-          "No participants yet",
-          '<p>Paste full names, one per line.</p><button class="primary" data-action="add">Add participants</button>',
-        ));
+    `<div class="shoots"><section class="panel"><div class="panel-head"><h2>New shoot</h2></div><div class="panel-body">${
+      types.length
+        ? `<form id="new-shoot"><div class="type-grid" role="radiogroup" aria-label="Shoot type">${types.map(([p, v], i) => `<label class="type-option"><input type="radio" name="type" value="${p}|${v}" ${i === 0 ? "checked" : ""}><span>${esc(typeLabel(p, v))}</span></label>`).join("")}</div><label class="field"><span>Shoot name</span><input name="name" required autocomplete="off" placeholder="e.g. Alpha Coy · ${esc(dateLabel(now()))}"></label><button class="primary" type="submit">Create shoot</button></form>`
+        : '<p class="note">Turn on the shoot types you run in Settings.</p><button class="primary" data-action="settings">Settings</button>'
+    }</div></section>${
+      list.length
+        ? `<section class="panel"><div class="panel-head"><h3>Shoots <span class="count">${list.length}</span></h3></div>${list
+            .map(
+              (x) =>
+                `<div class="shoot-row"><div><strong>${esc(x.name)}</strong><p class="note">${esc(typeLabel(x.program, x.variant))} · ${esc(dateLabel(x.createdAt))} · ${x.participants.length} participants · ${hasScores(x) ? "Scores recorded" : "No scores yet"}</p></div><button ${x.id === store.active ? 'class="primary"' : ""} data-open-shoot="${x.id}" aria-label="${x.id === store.active ? "Continue" : "Open"} ${esc(x.name)}">${x.id === store.active ? "Continue" : "Open"}</button></div>`,
+            )
+            .join("")}</section>`
+        : ""
+    }</div>`;
 }
-function detailErrors(current, draft) {
-  const v = validateDraft(current, draft);
-  return isCS(current)
-    ? v.errors
-    : v.errors.filter((e) => !e.endsWith("Missing hits."));
+// Detail buttons offered per participant: as many details as the minimum size allows.
+function detailCount(c) {
+  const min = DETAIL_RULES[c.program]?.min || 1,
+    used = Math.max(
+      0,
+      ...c.details.filter((d) => members(c, d.id).length).map(detailNumber),
+    );
+  return Math.max(1, Math.floor(c.participants.length / min), used);
+}
+function renderParticipants() {
+  const c = s(),
+    cs = isCS(c),
+    multi = weapons(c).length > 1,
+    rifle = multi
+      ? `<label class="muted" for="fill-weapon">Rifle</label><select id="fill-weapon" aria-label="Rifle for fill all">${option(weapons(c), c.settings.weapon)}</select><button data-action="fill-all">Fill all</button>`
+      : "",
+    matches = (p) => search && filtered(p),
+    count = cs ? detailCount(c) : 0;
+  const picks = (p) => {
+    const locked =
+      c.attempts.some((a) => a.participantId === p.id) ||
+      c.dispatches.some(
+        (d) => d.status === "awaiting" && d.roster.some((m) => m.id === p.id),
+      );
+    return `<td><div class="detail-picks" role="group" aria-label="Detail for ${esc(p.name)}">${Array.from(
+      { length: count },
+      (_, i) => {
+        const on =
+          c.details.find((d) => d.id === p.detailId) &&
+          detailNumber(c.details.find((d) => d.id === p.detailId)) === i + 1;
+        return `<button type="button" class="pick ${on ? "on" : ""}" data-assign="${p.id}" data-number="${i + 1}" aria-pressed="${on}" aria-label="${esc(p.name)} detail ${i + 1}" ${locked ? "disabled" : ""}>${i + 1}</button>`;
+      },
+    ).join("")}</div></td>`;
+  };
+  const row = (p) =>
+    `<tr class="${matches(p) ? "match" : ""}"><td class="name">${esc(p.name)}</td>${multi ? `<td>${esc(p.weapon)}</td>` : ""}${cs ? picks(p) : ""}<td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+  const table = (people) =>
+    `<div class="table-wrap"><table><thead><tr><th>Full name</th>${multi ? "<th>Rifle</th>" : ""}${cs ? "<th>Detail</th>" : ""}<th></th></tr></thead><tbody>${people.map(row).join("")}</tbody></table></div>`;
+  let body;
+  if (!c.participants.length)
+    body = empty(
+      "No participants yet",
+      `<p>Paste full names, one per line.</p><button class="primary" data-action="add">Add participants</button>`,
+    );
+  else if (cs) {
+    const issues = detailIssues(c),
+      unassigned = members(c, null),
+      groups = [
+        ...(unassigned.length ? [["Needs a detail", unassigned, true]] : []),
+        ...sortedDetails(c)
+          .filter((d) => members(c, d.id).length)
+          .map((d) => [d.name, members(c, d.id), false]),
+      ].filter(([, people]) => !search || people.some(filtered));
+    body =
+      (issues.length
+        ? `<div class="panel errors issues" role="alert">${esc(issues.join("\n"))}</div>`
+        : "") +
+      groups
+        .map(
+          ([name, people, open]) =>
+            `<section class="panel ${open ? "unassigned" : ""}"><div class="detail-head"><h3>${esc(name)}</h3><span class="count">${people.length} firers</span></div>${table(people)}</section>`,
+        )
+        .join("");
+  } else
+    body = `<section class="panel">${table(c.participants.filter(filtered))}</section>`;
+  $("#main").innerHTML =
+    shootHead(
+      `<span class="spacer"></span>${rifle}<button class="primary" data-action="add">＋ Add participants</button>`,
+      true,
+    ) +
+    (hasScores(c)
+      ? '<p class="note lock-note">Scores are recorded, so the shoot type is locked. <button class="inline-link" data-action="shoots">Start a new shoot</button> to use a different type.</p>'
+      : "") +
+    `<div class="toolbar">${searchBox()}<span class="count">${c.participants.length} participants</span></div>` +
+    body;
+}
+// Participant ID → position in the order they were redetailed.
+function awaiting(c, stage) {
+  const map = new Map();
+  for (const d of c.dispatches)
+    if (d.stage === stage && d.status === "awaiting")
+      for (const m of d.roster) if (!map.has(m.id)) map.set(m.id, map.size);
+  return map;
+}
+function resultsCell(c, p, stage) {
+  const list = scoreHistory(c, p, stage);
+  if (!list.length) return '<span class="muted">—</span>';
+  return `${list.length > 1 ? `<span class="prev">${list.map((a) => a.score).join(" ")}</span>` : ""}<b>${Math.max(...list.map((a) => a.score))}</b>`;
 }
 function renderStage(stage) {
-  const current = s(),
-    c = stages(current).find((c) => c.id === stage),
-    q = queue(current, stage);
+  const c = s(),
+    q = queue(c, stage);
   selected = new Set(
     [...selected].filter((key) =>
       q.some((e) => e.key === key && !e.errors.length),
     ),
   );
   $("#main").innerHTML =
-    shootPicker(
-      `<span class="spacer"></span><input type="search" id="search" placeholder="Find a participant" aria-label="Find a participant" value="${esc(search)}">`,
-    ) +
-    `<div class="grid"><div>${
-      current.details
-        .filter((d) => members(current, d.id).some(filtered))
-        .map((d) => {
-          const people = members(current, d.id),
-            draft = getDraft(current, d.id, stage),
-            v = validateDraft(current, draft),
-            shared = isCS(current) && ["A", "C"].includes(stage),
-            errors = detailErrors(current, draft),
-            hasInput =
-              draft.rows.some((r) => r.hits !== "") || draft.aggregate !== "";
-          return `<section class="panel score-panel" data-detail="${d.id}"><div class="detail-head"><h3>${esc(d.name)}</h3><span class="count">${people.length} firers</span><div class="actions"><button data-paste="${d.id}">Paste scores</button><button class="icon-button" data-reset="${d.id}" title="Clear this draft" aria-label="Clear draft for ${esc(d.name)}">↺</button></div></div><div class="table-wrap"><table><thead><tr><th>Full name</th>${isCS(current) ? "<th>Rifle</th>" : ""}${shared ? '<th title="Accounted for this attempt">Present</th>' : ""}<th>Hits</th><th>Best</th><th></th></tr></thead><tbody>${people
-            .filter(filtered)
-            .map((p) => {
-              const row = draft.rows.find((r) => r.participantId === p.id),
-                max = profileFor(
-                  current.program,
-                  current.variant,
-                  row?.weapon || p.weapon,
-                ).components.find((c) => c.id === stage).max,
-                awaiting = current.dispatches.some(
-                  (d) =>
-                    d.stage === stage &&
-                    d.status === "awaiting" &&
-                    d.roster.some((m) => m.id === p.id),
-                );
-              return `<tr data-row="${p.id}"><td class="name">${esc(p.name)}${awaiting ? '<div class="pending">Awaiting scores</div>' : ""}</td>${isCS(current) ? `<td><select class="row-weapon" data-stage-weapon="${p.id}" aria-label="${esc(p.name)} rifle for ${esc(c.label)}">${option(weaponsFor(current.program, current.variant), row?.weapon || p.weapon)}</select></td>` : ""}${shared ? `<td><input type="checkbox" data-present="${p.id}" ${row?.accounted ? "checked" : ""} aria-label="${esc(p.name)} accounted for"></td>` : ""}<td><div class="score-input"><input type="number" min="0" max="${max}" step="1" inputmode="numeric" data-hits="${p.id}" value="${esc(row?.hits || "")}" aria-label="${esc(p.name)} hits" placeholder="—"><span class="muted">/${max}</span></div></td><td class="num">${format(best(current, p, stage))}</td><td><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
-            })
-            .join(
-              "",
-            )}</tbody></table></div>${shared ? `<div class="aggregate"><label>Or detail total <input type="number" min="0" max="${people.length * c.max}" step="1" data-aggregate="${d.id}" value="${esc(draft.aggregate)}" aria-label="${esc(d.name)} total hits" placeholder="—"></label><span class="muted">/${people.length * c.max}</span><label><input type="checkbox" data-all-present="${d.id}" ${draft.rows.every((r) => r.accounted) ? "checked" : ""}>All ${people.length} accounted for</label></div>` : ""}<div class="errors draft-errors">${esc((hasInput || compositionErrors(current, people).length ? errors : compositionErrors(current, people)).join("\n"))}</div><div class="score-footer"><span class="draft-summary">${shared && v.score !== null ? `Average: ${v.aggregate}/${v.divisor} → ${v.score}/${c.max}` : isCS(current) ? "Enter every firer’s result." : "Entries are saved on this device."}</span><button class="primary" data-save-scores="${d.id}">${isCS(current) ? "Confirm scores" : "Save entered scores"}</button></div></section>`;
-        })
-        .join("") ||
-      empty(
-        "Add participants first",
-        '<p><button data-action="participants">Participants</button></p>',
-      )
-    }</div><section class="panel queue"><div class="panel-head"><div style="width:100%"><h3>Redetailing <span class="count">${q.reduce((n, e) => n + e.members.length, 0)} firers</span></h3><select id="order" aria-label="Redetailing order">${[
-      ["automatic", "Automatic"],
-      ["lowest", "Lowest first"],
-      ["highest", "Highest first"],
-      ["first", "Shoot first, shoot again first"],
-    ]
-      .map(
-        ([key, label]) =>
-          `<option value="${key}" ${current.settings.order === key ? "selected" : ""}>${label}</option>`,
-      )
-      .join(
-        "",
-      )}</select></div></div>${q.map((e, i) => `<div class="queue-row"><input type="checkbox" data-queue="${esc(e.key)}" ${selected.has(e.key) ? "checked" : ""} ${e.errors.length ? "disabled" : ""} aria-label="Select ${esc(isCS(current) ? e.detail.name : e.members[0].name)}"><span class="count">${i + 1}</span><div><strong>${esc(isCS(current) ? e.detail.name : e.members[0].name)}</strong><p class="note">${e.errors.length ? esc(e.errors.join(" ")) : e.first ? "First attempt" : `Best ${ratio(best(current, e.priority.p, stage), e.priority.p.profile.components.find((c) => c.id === stage).max)}`}</p></div>${info(queueInfo(current, e, stage))}</div>`).join("") || '<div class="panel-body note">No firers to redetail.</div>'}<div class="queue-footer"><button data-action="select-all">Select all</button><button class="primary" id="detailed" ${selected.size ? "" : "disabled"}>Mark detailed${selected.size ? ` (${q.filter((e) => selected.has(e.key)).reduce((n, e) => n + e.members.length, 0)})` : ""}</button></div></section></div>`;
-  $("#order").onchange = (e) => {
-    current.settings.order = e.target.value;
+    shootHead(`<span class="spacer"></span>${searchBox()}`) +
+    `<div class="grid"><div class="score-col">${isCS(c) ? detailPanels(c, stage) : individualPanel(c, stage)}</div>${queuePanel(c, stage, q)}</div>`;
+}
+function individualPanel(c, stage) {
+  if (!c.participants.length)
+    return empty(
+      "Add participants first",
+      '<p><button data-action="participants">Participants</button></p>',
+    );
+  const waiting = awaiting(c, stage),
+    multi = weapons(c).length > 1,
+    rank = (p) => (waiting.has(p.id) ? waiting.get(p.id) : 1e9),
+    people = c.participants.filter(filtered).toSorted((a, b) => rank(a) - rank(b));
+  return `<section class="panel score-panel" data-individual><div class="detail-head"><h3>${esc(stageLabel(c, stage))}</h3><span class="count">${c.participants.length} firers</span></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${people
+    .map((p) => {
+      const max = p.profile.components.find((x) => x.id === stage).max;
+      return `<tr data-row="${p.id}" class="${waiting.has(p.id) ? "awaiting" : ""}"><td class="name">${esc(p.name)}${multi ? `<div class="sub">${esc(p.weapon)}</div>` : ""}${waiting.has(p.id) ? '<div class="pending">Awaiting scores</div>' : ""}</td><td><div class="score-input"><input type="number" min="0" max="${max}" step="1" inputmode="numeric" enterkeyhint="next" data-hits="${p.id}" aria-label="${esc(p.name)} hits" placeholder="—"><span class="muted">/${max}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+    })
+    .join(
+      "",
+    )}</tbody></table></div><div class="errors draft-errors" role="alert"></div><div class="score-footer"><span class="draft-summary">Scores save when you press Enter or leave the box.</span></div></section>`;
+}
+function draftErrors(c, draft) {
+  const hasInput =
+    draft.rows.some((r) => r.hits !== "") || draft.aggregate !== "";
+  if (!hasInput)
+    return stageCompositionErrors(c, draft.detailId, draft.stage);
+  return validateDraft(c, draft).errors.filter(
+    (e) => !e.endsWith("Missing hits.") && !e.startsWith("Account for every"),
+  );
+}
+function draftSummary(c, draft) {
+  const v = validateDraft(c, draft),
+    max = stages(c).find((x) => x.id === draft.stage).max,
+    absent = v.rows.length - v.present.length;
+  return `${v.shared && v.score !== null ? `Average ${v.aggregate}/${v.divisor} → ${v.score}/${max}.` : `${v.present.length} firers.`}${absent ? ` ${absent} not present.` : ""}`;
+}
+// A detail stays on the stage tab until its scores are confirmed, unless redetailed.
+function needsScores(c, d, stage) {
+  const draft = c.drafts[`${d.id}:${stage}`];
+  return (
+    c.dispatches.some(
+      (x) => x.key === `detail:${d.id}` && x.stage === stage && x.status === "awaiting",
+    ) ||
+    !c.shared.some(
+      (x) => x.detailId === d.id && x.stage === stage && x.status === "valid",
+    ) ||
+    (draft &&
+      (draft.aggregate !== "" ||
+        draft.rows.some((r) => r.hits !== "" || r.accounted === false)))
+  );
+}
+function detailPanels(c, stage) {
+  const waiting = awaiting(c, stage),
+    label = stageLabel(c, stage),
+    shared = ["A", "C"].includes(stage),
+    cmax = stages(c).find((x) => x.id === stage).max,
+    all = sortedDetails(c).filter((d) => members(c, d.id).length),
+    open = all.filter((d) => needsScores(c, d, stage)),
+    scored = all.length - open.length,
+    shown = (search
+      ? all.filter((d) => members(c, d.id).some(filtered))
+      : showScored
+        ? all
+        : open
+    ),
+    unassigned = members(c, null).length;
+  if (!all.length)
+    return empty(
+      unassigned ? "Assign details first" : "Add participants first",
+      '<p><button data-action="participants">Participants</button></p>',
+    );
+  return (
+    (unassigned
+      ? `<p class="note">${unassigned} ${unassigned === 1 ? "participant needs" : "participants need"} a detail. <button class="inline-link" data-action="participants">Assign details</button></p>`
+      : "") +
+    shown
+      .map((d) => {
+        const people = members(c, d.id),
+          draft = getDraft(c, d.id, stage),
+          present = draft.rows.filter((r) => r.accounted !== false).length;
+        return `<section class="panel score-panel" data-detail="${d.id}"><div class="detail-head"><h3>${esc(d.name)}</h3><span class="count">${people.length} firers</span><div class="actions"><button class="icon-button" data-reset="${d.id}" title="Clear entries" aria-label="Clear entries for ${esc(d.name)}">↺</button></div></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th><th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${people
+          .map((p) => {
+            const row = draft.rows.find((r) => r.participantId === p.id),
+              absent = row?.accounted === false,
+              max = profileFor(
+                c.program,
+                c.variant,
+                row?.weapon || p.weapon,
+              ).components.find((x) => x.id === stage).max;
+            return `<tr data-row="${p.id}" class="${[waiting.has(p.id) && "awaiting", absent && "absent", search && filtered(p) && "match"].filter(Boolean).join(" ")}"><td class="name">${esc(p.name)}${absent ? '<div class="sub">Not present</div>' : waiting.has(p.id) ? '<div class="pending">Awaiting scores</div>' : ""}</td><td><select class="row-weapon" data-stage-weapon="${p.id}" aria-label="${esc(p.name)} rifle for ${esc(label)}" ${absent ? "disabled" : ""}>${option(weapons(c), row?.weapon || p.weapon)}</select></td><td><div class="score-input"><input type="number" min="0" max="${max}" step="1" inputmode="numeric" enterkeyhint="next" data-cs-hits="${p.id}" value="${esc(row?.hits || "")}" aria-label="${esc(p.name)} hits" placeholder="—" ${absent ? "disabled" : ""}><span class="muted">/${max}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+          })
+          .join(
+            "",
+          )}</tbody></table></div>${shared ? `<div class="aggregate"><label>Or detail total <input type="number" min="0" max="${present * cmax}" step="1" data-aggregate="${d.id}" value="${esc(draft.aggregate)}" aria-label="${esc(d.name)} total hits" placeholder="—"></label><span class="muted">/${present * cmax}</span></div>` : ""}<div class="errors draft-errors">${esc(draftErrors(c, draft).join("\n"))}</div><div class="score-footer"><span class="draft-summary">${esc(draftSummary(c, draft))}</span><button class="primary" data-confirm="${d.id}">Confirm scores</button></div></section>`;
+      })
+      .join("") +
+    (!shown.length
+      ? `<div class="empty"><h2>All details scored</h2><p>Redetail firers to enter more ${esc(label)} scores.</p></div>`
+      : "") +
+    (scored && !search
+      ? `<p class="note"><button class="inline-link" data-action="toggle-scored">${showScored ? "Hide scored details" : `Show ${scored} scored ${scored === 1 ? "detail" : "details"}`}</button></p>`
+      : "")
+  );
+}
+function methodInfo(c) {
+  const goalName = c.settings.objective === "marksman" ? "Marksman" : "Pass";
+  return `${
+    {
+      automatic: `Firers who haven't shot come first. Then firers who can still reach ${goalName}, closest to it first. Suggested scores in Settings set the stage goals.`,
+      lowest: "Lowest best score first.",
+      highest: "Highest best score first.",
+      first: "In the order firers last shot: whoever shot earliest goes again first.",
+    }[c.settings.order]
+  } ▲ High priority firers go first and ▼ low priority firers go last.`;
+}
+function queuePanel(c, stage, q) {
+  const cs = isCS(c),
+    cap = !cs && DETAIL_RULES[c.program]?.max,
+    count = q
+      .filter((e) => selected.has(e.key))
+      .reduce((n, e) => n + e.members.length, 0);
+  return `<section class="panel queue"><div class="queue-head"><div class="queue-title"><h3>Redetailing</h3><span class="count">${q.reduce((n, e) => n + e.members.length, 0)} firers</span></div><div class="queue-method"><select id="order" aria-label="Redetailing order">${[
+    ["automatic", "Automatic"],
+    ["lowest", "Lowest first"],
+    ["highest", "Highest first"],
+    ["first", "Shoot first, shoot again first"],
+  ]
+    .map(
+      ([key, label]) =>
+        `<option value="${key}" ${c.settings.order === key ? "selected" : ""}>${label}</option>`,
+    )
+    .join(
+      "",
+    )}</select>${info(methodInfo(c))}</div><div class="queue-actions"><button data-action="select-all">${cap ? `Select next ${cap}` : "Select all"}</button><button class="primary" id="redetail" data-action="redetail" ${count ? "" : "disabled"}>Redetail${count ? ` (${count})` : ""}</button></div></div><div class="queue-list">${
+    q
+      .map((e, i) => {
+        const name = cs ? e.detail.name : e.members[0].name,
+          max = e.priority.p.profile.components.find((x) => x.id === stage).max;
+        return `<div class="queue-row" data-key="${esc(e.key)}"><input type="checkbox" data-queue="${esc(e.key)}" ${selected.has(e.key) ? "checked" : ""} ${e.errors.length ? "disabled" : ""} aria-label="Select ${esc(name)}"><span class="count">${i + 1}</span><div><strong>${esc(name)}</strong><p class="note">${e.errors.length ? esc(e.errors.join(" ")) : e.first ? "First attempt" : `Best ${ratio(best(c, e.priority.p, stage), max)}`}</p></div><button type="button" class="prio ${e.tag || ""}" data-priority="${esc(e.key)}" aria-label="${esc(name)} priority: ${e.tag || "normal"}" title="${e.tag === "high" ? "High priority" : e.tag === "low" ? "Low priority" : "Set priority"}">${e.tag === "high" ? "▲" : e.tag === "low" ? "▼" : "↕"}</button></div>`;
+      })
+      .join("") || '<div class="panel-body note">No firers to redetail.</div>'
+  }</div></section>`;
+}
+// Updates results and the redetailing list without replacing score inputs.
+function refreshStage(stage) {
+  const c = s(),
+    waiting = awaiting(c, stage);
+  document.querySelectorAll("tr[data-row]").forEach((tr) => {
+    const p = c.participants.find((x) => x.id === tr.dataset.row);
+    if (!p) return;
+    tr.querySelector(".results").innerHTML = resultsCell(c, p, stage);
+    tr.classList.toggle("awaiting", waiting.has(p.id));
+    if (!waiting.has(p.id)) tr.querySelector(".pending")?.remove();
+  });
+  const q = queue(c, stage);
+  selected = new Set(
+    [...selected].filter((key) =>
+      q.some((e) => e.key === key && !e.errors.length),
+    ),
+  );
+  const panel = $(".queue");
+  if (panel) panel.outerHTML = queuePanel(c, stage, q);
+}
+function updateRedetailButton(stage) {
+  const c = s(),
+    count = queue(c, stage)
+      .filter((e) => selected.has(e.key))
+      .reduce((n, e) => n + e.members.length, 0);
+  $("#redetail").disabled = !count;
+  $("#redetail").textContent = `Redetail${count ? ` (${count})` : ""}`;
+}
+function saveHit(input) {
+  const c = s(),
+    stage = tab.split(":")[1],
+    p = c.participants.find((x) => x.id === input.dataset.hits),
+    errors = input.closest(".score-panel").querySelector(".draft-errors");
+  if (!p || input.value === "") return;
+  try {
+    const a = recordIndividual(c, p, stage, input.value);
+    input.value = "";
+    input.classList.remove("invalid");
+    errors.textContent = "";
+    save();
+    later(() => refreshStage(stage));
+    toast(`${p.name}: ${a.score} saved.`, () => undoAttempt(c, a.id));
+  } catch (e) {
+    input.classList.add("invalid");
+    errors.textContent = `${p.name}: ${e.message}`;
+  }
+}
+function confirmDetail(detailId, stage) {
+  const c = s(),
+    draft = getDraft(c, detailId, stage),
+    panel = $(`[data-detail="${detailId}"]`);
+  try {
+    const a = saveDetail(c, draft),
+      name = c.details.find((d) => d.id === detailId).name;
     save();
     render();
-  };
-  $("#detailed").onclick = () => {
-    try {
-      dispatch(current, stage, [...selected]);
-      selected.clear();
-      save();
-      render();
-      toast("Awaiting scores.");
-    } catch (e) {
-      toast(e.message);
-    }
-  };
+    toast(`${name}: ${stageLabel(c, stage)} confirmed.`, () =>
+      undoAttempt(c, c.attempts.find((x) => x.detailAttemptId === a.id).id),
+    );
+  } catch (e) {
+    panel.querySelector(".draft-errors").textContent = e.message;
+    save();
+  }
 }
-function queueInfo(current, e, stage) {
-  const p = e.priority.p,
-    g = goal(current, p, stage),
-    c = p.profile.components.find((c) => c.id === stage),
-    t = target(current, p, stage, g?.objective || current.settings.objective),
-    r = result(current, p);
-  const method = {
-    automatic: `${current.settings.objective === "marksman" ? "Marksman" : "Pass"} first. First attempts come first, then attainable goals with the smallest proportional score gap.`,
-    lowest: "Lowest best-stage fraction first.",
-    highest: "Highest best-stage fraction first.",
-    first:
-      "First attempts, then earliest recorded attempt. Firing order is approximated by score-entry time.",
-  }[current.settings.order];
-  return `${method} ${e.first ? "No complete score yet." : `Best ${ratio(best(current, p, stage), c.max)}. ${r.total === null ? `Suggested ${ratio(t, c.max)}.` : `Total ${ratio(r.total, p.profile.total)}.`}`} ${isCS(current) ? `The ${e.members.length}-firer detail stays together. Its priority follows ${p.name}.` : ""} ${e.errors.join(" ")} These are planning suggestions, not stage pass standards or a prediction of improvement.`;
+function refreshDraft(panel, c, draft) {
+  panel.querySelector(".draft-errors").textContent = draftErrors(
+    c,
+    draft,
+  ).join("\n");
+  panel.querySelector(".draft-summary").textContent = draftSummary(c, draft);
+  save();
+}
+function redetail(stage) {
+  const c = s(),
+    chosen = queue(c, stage).filter((e) => selected.has(e.key));
+  if (busy || !chosen.length) return;
+  const keys = chosen.map((e) => e.key),
+    ids = new Set(chosen.flatMap((e) => e.members.map((p) => p.id))),
+    reshoot = chosen.some((e) =>
+      e.members.some((p) => best(c, p, stage) !== null),
+    ),
+    waiting = notYetShot(c, stage).filter((p) => !ids.has(p.id));
+  if (!reshoot || !waiting.length) return runRedetail(stage, keys);
+  const names = waiting.slice(0, 12).map((p) => p.name).join(", ");
+  dialog(
+    "Not all participants have shot yet",
+    `<p>${waiting.length === 1 ? "1 participant has" : `${waiting.length} participants have`} no ${esc(stageLabel(c, stage))} score yet: ${esc(names)}${waiting.length > 12 ? ` and ${waiting.length - 12} more` : ""}.</p><p class="note">Let everyone shoot once before redetailing, or go back and fill in their scores.</p>`,
+    "Continue redetailing",
+    () => {
+      $("#dialog").close();
+      runRedetail(stage, keys);
+    },
+    "Go back",
+  );
+}
+async function runRedetail(stage, keys) {
+  const c = s();
+  try {
+    dispatch(c, stage, keys);
+  } catch (e) {
+    toast(e.message);
+    return;
+  }
+  const ids = new Set(
+      c.dispatches
+        .filter((d) => d.status === "awaiting" && keys.includes(d.key))
+        .flatMap((d) => d.roster.map((m) => m.id)),
+    ),
+    list = $(".queue-list");
+  selected.clear();
+  save();
+  busy = true;
+  if (list && !reduceMotion()) await shuffle(list, keys);
+  busy = false;
+  render();
+  document.querySelectorAll("tr[data-row]").forEach((tr) => {
+    if (ids.has(tr.dataset.row)) tr.classList.add("flash");
+  });
+  toast(
+    `${ids.size} ${ids.size === 1 ? "firer" : "firers"} redetailed. Enter their scores when they finish.`,
+  );
+}
+// Brief shuffle of the list while redetailed firers slide out to the score table.
+async function shuffle(list, keys) {
+  const rows = [...list.querySelectorAll(".queue-row")],
+    leaving = rows.filter((r) => keys.includes(r.dataset.key)),
+    staying = rows.filter((r) => !keys.includes(r.dataset.key)),
+    pause = (ms) => new Promise((done) => setTimeout(done, ms));
+  list.classList.add("shuffling");
+  leaving.forEach((r) => r.classList.add("leaving"));
+  await pause(220);
+  leaving.forEach((r) => r.remove());
+  for (let round = 0; round < 5; round++) {
+    const top = new Map(staying.map((r) => [r, r.getBoundingClientRect().top]));
+    staying.sort(() => Math.random() - 0.5).forEach((r) => list.append(r));
+    for (const r of staying) {
+      const dy = top.get(r) - r.getBoundingClientRect().top;
+      if (dy)
+        r.animate(
+          [{ transform: `translateY(${dy}px)` }, { transform: "none" }],
+          { duration: 90, easing: "ease-out" },
+        );
+    }
+    await pause(95);
+  }
+  list.classList.remove("shuffling");
 }
 function renderFinal() {
-  const current = s(),
-    cs = stages(current),
-    rr = current.participants.map((p) => result(current, p));
+  const c = s(),
+    cs = stages(c),
+    rr = c.participants.map((p) => result(c, p));
+  const table = (people) =>
+    `<div class="table-wrap"><table><thead><tr><th>Full name</th>${cs.map((x) => `<th>${esc(x.label)}</th>`).join("")}<th>Total</th><th>Result</th><th></th></tr></thead><tbody>${people
+      .map((p) => {
+        const r = result(c, p);
+        return `<tr><td class="name">${esc(p.name)}</td>${p.profile.components.map((x, i) => `<td class="num">${ratio(r.scores[i], x.max)}</td>`).join("")}<td class="num"><b>${ratio(r.total, p.profile.total)}</b></td><td>${badge(r.status)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+      })
+      .join("")}</tbody></table></div>`;
   $("#main").innerHTML =
-    shootPicker(
+    shootHead(
       '<span class="spacer"></span><button data-action="csv">Export scores</button>',
     ) +
     `<div class="summary-line">${["Marksman", "Pass", "Fail", "Incomplete"].map((label) => `<span><strong>${rr.filter((r) => r.status === label).length}</strong> ${label}</span>`).join("")}</div>` +
-    (current.participants.length
-      ? current.details
-          .filter((d) => members(current, d.id).length)
-          .map(
-            (d) =>
-              `<section class="panel"><div class="detail-head"><h3>${esc(d.name)}</h3></div><div class="table-wrap"><table><thead><tr><th>Full name</th>${cs.map((c) => `<th>${esc(c.label)}</th>`).join("")}<th>Total</th><th>Result</th><th></th></tr></thead><tbody>${members(
-                current,
-                d.id,
-              )
-                .map((p) => {
-                  const r = result(current, p);
-                  return `<tr><td class="name">${esc(p.name)}</td>${p.profile.components.map((c, i) => `<td class="num" title="${esc(bestAttempt(current, p, c.id)?.weapon || p.weapon)}">${ratio(r.scores[i], c.max)}</td>`).join("")}<td class="num"><b>${ratio(r.total, p.profile.total)}</b></td><td>${badge(r.status)}</td><td><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
-                })
-                .join("")}</tbody></table></div></section>`,
-          )
-          .join("")
-      : empty("No scores yet"));
-}
-function targetSample(current, p) {
-  const objective = current.settings.objective,
-    goalName = objective === "marksman" ? "Marksman" : "Pass",
-    components = p.profile.components;
-  if (current.program === "BTP") {
-    const a = target(current, p, "A"),
-      remaining = Math.max(0, p.profile[objective] - a);
-    return `${ratio(a, 16)} in Stage A requires ${ratio(remaining, 16)} in Stage B for ${goalName} (${ratio(p.profile[objective], 32)}).`;
-  }
-  const configured = components.slice(0, -1),
-    last = components.at(-1),
-    sum = configured.reduce((n, c) => n + (target(current, p, c.id) ?? 0), 0),
-    needed = Math.max(0, p.profile[objective] - sum);
-  return `${configured.map((c) => `${c.label} ${ratio(target(current, p, c.id), c.max)}`).join(" + ")} requires ${last.label} ${ratio(needed, last.max)} for ${goalName} (${ratio(p.profile[objective], p.profile.total)}).`;
+    (!c.participants.length
+      ? empty("No scores yet")
+      : isCS(c)
+        ? c.details
+            .filter((d) => members(c, d.id).length)
+            .map(
+              (d) =>
+                `<section class="panel"><div class="detail-head"><h3>${esc(d.name)}</h3></div>${table(members(c, d.id))}</section>`,
+            )
+            .join("")
+        : `<section class="panel">${table(c.participants)}</section>`);
 }
 function renderSettings() {
-  const active = s();
   $("#main").innerHTML =
     `<div class="settings"><div class="heading"><h2>Settings</h2></div>${Object.entries(
       PROGRAMS,
     )
       .map(([program, label]) => {
-        const variant = program === "APS" ? store.aps : "standard",
-          current = getShoot(store, program),
-          p = {
-            weapon: current.settings.weapon,
-            profile: profileFor(program, variant, current.settings.weapon),
-          },
-          on = store.enabled.includes(program),
-          rule = DETAIL_RULES[program];
-        return `<section class="preset ${openPresets.has(program) ? "open" : ""}"><div class="preset-head"><button class="expand" data-expand="${program}" aria-expanded="${openPresets.has(program)}">${label}</button><button class="toggle" role="switch" aria-checked="${on}" data-enable="${program}" aria-label="Enable ${label}"></button></div><div class="preset-body">${program === "APS" ? `<div class="seg" style="margin-bottom:14px"><button data-aps="standard" class="${store.aps === "standard" ? "on" : ""}">APS</button><button data-aps="ns" class="${store.aps === "ns" ? "on" : ""}">APS (NS)</button></div>` : ""}<label class="field inline"><span>Rifle</span><select data-default-weapon="${program}" aria-label="${label} default rifle">${option(weaponsFor(program, variant), current.settings.weapon)}</select></label>${rule ? `<p class="limit">${rule.min ? `${rule.min}–${rule.max} firers per detail.` : `Maximum ${rule.max} firers per detail.`}${rule.nonSAR ? " Up to 2 non-SAR21 weapons total." : ""}${program === "ATP_SP" ? " No LMG." : ""}</p>` : ""}<form data-target-form="${program}"><label class="field inline"><span>Automatic</span><select data-objective="${program}" aria-label="${label} Automatic priority"><option value="marksman" ${current.settings.objective === "marksman" ? "selected" : ""}>Marksman first</option><option value="pass" ${current.settings.objective === "pass" ? "selected" : ""}>Pass first</option></select></label><span class="muted">Suggested scores</span>${targetStages(
-          current,
-        )
-          .map((c) => {
-            const max = p.profile.components.find((x) => x.id === c.id).max;
-            return `<div class="target-row"><label for="target-${program}-${c.id}">${esc(c.label)}</label><input id="target-${program}-${c.id}" name="${c.id}" type="number" min="0" max="${max}" step="1" required value="${target(current, p, c.id)}" aria-label="${label} ${c.label} suggested score"><span class="muted">/${max}</span></div>`;
-          })
-          .join(
-            "",
-          )}<p class="note sample">${esc(targetSample(current, p))}</p><button type="submit">Save suggestions</button></form><details class="reference"><summary>Scoring rules</summary><p>Pass ${ratio(p.profile.pass, p.profile.total)} · Marksman ${ratio(p.profile.marksman, p.profile.total)}.</p>${isCS(current) ? "<p>A/C: floor(detail hits ÷ roster count), then keep each firer’s best earned average. Stage B uses individual hits.</p>" : ""}<p>Source ${p.profile.source} · ${p.profile.version}</p></details></div></section>`;
+        const on = store.enabled.includes(program),
+          open = openPresets.has(program);
+        const inUse = on && s()?.program === program;
+        return `<section class="preset ${open ? "open" : ""}"><div class="preset-head"><button class="expand" data-expand="${program}" aria-expanded="${open}">${label}</button><button class="toggle" role="switch" aria-checked="${on}" data-enable="${program}" aria-label="Enable ${label}" ${inUse ? `disabled title="The open shoot uses ${esc(label)}"` : ""}></button></div><div class="preset-body">${inUse ? `<p class="note">The open shoot uses ${esc(label)}, so it stays on.</p>` : ""}${on ? presetBody(program) : `<p class="note">Turn on ${esc(label)} to edit its settings.</p>`}</div></section>`;
       })
       .join(
         "",
-      )}<div class="settings-section"><h3>Data</h3><div class="actions"><button data-action="backup">Export backup</button><button data-action="restore">Restore backup</button>${active ? '<button data-action="new-roster">New roster</button>' : ""}</div><p class="note" id="offline-note">${offlineReady ? "Available offline. Rosters, scores, and unfinished entries are saved on this device." : "Preparing offline files…"}</p>${store.archives.length ? `<details class="reference"><summary>Earlier records (${store.archives.length})</summary>${store.archives.map((a) => `<p>${esc(a.label)} <button class="inline-link" data-archive="${a.id}">View</button></p>`).join("")}</details>` : ""}</div></div>`;
+      )}<div class="settings-section"><h3>Data</h3><div class="actions"><button data-action="backup">Export backup</button><button data-action="restore">Restore backup</button></div><p class="note" id="offline-note">${offlineReady ? "Available offline. Shoots and scores are saved on this device." : "Preparing offline files…"}</p></div></div>`;
 }
-function dialog(title, body, label, submit) {
+function presetBody(program) {
+  const variant = program === "APS" ? apsView : "standard",
+    key = `${program}|${variant}`,
+    label = typeLabel(program, variant),
+    pr = preset(store, program, variant),
+    list = weaponsFor(program, variant),
+    rule = DETAIL_RULES[program],
+    shoot = {
+      program,
+      variant,
+      attempts: [],
+      settings: {
+        weapon: pr.weapon,
+        objective: pr.objective,
+        targets: pr.targets,
+      },
+    },
+    p = { weapon: pr.weapon, profile: profileFor(program, variant, pr.weapon) };
+  return `${program === "APS" ? `<div class="seg" style="margin-bottom:14px"><button data-aps="standard" class="${apsView === "standard" ? "on" : ""}">APS</button><button data-aps="ns" class="${apsView === "ns" ? "on" : ""}">APS (NS)</button></div>` : ""}${list.length > 1 ? `<label class="field inline"><span>Default rifle</span><select data-default-weapon="${key}" aria-label="${esc(label)} default rifle">${option(list, pr.weapon)}</select></label>` : ""}${rule ? `<p class="limit">${rule.min ? `${rule.min}–${rule.max} firers per detail. Up to ${rule.nonSAR} non-SAR21 weapons per detail.` : `Up to ${rule.max} firers at a time.`}</p>` : ""}<form data-target-form="${key}"><label class="field inline"><span>Automatic</span><select data-objective="${key}" aria-label="${esc(label)} Automatic priority"><option value="marksman" ${pr.objective === "marksman" ? "selected" : ""}>Marksman first</option><option value="pass" ${pr.objective === "pass" ? "selected" : ""}>Pass first</option></select></label><span class="muted">Suggested scores${list.length > 1 ? ` · ${esc(pr.weapon)}` : ""}</span>${targetStages(
+    shoot,
+  )
+    .map((c) => {
+      const max = p.profile.components.find((x) => x.id === c.id).max;
+      return `<div class="target-row"><label for="target-${program}-${c.id}">${esc(c.label)}</label><input id="target-${program}-${c.id}" name="${c.id}" type="number" min="0" max="${max}" step="1" required value="${target(shoot, p, c.id)}" aria-label="${esc(label)} ${esc(c.label)} suggested score"><span class="muted">/${max}</span></div>`;
+    })
+    .join(
+      "",
+    )}<button type="submit">Save suggestions</button></form><details class="reference"><summary>Scoring rules</summary>${list
+    .map((w) => {
+      const pf = profileFor(program, variant, w);
+      return `<p>${list.length > 1 ? `<b>${esc(w)}</b> · ` : ""}Pass ${ratio(pf.pass, pf.total)} · Marksman ${ratio(pf.marksman, pf.total)}</p>`;
+    })
+    .join(
+      "",
+    )}${program.startsWith("CS_") ? "<p>Stages A and C: detail hits ÷ firers, rounded down. Stage B: individual hits.</p>" : ""}</details>`;
+}
+function dialog(title, body, label, submit, closeLabel = "Close") {
   const d = $("#dialog");
-  d.innerHTML = `<form id="dialog-form"><h2 id="dialog-title">${esc(title)}</h2>${body}<div class="error" role="alert"></div><div class="dialog-actions"><button type="button" id="close-dialog">Close</button>${label ? `<button type="submit" class="primary">${esc(label)}</button>` : ""}</div></form>`;
+  d.innerHTML = `<form id="dialog-form"><h2 id="dialog-title">${esc(title)}</h2>${body}<div class="error" role="alert"></div><div class="dialog-actions"><button type="button" id="close-dialog">${esc(closeLabel)}</button>${label ? `<button type="submit" class="primary">${esc(label)}</button>` : ""}</div></form>`;
   if (!d.open) d.showModal();
   $("#close-dialog").onclick = () => d.close();
   $("#dialog-form").onsubmit = (ev) => {
@@ -384,31 +744,26 @@ function dialog(title, body, label, submit) {
     }
   };
 }
-function addDialog(detailId) {
-  const current = s();
+function detailOptions(c, chosen) {
+  return `<option value="" ${!chosen ? "selected" : ""}>No detail</option>${sortedDetails(
+    c,
+  )
+    .map(
+      (d) =>
+        `<option value="${d.id}" ${d.id === chosen ? "selected" : ""}>${esc(d.name)}</option>`,
+    )
+    .join("")}<option value="new">New detail</option>`;
+}
+function addDialog() {
+  const c = s(),
+    cs = isCS(c),
+    multi = weapons(c).length > 1;
   dialog(
     "Add participants",
-    `<label class="field"><span>Full names · one per line</span><textarea name="names" required autofocus></textarea></label><div class="form-grid"><label class="field"><span>Rifle</span><select name="weapon">${option(weaponsFor(current.program, current.variant), current.settings.weapon)}</select></label><label class="field"><span>Detail</span><select name="detail">${current.details.map((d) => `<option value="${d.id}" ${d.id === detailId ? "selected" : ""}>${esc(d.name)}</option>`).join("")}<option value="new" ${!detailId ? "selected" : ""}>New detail</option></select></label></div>`,
+    `<label class="field"><span>Full names · one per line</span><textarea name="names" required autofocus placeholder="${cs ? "Alex Tan, 1&#10;Benjamin Lee, 1&#10;Chris Wong" : "Alex Tan&#10;Benjamin Lee"}"></textarea></label>${cs ? '<p class="note">Add a detail number after a name to put them in that detail, or choose details afterward with the number buttons.</p>' : ""}${multi ? `<label class="field"><span>Rifle</span><select name="weapon">${option(weapons(c), c.settings.weapon)}</select></label>` : ""}`,
     "Add",
     (f) => {
-      let d = current.details.find((d) => d.id === f.get("detail")),
-        created = false;
-      if (!d) {
-        d = addDetail(current);
-        created = true;
-      }
-      try {
-        addParticipants(
-          current,
-          f.get("names").split(/\r?\n/),
-          f.get("weapon"),
-          d.id,
-        );
-      } catch (e) {
-        if (created)
-          current.details = current.details.filter((x) => x.id !== d.id);
-        throw e;
-      }
+      addParticipants(c, f.get("names"), f.get("weapon") || c.settings.weapon);
       save();
       $("#dialog").close();
       render();
@@ -416,29 +771,44 @@ function addDialog(detailId) {
   );
 }
 function personDialog(id) {
-  const current = s(),
-    p = current.participants.find((p) => p.id === id);
+  const c = s(),
+    cs = isCS(c),
+    multi = weapons(c).length > 1,
+    p = c.participants.find((p) => p.id === id),
+    stage = tab.startsWith("stage:") ? tab.split(":")[1] : null,
+    row =
+      cs && stage && p.detailId
+        ? getDraft(c, p.detailId, stage).rows.find(
+            (r) => r.participantId === p.id,
+          )
+        : null;
   dialog(
     p.name,
-    `<label class="field"><span>Full name</span><input name="name" value="${esc(p.name)}" required></label><div class="form-grid"><label class="field"><span>Rifle</span><select name="weapon">${option(weaponsFor(current.program, current.variant), p.weapon)}</select></label><label class="field"><span>Detail</span><select name="detail">${current.details.map((d) => `<option value="${d.id}" ${d.id === p.detailId ? "selected" : ""}>${esc(d.name)}</option>`).join("")}<option value="new">New detail</option></select></label></div><label class="field"><span>Correction reason · required when changing recorded data</span><input name="reason"></label><div class="actions">${p.profile.components.map((c) => `<button type="button" data-manual="${c.id}">Enter ${esc(c.label)}</button>`).join("")}</div><div class="actions" style="margin-top:8px"><button type="button" id="history">History</button>${p.profile.excluded?.length ? '<button type="button" id="sighting">Sighting</button>' : ""}<button type="button" id="reshoot">Queue reshoot</button><button type="button" class="danger" id="remove">Remove</button></div>`,
+    `<label class="field"><span>Full name</span><input name="name" value="${esc(p.name)}" required></label>${multi || cs ? `<div class="form-grid">${multi ? `<label class="field"><span>Rifle</span><select name="weapon">${option(weapons(c), p.weapon)}</select></label>` : ""}${cs ? `<label class="field"><span>Detail</span><select name="detail">${detailOptions(c, p.detailId)}</select></label>` : ""}</div>` : ""}<label class="field"><span>Correction reason · required when changing recorded data</span><input name="reason"></label>${row ? `<div class="actions"><button type="button" id="presence">${row.accounted === false ? "Mark present" : "Not present for this detail"}</button></div>` : ""}${cs ? "" : `<div class="actions">${p.profile.components.map((x) => `<button type="button" data-manual="${x.id}">Enter ${esc(x.label)}</button>`).join("")}</div>`}<div class="actions" style="margin-top:8px"><button type="button" id="history">History</button>${p.profile.excluded?.length ? '<button type="button" id="sighting">Sighting</button>' : ""}<button type="button" id="reshoot">Queue reshoot</button><button type="button" class="danger" id="remove">Remove</button></div>`,
     "Save",
     (f) => {
-      let detailId = f.get("detail"),
-        created;
-      if (detailId === "new") {
-        created = addDetail(current);
-        detailId = created.id;
+      let detail = null,
+        created = null;
+      if (cs) {
+        detail = f.get("detail") || null;
+        if (detail === "new") {
+          created = addDetail(c);
+          detail = created.id;
+        }
       }
       try {
         updateParticipant(
-          current,
+          c,
           id,
-          { name: f.get("name"), weapon: f.get("weapon"), detailId },
+          {
+            name: f.get("name"),
+            weapon: f.get("weapon") || p.weapon,
+            detailId: detail,
+          },
           f.get("reason"),
         );
       } catch (e) {
-        if (created)
-          current.details = current.details.filter((d) => d.id !== created.id);
+        if (created) c.details = c.details.filter((d) => d.id !== created.id);
         throw e;
       }
       save();
@@ -446,10 +816,17 @@ function personDialog(id) {
       render();
     },
   );
+  if ($("#presence"))
+    $("#presence").onclick = () => {
+      setPresent(c, p.detailId, stage, p.id, row.accounted === false);
+      save();
+      $("#dialog").close();
+      render();
+    };
   $("#history").onclick = () => historyDialog(p);
   $("#remove").onclick = () => {
     try {
-      removeParticipant(current, id);
+      removeParticipant(c, id);
       save();
       $("#dialog").close();
       render();
@@ -460,10 +837,10 @@ function personDialog(id) {
   $("#reshoot").onclick = () =>
     dialog(
       "Queue reshoot",
-      `<label class="field"><span>Stage</span><select name="stage">${p.profile.components.map((c) => `<option value="${c.id}">${esc(c.label)}</option>`).join("")}</select></label>`,
+      `<label class="field"><span>Stage</span><select name="stage">${p.profile.components.map((x) => `<option value="${x.id}">${esc(x.label)}</option>`).join("")}</select></label>`,
       "Queue",
       (f) => {
-        manualQueue(current, p, f.get("stage"));
+        manualQueue(c, p, f.get("stage"));
         save();
         $("#dialog").close();
         tab = `stage:${f.get("stage")}`;
@@ -476,37 +853,19 @@ function personDialog(id) {
     .forEach(
       (b) =>
         (b.onclick = () => {
-          const stage = b.dataset.manual;
-          if (isCS(current)) {
-            $("#dialog").close();
-            tab = `stage:${stage}`;
-            search = "";
-            render();
-            $(`[data-detail="${p.detailId}"]`).scrollIntoView({
-              block: "center",
-            });
-            return;
-          }
-          manualDialog(p, stage);
+          manualDialog(p, b.dataset.manual);
         }),
     );
 }
 function manualDialog(p, stage) {
-  const current = s(),
-    c = p.profile.components.find((c) => c.id === stage);
+  const c = s(),
+    x = p.profile.components.find((x) => x.id === stage);
   dialog(
-    `${p.name} · ${c.label}`,
-    `<label class="field"><span>Hits /${c.max}</span><input name="hits" type="number" min="0" max="${c.max}" step="1" required autofocus></label><label class="field"><span>Note (optional)</span><input name="reason"></label>`,
+    `${p.name} · ${x.label}`,
+    `<label class="field"><span>Hits /${x.max}</span><input name="hits" type="number" min="0" max="${x.max}" step="1" required autofocus></label><label class="field"><span>Note (optional)</span><input name="reason"></label>`,
     "Save score",
     (f) => {
-      recordIndividual(
-        current,
-        p,
-        stage,
-        f.get("hits"),
-        p.weapon,
-        f.get("reason"),
-      );
+      recordIndividual(c, p, stage, f.get("hits"), p.weapon, f.get("reason"));
       save();
       $("#dialog").close();
       render();
@@ -514,28 +873,28 @@ function manualDialog(p, stage) {
   );
 }
 function sightingDialog(p) {
-  const current = s();
+  const c = s();
   dialog(
     `${p.name} · Sighting`,
-    `<label class="field"><span>Practice</span><select name="practice">${p.profile.excluded.map((c, i) => `<option value="${i}">${esc(c.label)} /${c.max}</option>`).join("")}</select></label><label class="field"><span>Hits</span><input name="hits" type="number" min="0" step="1" required></label>`,
+    `<label class="field"><span>Practice</span><select name="practice">${p.profile.excluded.map((x, i) => `<option value="${i}">${esc(x.label)} /${x.max}</option>`).join("")}</select></label><label class="field"><span>Hits</span><input name="hits" type="number" min="0" step="1" required></label>`,
     "Save",
     (f) => {
-      const c = p.profile.excluded[Number(f.get("practice"))],
-        parsed = parseHits(f.get("hits"), c.max);
+      const x = p.profile.excluded[Number(f.get("practice"))],
+        parsed = parseHits(f.get("hits"), x.max);
       if (parsed.error) throw Error(parsed.error);
-      current.sightings ??= [];
-      current.sightings.push({
+      c.sightings ??= [];
+      c.sightings.push({
         id: uid(),
         participantId: p.id,
         recordId: p.recordId,
         weapon: p.weapon,
         profile: structuredClone(p.profile),
-        practice: c.label,
+        practice: x.label,
         hits: parsed.value,
         at: now(),
         recorder: "Local device",
       });
-      audit(current, "Sighting recorded", { participantId: p.id });
+      audit(c, "Sighting recorded", { participantId: p.id });
       save();
       $("#dialog").close();
       render();
@@ -543,36 +902,36 @@ function sightingDialog(p) {
   );
 }
 function historyDialog(p) {
-  const current = s(),
-    attempts = current.attempts
+  const c = s(),
+    attempts = c.attempts
       .filter((a) => a.participantId === p.id)
       .toReversed(),
-    pending = current.dispatches.filter(
+    pendingList = c.dispatches.filter(
       (d) => d.status === "awaiting" && d.roster.some((m) => m.id === p.id),
     );
   dialog(
     `${p.name} · History`,
-    pending
+    pendingList
       .map(
         (d) =>
-          `<div class="history-row"><div>Stage ${esc(d.stage)} · Awaiting scores</div><button type="button" data-cancel="${d.id}">Cancel detailing</button></div>`,
+          `<div class="history-row"><div>Stage ${esc(d.stage)} · Awaiting scores</div><button type="button" data-cancel="${d.id}">Cancel</button></div>`,
       )
       .join("") +
       attempts
         .map((a) => {
-          const shared = current.shared.find((d) => d.id === a.detailAttemptId),
-            max = a.profile.components.find((c) => c.id === a.stage).max;
-          return `<div class="history-row"><div><b>Stage ${esc(a.stage)} · ${ratio(a.score, max)}</b> ${a.status === "void" ? badge("Voided") : ""}<p>${esc(a.weapon)} · ${new Date(a.recordedAt).toLocaleString("en-US")}${shared && isCS(current) && ["A", "C"].includes(a.stage) ? `<br>${shared.aggregateHits}/${shared.divisor} → ${a.score}. ${shared.inputMode === "aggregate" ? "Aggregate only; individual hits not supplied." : "Individual hits reconciled."}` : ""}${a.correction ? `<br>${esc(a.correction.reason)}` : ""}</p></div>${a.status === "valid" ? `<button type="button" data-correct="${a.id}">Correct</button>` : ""}</div>`;
+          const shared = c.shared.find((d) => d.id === a.detailAttemptId),
+            max = a.profile.components.find((x) => x.id === a.stage).max;
+          return `<div class="history-row"><div><b>Stage ${esc(a.stage)} · ${ratio(a.score, max)}</b> ${a.status === "void" ? badge("Voided") : ""}<p>${esc(a.weapon)} · ${new Date(a.recordedAt).toLocaleString("en-US")}${shared && isCS(c) && ["A", "C"].includes(a.stage) ? `<br>${shared.aggregateHits}/${shared.divisor} → ${a.score}. ${shared.inputMode === "aggregate" ? "Detail total only." : "Individual hits checked."}` : ""}${a.correction ? `<br>${esc(a.correction.reason)}` : ""}</p></div>${a.status === "valid" ? `<button type="button" data-correct="${a.id}">Correct</button>` : ""}</div>`;
         })
         .join("") +
-      (current.sightings || [])
+      (c.sightings || [])
         .filter((a) => a.participantId === p.id)
         .map(
           (a) =>
-            `<div class="history-row"><div>${esc(a.practice)} · ${a.hits}<p>Excluded from scored totals</p></div></div>`,
+            `<div class="history-row"><div>${esc(a.practice)} · ${a.hits}<p>Not counted in scores</p></div></div>`,
         )
         .join("") +
-      (!attempts.length && !pending.length
+      (!attempts.length && !pendingList.length
         ? '<p class="note">No scored attempts.</p>'
         : ""),
     null,
@@ -582,18 +941,17 @@ function historyDialog(p) {
     .forEach(
       (b) =>
         (b.onclick = () => {
-          const a = current.attempts.find((a) => a.id === b.dataset.correct),
+          const a = c.attempts.find((a) => a.id === b.dataset.correct),
             affected = a.detailAttemptId
-              ? current.attempts.filter(
-                  (x) => x.detailAttemptId === a.detailAttemptId,
-                ).length
+              ? c.attempts.filter((x) => x.detailAttemptId === a.detailAttemptId)
+                  .length
               : 1;
           dialog(
             "Correct score",
-            `${affected > 1 ? `<p class="note">This shared record affects ${affected} firers.</p>` : ""}<label class="field"><span>Correction reason</span><input name="reason" required autofocus></label>`,
+            `${affected > 1 ? `<p class="note">This detail score affects ${affected} firers.</p>` : ""}<label class="field"><span>Correction reason</span><input name="reason" required autofocus></label>`,
             "Void score",
             (f) => {
-              voidAttempt(current, a.id, f.get("reason"));
+              voidAttempt(c, a.id, f.get("reason"));
               save();
               render();
               historyDialog(p);
@@ -606,34 +964,12 @@ function historyDialog(p) {
     .forEach(
       (b) =>
         (b.onclick = () => {
-          const d = current.dispatches.find((d) => d.id === b.dataset.cancel);
-          d.status = "canceled";
-          audit(current, "Detailing canceled", { dispatchId: d.id });
+          cancelDispatch(c, b.dataset.cancel);
           save();
           render();
           historyDialog(p);
         }),
     );
-}
-function pasteDialog(detailId, stage) {
-  const current = s(),
-    d = current.details.find((d) => d.id === detailId);
-  dialog(
-    `${d.name} · Paste scores`,
-    `<p class="note">One full name and hit count per line, separated by a tab or comma. Include everyone in this detail.</p><textarea name="scores" placeholder="Full name,12" required autofocus></textarea><details class="reference"><summary>Participant IDs (for duplicate names)</summary>${members(
-      current,
-      detailId,
-    )
-      .map((p) => `<p>${esc(p.name)} <span class="small-id">${p.id}</span></p>`)
-      .join("")}</details>`,
-    "Paste",
-    (f) => {
-      pasteScores(current, getDraft(current, detailId, stage), f.get("scores"));
-      save();
-      $("#dialog").close();
-      render();
-    },
-  );
 }
 function download(name, content, type = "application/json") {
   const link = document.createElement("a"),
@@ -642,12 +978,6 @@ function download(name, content, type = "application/json") {
   link.download = name;
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-function backup() {
-  download(
-    `detail-ic-${now().slice(0, 10)}.json`,
-    JSON.stringify(store, null, 2),
-  );
 }
 function restore() {
   dialog(
@@ -658,113 +988,28 @@ function restore() {
       try {
         const file = f.get("file");
         if (file.size > 20000000) throw Error("Maximum backup size is 20 MB.");
-        const incoming = validateStore(JSON.parse(await file.text()));
-        for (const [key, shoot] of Object.entries(incoming.shoots)) {
-          if (store.shoots[key]?.participants.length)
-            store.archives.push({
-              id: uid(),
-              label: `${PROGRAMS[store.shoots[key].program]} · before restore`,
-              savedAt: now(),
-              shoot: structuredClone(store.shoots[key]),
-            });
-          store.shoots[key] = structuredClone(shoot);
-        }
-        store.archives.push(
-          ...incoming.archives.map((a) => ({ ...a, id: uid() })),
+        const incoming = validateStore(
+          migrateStore(JSON.parse(await file.text())),
         );
+        for (const shoot of incoming.shoots) {
+          const i = store.shoots.findIndex((x) => x.id === shoot.id);
+          if (i >= 0) store.shoots[i] = shoot;
+          else store.shoots.push(shoot);
+        }
+        store.presets = { ...incoming.presets, ...store.presets };
         store.enabled = [...new Set([...store.enabled, ...incoming.enabled])];
-        store.aps = incoming.aps;
-        store.active =
-          incoming.active && store.enabled.includes(incoming.active)
-            ? incoming.active
-            : store.enabled[0] || null;
+        if (incoming.active) store.active = incoming.active;
+        applyPresets(store);
         save();
         $("#dialog").close();
-        tab = "participants";
+        tab = "shoots";
         render();
-        toast("Backup restored. Previous rosters are in Earlier records.");
+        toast("Backup restored.");
       } catch (e) {
         $("#dialog .error").textContent = e.message;
       }
     },
   );
-}
-function archiveDialog(id) {
-  const archive = store.archives.find((a) => a.id === id);
-  const shoots = archive.shoot ? [archive.shoot] : [];
-  dialog(
-    archive.label,
-    `<p class="note">Read-only history.</p>${shoots
-      .map(
-        (shoot) =>
-          `<h3>${esc(PROGRAMS[shoot.program] || shoot.program)}</h3><div class="table-wrap"><table><thead><tr><th>Name</th><th>Weapon</th><th>Recorded attempts</th></tr></thead><tbody>${shoot.participants
-            .map(
-              (p) =>
-                `<tr><td>${esc(p.name)}</td><td>${esc(p.weapon)}</td><td>${
-                  (shoot.attempts || [])
-                    .filter((a) => a.participantId === p.id)
-                    .map(
-                      (a) =>
-                        `<div>Stage ${esc(a.stage)}: ${a.score}${a.status === "void" ? " (voided)" : ""}</div>`,
-                    )
-                    .join("") || "—"
-                }</td></tr>`,
-            )
-            .join("")}</tbody></table></div>`,
-      )
-      .join(
-        "",
-      )}<div class="actions" style="margin-top:15px"><button type="button" id="export-archive">Export original records</button></div>`,
-    null,
-  );
-  $("#export-archive").onclick = () =>
-    download(
-      "detail-ic-earlier-records.json",
-      JSON.stringify(archive, null, 2),
-    );
-}
-function refreshDraft(panel, current, draft) {
-  const errors = detailErrors(current, draft),
-    v = validateDraft(current, draft);
-  panel.querySelector(".draft-errors").textContent = errors.join("\n");
-  if (v.shared) {
-    const max = stages(current).find((c) => c.id === draft.stage).max;
-    panel.querySelector(".draft-summary").textContent =
-      v.score === null
-        ? "Draft saved"
-        : `Average: ${v.aggregate}/${v.divisor} → ${v.score}/${max}`;
-    const all = panel.querySelector("[data-all-present]");
-    if (all) all.checked = draft.rows.every((r) => r.accounted);
-  }
-  save();
-}
-function saveScores(detailId, stage) {
-  const current = s(),
-    draft = getDraft(current, detailId, stage);
-  try {
-    if (isCS(current)) saveDetail(current, draft);
-    else {
-      const errors = detailErrors(current, draft);
-      if (errors.length) throw Error(errors.join("\n"));
-      const entered = draft.rows.filter((r) => r.hits !== "");
-      if (!entered.length) throw Error("Enter at least one score.");
-      for (const row of entered) {
-        const p = current.participants.find((p) => p.id === row.participantId);
-        recordIndividual(current, p, stage, row.hits, row.weapon);
-      }
-      for (const row of entered) {
-        row.hits = "";
-        row.accounted = false;
-      }
-    }
-    save();
-    render();
-    toast("Scores saved.");
-  } catch (e) {
-    const panel = $(`[data-detail="${detailId}"]`);
-    panel.querySelector(".draft-errors").textContent = e.message;
-    save();
-  }
 }
 $("#tabs").onclick = (e) => {
   const b = e.target.closest("[data-tab]");
@@ -776,123 +1021,136 @@ $("#tabs").onclick = (e) => {
   }
 };
 $("#main").addEventListener("input", (e) => {
-  const current = s();
-  if (e.target.id === "search") {
-    search = e.target.value;
-    const pos = e.target.selectionStart;
+  const c = s(),
+    t = e.target;
+  if (t.id === "search") {
+    search = t.value;
+    const pos = t.selectionStart;
     render();
     $("#search").focus();
     $("#search").setSelectionRange(pos, pos);
     return;
   }
-  if (e.target.matches("[data-hits],[data-aggregate]")) {
-    const panel = e.target.closest("[data-detail]"),
-      stage = tab.split(":")[1],
-      draft = getDraft(current, panel.dataset.detail, stage);
-    if (e.target.dataset.hits) {
-      const row = draft.rows.find(
-        (r) => r.participantId === e.target.dataset.hits,
-      );
-      row.hits = e.target.value;
-      if (row.hits !== "") {
-        row.accounted = true;
-        const cb = panel.querySelector(`[data-present="${row.participantId}"]`);
-        if (cb) cb.checked = true;
-      }
-    } else draft.aggregate = e.target.value;
+  if (t.matches("[data-cs-hits],[data-aggregate]")) {
+    const panel = t.closest("[data-detail]"),
+      draft = getDraft(c, panel.dataset.detail, tab.split(":")[1]);
+    if (t.dataset.csHits)
+      draft.rows.find((r) => r.participantId === t.dataset.csHits).hits =
+        t.value;
+    else draft.aggregate = t.value;
     draft.updatedAt = now();
-    refreshDraft(panel, current, draft);
-  }
-  if (e.target.closest("[data-target-form]")) {
-    const form = e.target.closest("[data-target-form]"),
-      program = form.dataset.targetForm,
-      shoot = getShoot(store, program),
-      p = {
-        weapon: shoot.settings.weapon,
-        profile: profileFor(program, shoot.variant, shoot.settings.weapon),
-      },
-      draft = structuredClone(shoot);
-    for (const c of targetStages(shoot)) {
-      const input = form.elements[c.id];
-      if (input.validity.valid && input.value !== "")
-        draft.settings.targets[
-          `${p.weapon}:${c.id}:${shoot.settings.objective}`
-        ] = Number(input.value);
-    }
-    form.querySelector(".sample").textContent = targetSample(draft, p);
+    refreshDraft(panel, c, draft);
   }
 });
+$("#main").addEventListener("keydown", (e) => {
+  const t = e.target;
+  if (e.key !== "Enter" || !t.matches("[data-hits],[data-cs-hits],[data-aggregate]"))
+    return;
+  e.preventDefault();
+  const inputs = [
+      ...t.closest(".score-panel").querySelectorAll('input[type="number"]'),
+    ],
+    next = inputs[inputs.indexOf(t) + 1],
+    selector = next
+      ? ["hits", "csHits", "aggregate"]
+          .filter((k) => next.dataset[k] !== undefined)
+          .map(
+            (k) =>
+              `[data-${k.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`)}="${next.dataset[k]}"]`,
+          )[0]
+      : null;
+  t.blur();
+  if (selector) $(selector)?.focus();
+});
 $("#main").addEventListener("change", (e) => {
-  const current = s(),
-    t = e.target;
-  if (t.id === "shoot") {
-    store.active = t.value;
-    search = "";
-    selected.clear();
-    save();
-    render();
-  } else if (t.id === "fill-weapon") {
-    current.settings.weapon = t.value;
-    save();
-  } else if (t.dataset.queue) {
-    t.checked
-      ? selected.add(t.dataset.queue)
-      : selected.delete(t.dataset.queue);
-    const q = queue(current, tab.split(":")[1]);
-    $("#detailed").disabled = !selected.size;
-    $("#detailed").textContent =
-      `Mark detailed${selected.size ? ` (${q.filter((e) => selected.has(e.key)).reduce((n, e) => n + e.members.length, 0)})` : ""}`;
-  } else if (
-    t.matches("[data-stage-weapon],[data-present],[data-all-present]")
-  ) {
-    const panel = t.closest("[data-detail]"),
-      stage = tab.split(":")[1],
-      draft = getDraft(current, panel.dataset.detail, stage);
-    if (t.dataset.stageWeapon)
+  const c = s(),
+    t = e.target,
+    stage = tab.split(":")[1];
+  try {
+    if (t.id === "shoot-type") {
+      const [program, variant] = t.value.split("|");
+      changeShootType(c, program, variant);
+      applyPreset(store, c);
+      save();
+      render();
+      toast(`Shoot type changed to ${typeLabel(program, variant)}.`);
+    } else if (t.id === "fill-weapon") {
+      c.settings.weapon = t.value;
+      save();
+    } else if (t.id === "order") {
+      c.settings.order = t.value;
+      save();
+      render();
+    } else if (t.dataset.queue) {
+      t.checked ? selected.add(t.dataset.queue) : selected.delete(t.dataset.queue);
+      updateRedetailButton(stage);
+    } else if (t.dataset.hits) saveHit(t);
+    else if (t.dataset.stageWeapon) {
+      const panel = t.closest("[data-detail]"),
+        draft = getDraft(c, panel.dataset.detail, stage);
       draft.rows.find((r) => r.participantId === t.dataset.stageWeapon).weapon =
         t.value;
-    else if (t.dataset.present)
-      draft.rows.find((r) => r.participantId === t.dataset.present).accounted =
-        t.checked;
-    else {
-      for (const row of draft.rows) row.accounted = t.checked;
-      panel
-        .querySelectorAll("[data-present]")
-        .forEach((cb) => (cb.checked = t.checked));
+      draft.updatedAt = now();
+      refreshDraft(panel, c, draft);
+      later(render);
+    } else if (t.dataset.defaultWeapon) {
+      const [program, variant] = t.dataset.defaultWeapon.split("|");
+      preset(store, program, variant).weapon = t.value;
+      save();
+      render();
+    } else if (t.dataset.objective) {
+      const [program, variant] = t.dataset.objective.split("|");
+      preset(store, program, variant).objective = t.value;
+      applyPresets(store);
+      save();
+      render();
     }
-    draft.updatedAt = now();
-    refreshDraft(panel, current, draft);
-    if (t.dataset.stageWeapon) render();
-  } else if (t.dataset.defaultWeapon) {
-    getShoot(store, t.dataset.defaultWeapon).settings.weapon = t.value;
-    save();
-    render();
-  } else if (t.dataset.objective) {
-    getShoot(store, t.dataset.objective).settings.objective = t.value;
-    save();
+  } catch (err) {
+    toast(err.message);
     render();
   }
 });
 $("#main").addEventListener("submit", (e) => {
-  const form = e.target.closest("[data-target-form]");
-  if (!form) return;
   e.preventDefault();
-  const current = getShoot(store, form.dataset.targetForm);
-  for (const c of targetStages(current))
-    current.settings.targets[
-      `${current.settings.weapon}:${c.id}:${current.settings.objective}`
-    ] = Number(form.elements[c.id].value);
-  audit(current, "Suggested scores changed", {
-    targets: structuredClone(current.settings.targets),
-  });
-  save();
-  render();
-  toast("Suggestions saved.");
+  try {
+    if (e.target.id === "new-shoot") {
+      const f = new FormData(e.target),
+        [program, variant] = f.get("type").split("|");
+      createShoot(
+        store,
+        program,
+        variant,
+        f.get("name").trim() ||
+          `${typeLabel(program, variant)} · ${dateLabel(now())}`,
+      );
+      tab = "participants";
+      search = "";
+      selected.clear();
+      save();
+      render();
+      return;
+    }
+    const form = e.target.closest("[data-target-form]");
+    if (!form) return;
+    const [program, variant] = form.dataset.targetForm.split("|"),
+      pr = preset(store, program, variant);
+    for (const c of targetStages({ program, variant, settings: pr }))
+      pr.targets[`${pr.weapon}:${c.id}:${pr.objective}`] = Number(
+        form.elements[c.id].value,
+      );
+    applyPresets(store);
+    save();
+    render();
+    toast("Suggestions saved.");
+  } catch (err) {
+    toast(err.message);
+  }
 });
 $("#main").addEventListener("click", (e) => {
   const b = e.target.closest("button");
   if (!b) return;
-  const current = s();
+  const c = s(),
+    stage = tab.split(":")[1];
   try {
     if (b.classList.contains("info")) {
       b.classList.toggle("open");
@@ -914,7 +1172,24 @@ $("#main").addEventListener("click", (e) => {
       return;
     }
     if (b.dataset.aps) {
-      store.aps = b.dataset.aps;
+      apsView = b.dataset.aps;
+      render();
+      return;
+    }
+    if (b.dataset.openShoot) {
+      store.active = b.dataset.openShoot;
+      tab = "participants";
+      search = "";
+      selected.clear();
+      save();
+      render();
+      return;
+    }
+    if (b.dataset.priority) {
+      const next = { undefined: "high", high: "low", low: null }[
+        c.priorities[b.dataset.priority]
+      ];
+      setPriority(c, b.dataset.priority, next);
       save();
       render();
       return;
@@ -923,56 +1198,61 @@ $("#main").addEventListener("click", (e) => {
       personDialog(b.dataset.person);
       return;
     }
-    if (b.dataset.addDetail) {
-      addDialog(b.dataset.addDetail);
-      return;
-    }
-    if (b.dataset.paste) {
-      pasteDialog(b.dataset.paste, tab.split(":")[1]);
-      return;
-    }
-    if (b.dataset.reset) {
-      resetDraft(current, b.dataset.reset, tab.split(":")[1]);
+    if (b.dataset.assign) {
+      assignDetail(c, b.dataset.assign, Number(b.dataset.number));
       save();
       render();
       return;
     }
-    if (b.dataset.saveScores) {
-      saveScores(b.dataset.saveScores, tab.split(":")[1]);
+    if (b.dataset.confirm) {
+      confirmDetail(b.dataset.confirm, stage);
       return;
     }
-    if (b.dataset.archive) {
-      archiveDialog(b.dataset.archive);
+    if (b.dataset.reset) {
+      resetDraft(c, b.dataset.reset, stage);
+      save();
+      render();
       return;
     }
     switch (b.dataset.action) {
       case "settings":
-        tab = "settings";
-        render();
-        break;
+      case "shoots":
       case "participants":
-        tab = "participants";
+        tab = b.dataset.action;
         render();
         break;
       case "add":
         addDialog();
         break;
       case "fill-all":
-        fillWeapons(current, $("#fill-weapon").value);
+        fillWeapons(c, $("#fill-weapon").value);
         save();
         render();
         toast("Rifle applied to everyone.");
         break;
-      case "select-all":
+      case "select-all": {
+        const cap = !isCS(c) && DETAIL_RULES[c.program]?.max;
         selected = new Set(
-          queue(current, tab.split(":")[1])
-            .filter((e) => !e.errors.length)
-            .map((e) => e.key),
+          queue(c, stage)
+            .filter((x) => !x.errors.length)
+            .slice(0, cap || undefined)
+            .map((x) => x.key),
         );
         render();
         break;
+      }
+      case "redetail":
+        redetail(stage);
+        break;
+      case "toggle-scored":
+        showScored = !showScored;
+        render();
+        break;
       case "backup":
-        backup();
+        download(
+          `detail-ic-${now().slice(0, 10)}.json`,
+          JSON.stringify(store, null, 2),
+        );
         break;
       case "restore":
         restore();
@@ -980,31 +1260,8 @@ $("#main").addEventListener("click", (e) => {
       case "csv":
         download(
           "detail-ic-scores.csv",
-          "\ufeff" + exportCsv(current),
+          "﻿" + exportCsv(c),
           "text/csv;charset=utf-8",
-        );
-        break;
-      case "new-roster":
-        dialog(
-          "New roster",
-          '<p class="note">The current roster and all its scores will be kept in Earlier records.</p>',
-          "Start new roster",
-          () => {
-            store.archives.push({
-              id: uid(),
-              label: `${PROGRAMS[current.program]} · previous roster`,
-              savedAt: now(),
-              shoot: structuredClone(current),
-            });
-            store.shoots[shootKey(current.program, current.variant)] = newShoot(
-              current.program,
-              current.variant,
-            );
-            save();
-            $("#dialog").close();
-            tab = "participants";
-            render();
-          },
         );
         break;
     }
@@ -1031,7 +1288,7 @@ if ("serviceWorker" in navigator) {
       status();
       if ($("#offline-note"))
         $("#offline-note").textContent =
-          "Available offline. Rosters, scores, and unfinished entries are saved on this device.";
+          "Available offline. Shoots and scores are saved on this device.";
     })
     .catch(() => {
       if ($("#offline-note"))

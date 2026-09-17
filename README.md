@@ -1,6 +1,6 @@
 # Detail IC
 
-**[Open the app](https://adambrest.github.io/detail-ic/)** in your browser. Enable your shoot in Settings, paste in participants, then enter scores.
+**[Open the app](https://adambrest.github.io/detail-ic/)** in your browser. Turn on your shoot types in Settings, create a shoot, paste in participants, then enter scores.
 
 ## Offline use
 
@@ -14,15 +14,15 @@ Everything works offline. Scores are saved on your device only, so export a back
 ## Supported shoots
 
 - BTP, ATP (M), ATP (SP), CS (M), CS (SP), APS and APS (NS).
-- Pass and Marksman thresholds for each weapon are under Settings → Scoring rules.
+- Pass and Marksman thresholds are under Settings → Scoring rules.
 
 ## Using Detail IC
 
 Each participant keeps their best score per stage. Final scores adds them for Pass, Marksman or Fail.
 
-Combat Shoot Stages A and C are scored per detail: total hits divided by firers, rounded down. Stage B is individual.
+BTP, ATP and APS scores save as you enter them. Combat Shoot is scored by detail: add a detail number after each name or tap the number buttons, then confirm each detail's scores.
 
-The Redetailing panel lists who still needs to shoot, closest to Marksman first. Tick firers and choose Mark detailed.
+Tick firers in Redetailing and choose Redetail. Tap ↕ to mark a firer high ▲ or low ▼ priority.
 
 ## Reproduction
 

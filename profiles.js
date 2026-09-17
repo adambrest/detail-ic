@@ -1,4 +1,4 @@
-export const VERSION = "2026-09-17.2";
+export const VERSION = "2026-09-18.1";
 export const PROGRAMS = {
   BTP: "BTP",
   ATP_M: "ATP (M)",
@@ -7,15 +7,22 @@ export const PROGRAMS = {
   CS_SP: "CS (SP)",
   APS: "APS",
 };
-export const WEAPON_FAMILY = {
-  SAR21: "SAR21",
-  "SAR21 MMS": "SAR21",
-  "SAR21 SS": "SAR21",
-  HK416: "HK416",
-  M16: "M16",
-  M203: "M203",
-  LMG: "LMG",
-};
+// Shoot types offered when creating a shoot, in display order.
+export const TYPES = [
+  ["BTP", "standard"],
+  ["ATP_M", "standard"],
+  ["ATP_SP", "standard"],
+  ["CS_M", "standard"],
+  ["CS_SP", "standard"],
+  ["APS", "standard"],
+  ["APS", "ns"],
+];
+export const typeLabel = (program, variant = "standard") =>
+  (PROGRAMS[program] || program) + (variant === "ns" ? " (NS)" : "");
+// Rifles with identical scoring share one option. Combat Shoot keeps
+// non-SAR21 weapons separate because of the per-detail limit.
+export const NON_SAR = new Set(["LMG", "M16/LMG"]);
+// Combat Shoot detail sizes; ATP (SP) limits how many fire at a time.
 export const DETAIL_RULES = {
   CS_SP: { min: 4, max: 6, nonSAR: 2 },
   CS_M: { min: 5, max: 7, nonSAR: 2 },
@@ -67,26 +74,18 @@ export const PROFILES = [
   ...rules(
     "ATP_M",
     "standard",
-    ["SAR21", "SAR21 MMS", "M203"],
+    ["SAR21/SAR21 MMS/M203"],
     [24, 8, 16],
     24,
     39,
     "S3",
   ),
-  ...rules(
-    "ATP_M",
-    "standard",
-    ["SAR21 SS", "HK416"],
-    [24, 8, 16],
-    32,
-    39,
-    "S3",
-  ),
+  ...rules("ATP_M", "standard", ["SAR21 SS/HK416"], [24, 8, 16], 32, 39, "S3"),
   ...rules("ATP_M", "standard", ["LMG"], [70, 8, 48], 32, 63, "S10"),
   ...rules(
     "ATP_SP",
     "standard",
-    ["SAR21", "SAR21 MMS", "M16", "M203"],
+    ["SAR21/SAR21 MMS/M16/M203"],
     [16, 8, 12],
     18,
     29,
@@ -95,7 +94,7 @@ export const PROFILES = [
   ...rules(
     "CS_M",
     "standard",
-    ["SAR21", "SAR21 SS", "M203", "LMG"],
+    ["SAR21/SAR21 SS/M203", "LMG"],
     [20, 8, 20],
     24,
     39,
@@ -109,7 +108,7 @@ export const PROFILES = [
   ...rules(
     "CS_SP",
     "standard",
-    ["SAR21", "M16", "LMG"],
+    ["SAR21", "M16/LMG"],
     [15, 8, 15],
     19,
     31,
@@ -120,7 +119,7 @@ export const PROFILES = [
         "Floor each detail average before selecting the best earned stage score.",
     },
   ),
-  ...rules("APS", "standard", ["SAR21", "M16"], [6, 6, 6, 6], 12, 20, "S6", {
+  ...rules("APS", "standard", ["SAR21/M16"], [6, 6, 6, 6], 12, 20, "S6", {
     components: [2, 3, 4, 5].map((n) => ({
       id: String(n),
       label: `Practice ${n}`,
@@ -162,15 +161,22 @@ export function weaponsFor(program, variant = "standard") {
     (p) => p.program === program && p.variant === variant,
   ).map((p) => p.weapon);
 }
+// Finds the rifle option containing a single rifle name, e.g. M203 → SAR21/SAR21 MMS/M203.
+export function weaponGroup(program, variant, name) {
+  const names = String(name).split("/");
+  return (
+    weaponsFor(program, variant).find(
+      (w) => w === name || w.split("/").some((n) => names.includes(n)),
+    ) ?? name
+  );
+}
 export function profileFor(program, variant, weapon) {
   const p = PROFILES.find(
     (p) =>
       p.program === program && p.variant === variant && p.weapon === weapon,
   );
   if (!p)
-    throw Error(
-      `${weapon} is not supported for ${PROGRAMS[program] || program}${variant === "ns" ? " (NS)" : ""}.`,
-    );
+    throw Error(`${weapon} is not supported for ${typeLabel(program, variant)}.`);
   return structuredClone(p);
 }
 export function stages(s) {
