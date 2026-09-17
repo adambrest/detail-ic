@@ -6,7 +6,6 @@ import {
   isCS,
   profileFor,
   weaponsFor,
-  baseWeapons,
   weaponGroup,
   typeLabel,
 } from "./profiles.js";
@@ -25,7 +24,7 @@ export function newStore() {
 }
 export function preset(store, program, variant = "standard") {
   return (store.presets[typeKey(program, variant)] ??= {
-    weapon: baseWeapons(program, variant)[0],
+    weapon: weaponsFor(program, variant)[0],
     objective: "marksman",
     targets: {},
   });
@@ -86,6 +85,22 @@ export function enableShoot(store, program, on) {
   if (on) store.enabled.push(program);
 }
 export const hasScores = (s) => s.attempts.length > 0;
+// Empties the roster of a shoot that has not been scored yet.
+export function clearParticipants(s) {
+  if (hasScores(s))
+    throw Error(
+      "Scores are recorded. Delete the shoot from Shoots to start over.",
+    );
+  const count = s.participants.length;
+  s.participants = [];
+  s.details = [];
+  s.drafts = {};
+  s.dispatches = [];
+  s.manualQueue = [];
+  s.priorities = {};
+  audit(s, "Participants cleared", { count });
+  return count;
+}
 export function deleteShoot(store, id) {
   const s = getShoot(store, id);
   if (!s) throw Error("Shoot not found.");
@@ -199,9 +214,7 @@ export function assignDetail(s, id, number) {
   const p = s.participants.find((p) => p.id === id);
   if (!p) throw Error("Participant not found.");
   if (hasActivity(s, p))
-    throw Error(
-      `${p.name} has recorded scores. Use their ⋯ menu to move them with a reason.`,
-    );
+    throw Error(`${p.name} has recorded scores and cannot change detail.`);
   if (
     s.dispatches.some(
       (d) => d.status === "awaiting" && d.roster.some((m) => m.id === id),
@@ -209,16 +222,35 @@ export function assignDetail(s, id, number) {
   )
     throw Error(`${p.name} is awaiting scores. Cancel that first.`);
   const previous = p.detailId,
-    d = ensureDetail(s, number);
-  p.detailId = d.id;
+    d = number === null ? null : ensureDetail(s, number);
+  p.detailId = d?.id ?? null;
   for (const [key, draft] of Object.entries(s.drafts))
     if (
-      [previous, d.id].includes(draft.detailId) &&
+      [previous, d?.id].includes(draft.detailId) &&
       draft.rows.every((r) => r.hits === "") &&
       draft.aggregate === ""
     )
       delete s.drafts[key];
-  audit(s, "Detail assigned", { participantId: id, detail: d.name });
+  audit(s, "Detail assigned", { participantId: id, detail: d?.name ?? null });
+}
+// Fills details in number order, so groups of `size` come out in roster order.
+export function autoDetail(s, size) {
+  if (!isCS(s)) throw Error("Details are only used by Combat Shoot.");
+  if (!Number.isInteger(size) || size < 1 || size > 20)
+    throw Error("Choose a detail size from 1 to 20.");
+  const waiting = s.participants.filter((p) => !p.detailId);
+  if (!waiting.length) throw Error("Everyone already has a detail.");
+  const inNumber = (n) => {
+    const d = s.details.find((x) => !x.temporary && detailNumber(x) === n);
+    return d ? members(s, d.id).length : 0;
+  };
+  let n = 1;
+  for (const p of waiting) {
+    while (inNumber(n) >= size) n++;
+    assignDetail(s, p.id, n);
+  }
+  audit(s, "Auto-detailed", { size, count: waiting.length });
+  return waiting.length;
 }
 // Problems that stop a detailed shoot from being scored.
 export function detailIssues(s) {
@@ -257,16 +289,13 @@ export function compositionErrors(s, people, { checkMinimum = true } = {}) {
     } catch (e) {
       errors.push(e.message);
     }
-  const nonSAR = people.filter((p) => NON_SAR.has(p.weapon)).length;
-  if (rule.nonSAR && nonSAR > rule.nonSAR)
+  const nonSAR = people.filter((p) => NON_SAR.has(p.weapon)).length,
+    mixed = new Set(people.map((p) => p.weapon)).size > 1;
+  if (rule.nonSAR && mixed && nonSAR > rule.nonSAR)
     errors.push(
       `Too many non-SAR21 weapons: ${nonSAR}/${rule.nonSAR} maximum in total.`,
     );
   return [...new Set(errors)];
-}
-function upperBounds(s, people) {
-  const errors = compositionErrors(s, people, { checkMinimum: false });
-  if (errors.length) throw Error(errors.join(" "));
 }
 export function addParticipants(s, lines, weapon, detailId = null) {
   const cs = isCS(s);
@@ -333,11 +362,6 @@ export function updateParticipant(
       "This participant is awaiting scores. Record or cancel that first.",
     );
   const changed = { ...p, name, weapon, detailId };
-  if (cs && detailId)
-    upperBounds(s, [
-      ...members(s, detailId).filter((x) => x.id !== id),
-      changed,
-    ]);
   const previous = structuredClone(p);
   if (p.weapon !== weapon && !cs) {
     changed.recordId = uid();
@@ -359,13 +383,6 @@ export function fillWeapons(s, weapon) {
     );
   if (s.dispatches.some((d) => d.status === "awaiting"))
     throw Error("Record or cancel awaiting scores before changing rifles.");
-  if (isCS(s))
-    for (const d of s.details)
-      if (members(s, d.id).length)
-        upperBounds(
-          s,
-          members(s, d.id).map((p) => ({ ...p, weapon })),
-        );
   const previous = s.participants.map((p) => ({ id: p.id, weapon: p.weapon }));
   for (const p of s.participants) {
     if (p.weapon !== weapon) {
@@ -804,7 +821,7 @@ export function target(s, p, stage, objective = s.settings.objective) {
     const a = best(s, p, "A");
     return a === null ? null : Math.max(0, p.profile[objective] - a);
   }
-  const weapon = isCS(s) ? baseWeapons(s.program, s.variant)[0] : p.weapon;
+  const weapon = isCS(s) ? weaponsFor(s.program, s.variant)[0] : p.weapon;
   return (
     s.settings.targets[`${weapon}:${stage}:${objective}`] ??
     Math.ceil((p.profile[objective] * c.max) / p.profile.total)
@@ -855,6 +872,7 @@ export function stageCompositionErrors(s, detailId, stage) {
   if (!isCS(s)) return [];
   const draft = s.drafts[draftKey(detailId, stage)],
     roster = members(s, detailId);
+  if (!roster.length) return ["Detail has no participants."];
   if (
     draft &&
     !sameIds(

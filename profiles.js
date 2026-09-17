@@ -161,11 +161,6 @@ export function weaponsFor(program, variant = "standard") {
     (p) => p.program === program && p.variant === variant,
   ).map((p) => p.weapon);
 }
-// Rifles offered for a whole shoot. Combat Shoot LMG and M16 are chosen per participant.
-export function baseWeapons(program, variant = "standard") {
-  const all = weaponsFor(program, variant);
-  return program.startsWith("CS_") ? all.filter((w) => !NON_SAR.has(w)) : all;
-}
 // Finds the rifle option containing a single rifle name, e.g. M203 → SAR21/SAR21 MMS/M203.
 export function weaponGroup(program, variant, name) {
   const names = String(name).split("/");

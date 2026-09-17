@@ -5,7 +5,6 @@ import {
   isCS,
   typeLabel,
   weaponsFor,
-  baseWeapons,
   profileFor,
   stages,
   targetStages,
@@ -31,11 +30,14 @@ import {
   borrowedBy,
   rosterWeapon,
   assignDetail,
+  autoDetail,
   detailIssues,
   addParticipants,
+  ensureDetail,
   updateParticipant,
   fillWeapons,
   removeParticipant,
+  clearParticipants,
   getDraft,
   resetDraft,
   validateDraft,
@@ -84,6 +86,10 @@ let store,
   selected = new Set(),
   openPresets = new Set(),
   showScored = false,
+  addMode = null,
+  addNote = "",
+  pasteDetail = 1,
+  groupSize = null,
   apsView = "standard",
   offlineReady = false,
   busy = false,
@@ -275,56 +281,72 @@ function renderShoots() {
     }<div class="toolbar shoots-data"><button data-action="backup">Export backup</button><button data-action="restore">Import backup</button></div></div>`;
 }
 // Detail buttons offered per participant: as many details as the minimum size allows.
-function detailCount(c) {
-  const min = DETAIL_RULES[c.program]?.min || 1,
-    used = Math.max(
+function nextDetailNumber(c) {
+  return (
+    Math.max(
       0,
-      ...c.details
-        .filter((d) => !d.temporary && members(c, d.id).length)
-        .map(detailNumber),
-    );
-  return Math.max(1, Math.floor(c.participants.length / min), used);
+      ...c.details.filter((d) => !d.temporary).map(detailNumber),
+    ) + 1
+  );
+}
+function addPanel(c) {
+  const cs = isCS(c),
+    rifle =
+      weapons(c).length > 1
+        ? `<label class="field inline"><span>Rifle</span><select id="add-weapon" aria-label="Rifle for these participants">${option(weapons(c), c.settings.weapon)}</select></label>`
+        : "";
+  if (!addMode)
+    return c.participants.length
+      ? '<div class="add-bar"><button class="primary" data-action="add">Add participants</button></div>'
+      : "";
+  if (addMode === "choose")
+    return `<section class="panel add-panel"><div class="panel-head"><h3>Add participants</h3><button class="icon-button" data-action="add-close" aria-label="Close">✕</button></div><div class="panel-body"><p class="note">Do you already know who is in each detail?</p><div class="actions"><button class="primary" data-action="add-by-detail">Paste detail by detail</button><button data-action="add-list">Paste the whole list</button></div></div></section>`;
+  const byDetail = addMode === "detail";
+  return `<section class="panel add-panel"><div class="panel-head"><h3>${byDetail ? `Paste Detail ${pasteDetail}` : "Paste full names"}</h3><button class="icon-button" data-action="add-close" aria-label="Close">✕</button></div><div class="panel-body"><textarea id="add-names" aria-label="${byDetail ? `Full names for Detail ${pasteDetail}` : "Full names"}" placeholder="Alex Tan&#10;Benjamin Lee"></textarea>${rifle}<div class="actions">${byDetail ? '<button class="primary" data-action="add-next">Confirm and next detail</button><button data-action="add-done">Done</button>' : '<button class="primary" data-action="add-save">Add participants</button>'}</div><div class="errors add-note">${esc(addNote)}</div><p class="note">${byDetail ? `Everyone in this box joins Detail ${pasteDetail}.` : cs ? "One full name per line. A detail number after a name puts them straight into it, for example “Alex Tan, 2”." : "One full name per line."}</p></div></section>`;
 }
 function renderParticipants() {
   const c = s(),
     cs = isCS(c),
     multi = weapons(c).length > 1,
-    base = baseWeapons(c.program, c.variant),
     rifle =
-      base.length > 1
-        ? `<label class="muted" for="fill-weapon">Rifle</label><select id="fill-weapon" aria-label="Rifle for fill all">${option(base, c.settings.weapon)}</select><button data-action="fill-all">Fill all</button>`
+      multi
+        ? `<label class="muted" for="fill-weapon">Rifle</label><select id="fill-weapon" aria-label="Rifle for fill all">${option(weapons(c), c.settings.weapon)}</select><button data-action="fill-all">Fill all</button>`
         : "",
     matches = (p) => search && filtered(p),
-    count = cs ? detailCount(c) : 0;
-  const picks = (p) => {
+    highest = Math.max(
+      0,
+      ...c.details.filter((d) => !d.temporary).map(detailNumber),
+    );
+  const picker = (p) => {
     const locked =
-      c.attempts.some((a) => a.participantId === p.id) ||
-      c.dispatches.some(
-        (d) => d.status === "awaiting" && d.roster.some((m) => m.id === p.id),
-      );
-    return `<td><div class="detail-picks" role="group" aria-label="Detail for ${esc(p.name)}">${Array.from(
-      { length: count },
-      (_, i) => {
-        const on =
-          c.details.find((d) => d.id === p.detailId) &&
-          detailNumber(c.details.find((d) => d.id === p.detailId)) === i + 1;
-        return `<button type="button" class="pick ${on ? "on" : ""}" data-assign="${p.id}" data-number="${i + 1}" aria-pressed="${on}" aria-label="${esc(p.name)} detail ${i + 1}" ${locked ? "disabled" : ""}>${i + 1}</button>`;
-      },
-    ).join("")}</div></td>`;
+        c.attempts.some((a) => a.participantId === p.id) ||
+        c.dispatches.some(
+          (d) => d.status === "awaiting" && d.roster.some((m) => m.id === p.id),
+        ),
+      detail = c.details.find((d) => d.id === p.detailId),
+      n = detail && !detail.temporary ? detailNumber(detail) : 0;
+    return `<td><select class="assign" data-assign="${p.id}" aria-label="Detail for ${esc(p.name)}" ${locked ? "disabled" : ""}><option value="" ${n ? "" : "selected"}>—</option>${Array.from(
+      { length: Math.max(highest, n) },
+      (_, i) =>
+        `<option value="${i + 1}" ${i + 1 === n ? "selected" : ""}>Detail ${i + 1}</option>`,
+    ).join("")}<option value="new">New detail</option></select></td>`;
   };
   const row = (p) =>
-    `<tr class="${matches(p) ? "match" : ""}"><td class="name">${esc(p.name)}</td>${multi ? `<td>${esc(p.weapon)}</td>` : ""}${cs ? picks(p) : ""}<td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+    `<tr class="${matches(p) ? "match" : ""}"><td class="name"><input class="name-input" type="text" data-name="${p.id}" value="${esc(p.name)}" aria-label="Name for ${esc(p.name)}"></td>${multi ? `<td><select class="row-weapon" data-rifle="${p.id}" aria-label="Rifle for ${esc(p.name)}">${option(weapons(c), p.weapon)}</select></td>` : ""}${cs ? picker(p) : ""}<td class="more-cell"><button class="icon-button danger" data-remove="${p.id}" aria-label="Remove ${esc(p.name)}">✕</button></td></tr>`;
   const table = (people) =>
     `<div class="table-wrap"><table><thead><tr><th>Full name</th>${multi ? "<th>Rifle</th>" : ""}${cs ? "<th>Detail</th>" : ""}<th></th></tr></thead><tbody>${people.map(row).join("")}</tbody></table></div>`;
-  let body;
+  let body = "";
   if (!c.participants.length)
-    body = empty(
-      "No participants yet",
-      `<p>Paste full names, one per line.</p><button class="primary" data-action="add">Add participants</button>`,
-    );
+    body = addMode
+      ? ""
+      : empty(
+          "No participants yet",
+          '<p>Paste full names, one per line.</p><button class="primary" data-action="add">Add participants</button>',
+        );
   else if (cs) {
     const issues = detailIssues(c),
       unassigned = members(c, null),
+      size = groupSize ?? DETAIL_RULES[c.program].max,
       groups = [
         ...(unassigned.length ? [[null, unassigned]] : []),
         ...sortedDetails(c)
@@ -333,29 +355,29 @@ function renderParticipants() {
       ].filter(([, people]) => !search || people.some(filtered));
     body =
       (issues.length
-        ? `<div class="panel errors issues" role="alert">${esc(issues.join("\n"))}</div>`
+        ? `<div class="panel issues" role="status">${esc(issues.join("\n"))}</div>`
         : "") +
       groups
         .map(([d, people]) =>
           d?.temporary
             ? `<section class="panel temporary"><div class="detail-head"><h3>${esc(d.name)}</h3><span class="count">${people.length} firers</span></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th></tr></thead><tbody>${people.map((p) => `<tr class="${matches(p) ? "match" : ""}"><td class="name">${esc(p.name)}</td><td>${esc(rosterWeapon(c, d.id, p))}</td></tr>`).join("")}</tbody></table></div></section>`
-            : `<section class="panel ${d ? "" : "unassigned"}"><div class="detail-head"><h3>${d ? esc(d.name) : "Needs a detail"}</h3>${d ? borrowedNote(c, d) : ""}<span class="count">${people.length} firers</span></div>${table(people)}</section>`,
+            : `<section class="panel ${d ? "" : "unassigned"}"><div class="detail-head"><h3>${d ? esc(d.name) : "Needs a detail"}</h3>${d ? borrowedNote(c, d) : ""}<span class="count">${people.length} firers</span>${d ? "" : `<div class="actions"><label class="muted" for="group-size">Groups of</label><input id="group-size" type="number" min="1" max="${DETAIL_RULES[c.program].max}" step="1" value="${size}" aria-label="Detail size"><button class="primary" data-action="auto-detail">Auto-detail</button></div>`}</div>${table(people)}</section>`,
         )
         .join("");
   } else
     body = `<section class="panel">${table(c.participants.filter(filtered))}</section>`;
   $("#main").innerHTML =
-    shootHead(
-      `<span class="spacer"></span>${rifle}<button class="primary" data-action="add">＋ Add participants</button>`,
-      true,
-    ) +
+    shootHead(`<span class="spacer"></span>${rifle}`, true) +
     (hasScores(c)
       ? '<p class="note lock-note">Scores are recorded, so the shoot type is locked. <button class="inline-link" data-action="shoots">Start a new shoot</button> to use a different type.</p>'
       : "") +
-    `<div class="toolbar">${searchBox()}<span class="count">${c.participants.length} participants</span></div>` +
+    addPanel(c) +
+    (c.participants.length
+      ? `<div class="toolbar">${searchBox()}<span class="count">${c.participants.length} participants</span><span class="spacer"></span><button class="danger" data-action="clear-participants">Clear participants</button></div>`
+      : "") +
     body;
+  if (addMode === "detail" || addMode === "list") $("#add-names")?.focus();
 }
-// Participant ID → position in the order they were redetailed.
 function awaiting(c, stage) {
   const map = new Map();
   for (const d of c.dispatches)
@@ -380,7 +402,15 @@ function renderStage(stage) {
     shootHead(
       `<span class="spacer"></span>${searchBox()}${isCS(c) ? '<button data-action="manual-detail">Manual detail</button>' : ""}`,
     ) +
+    issuesPanel(c) +
     `<div class="grid"><div class="score-col">${isCS(c) ? detailPanels(c, stage) : individualPanel(c, stage)}</div>${queuePanel(c, stage, q)}</div>`;
+}
+// Roster problems that will block scoring, with one link to fix them.
+function issuesPanel(c) {
+  const issues = detailIssues(c);
+  return issues.length
+    ? `<div class="panel issues" role="status">${esc(issues.join("\n"))}\n<button class="inline-link" data-action="participants">Fix in Participants</button></div>`
+    : "";
 }
 function individualPanel(c, stage) {
   if (!c.participants.length)
@@ -401,13 +431,16 @@ function individualPanel(c, stage) {
       "",
     )}</tbody></table></div><div class="errors draft-errors" role="alert"></div><div class="score-footer"><span class="draft-summary">Scores save when you press Enter or leave the box.</span></div></section>`;
 }
+const COMPOSITION =
+  /^(Too few firers|Too many firers|Too many non-SAR21|Detail has no participants)/;
 function draftErrors(c, draft) {
   const hasInput =
     draft.rows.some((r) => r.hits !== "") || draft.aggregate !== "";
-  if (!hasInput)
-    return stageCompositionErrors(c, draft.detailId, draft.stage);
-  return validateDraft(c, draft).errors.filter(
-    (e) => !e.endsWith("Missing hits.") && !e.startsWith("Account for every"),
+  const errors = hasInput
+    ? validateDraft(c, draft).errors
+    : stageCompositionErrors(c, draft.detailId, draft.stage);
+  return errors.filter(
+    (e) => !e.endsWith("Missing hits.") && !COMPOSITION.test(e),
   );
 }
 function draftSummary(c, draft) {
@@ -466,7 +499,7 @@ function detailPanels(c, stage) {
           })
           .join(
             "",
-          )}</tbody></table></div>${shared ? `<div class="aggregate"><label>Or detail total <input type="number" min="0" max="${people.length * cmax}" step="1" data-aggregate="${d.id}" value="${esc(draft.aggregate)}" aria-label="${esc(d.name)} total hits" placeholder="—"></label><span class="muted">/${people.length * cmax}</span></div>` : ""}<div class="errors draft-errors">${esc(draftErrors(c, draft).join("\n"))}</div><div class="score-footer"><span class="draft-summary">${esc(draftSummary(c, draft))}</span><button class="primary" data-confirm="${d.id}">Confirm scores</button></div></section>`;
+          )}</tbody></table></div>${shared ? `<div class="aggregate"><label>Or detail total <input type="number" min="0" max="${people.length * cmax}" step="1" data-aggregate="${d.id}" value="${esc(draft.aggregate)}" aria-label="${esc(d.name)} total hits" placeholder="—"></label><span class="muted">/${people.length * cmax}</span></div>` : ""}<div class="errors draft-errors">${esc(draftErrors(c, draft).join("\n"))}</div><div class="score-footer"><span class="draft-summary">${esc(draftSummary(c, draft))}</span><button class="primary" data-confirm="${d.id}" aria-label="Confirm scores for ${esc(d.name)}">Confirm scores</button></div></section>`;
       })
       .join("") +
     (!shown.length
@@ -511,7 +544,7 @@ function queuePanel(c, stage, q) {
       .map((e, i) => {
         const name = cs ? e.detail.name : e.members[0].name,
           max = e.priority.p.profile.components.find((x) => x.id === stage).max;
-        return `<div class="queue-row" data-key="${esc(e.key)}"><input type="checkbox" data-queue="${esc(e.key)}" ${selected.has(e.key) ? "checked" : ""} ${e.errors.length ? "disabled" : ""} aria-label="Select ${esc(name)}"><span class="count">${i + 1}</span><div><strong>${esc(name)}</strong>${cs ? borrowedNote(c, e.detail) : ""}<p class="note">${e.errors.length ? esc(e.errors.join(" ")) : e.first ? "First attempt" : `Best ${ratio(best(c, e.priority.p, stage), max)}`}</p></div><button type="button" class="prio ${e.tag || ""}" data-priority="${esc(e.key)}" aria-label="${esc(name)} priority: ${e.tag || "normal"}" title="${e.tag === "high" ? "High priority" : e.tag === "low" ? "Low priority" : "Set priority"}">${e.tag === "high" ? "▲" : e.tag === "low" ? "▼" : "↕"}</button></div>`;
+        return `<div class="queue-row" data-key="${esc(e.key)}"><input type="checkbox" data-queue="${esc(e.key)}" ${selected.has(e.key) ? "checked" : ""} ${e.errors.length ? "disabled" : ""} aria-label="Select ${esc(name)}"><span class="count">${i + 1}</span><div><strong>${esc(name)}</strong>${cs ? borrowedNote(c, e.detail) : ""}<p class="note">${e.errors.length ? "Fix this detail in Participants" : e.first ? "First attempt" : `Best ${ratio(best(c, e.priority.p, stage), max)}`}</p></div><button type="button" class="prio ${e.tag || ""}" data-priority="${esc(e.key)}" aria-label="${esc(name)} priority: ${e.tag || "normal"}" title="${e.tag === "high" ? "High priority" : e.tag === "low" ? "Low priority" : "Set priority"}">${e.tag === "high" ? "▲" : e.tag === "low" ? "▼" : "↕"}</button></div>`;
       })
       .join("") || '<div class="panel-body note">No firers to redetail.</div>'
   }</div></section>`;
@@ -714,7 +747,7 @@ function presetBody(program) {
     key = `${program}|${variant}`,
     label = typeLabel(program, variant),
     pr = preset(store, program, variant),
-    list = baseWeapons(program, variant),
+    list = weaponsFor(program, variant),
     rule = DETAIL_RULES[program],
     profile = profileFor(program, variant, pr.weapon),
     shoot = {
@@ -838,22 +871,6 @@ function detailOptions(c, chosen) {
         `<option value="${d.id}" ${d.id === chosen ? "selected" : ""}>${esc(d.name)}</option>`,
     )
     .join("")}<option value="new">New detail</option>`;
-}
-function addDialog() {
-  const c = s(),
-    cs = isCS(c),
-    base = baseWeapons(c.program, c.variant);
-  dialog(
-    "Add participants",
-    `<label class="field"><span>Full names · one per line</span><textarea name="names" required autofocus placeholder="${cs ? "Alex Tan, 1&#10;Benjamin Lee, 1&#10;Chris Wong" : "Alex Tan&#10;Benjamin Lee"}"></textarea></label>${cs ? '<p class="note">Add a detail number after a name to put them in that detail, or choose details afterward with the number buttons.</p>' : ""}${base.length > 1 ? `<label class="field"><span>Rifle</span><select name="weapon">${option(base, c.settings.weapon)}</select></label>` : ""}`,
-    "Add",
-    (f) => {
-      addParticipants(c, f.get("names"), f.get("weapon") || c.settings.weapon);
-      save();
-      $("#dialog").close();
-      render();
-    },
-  );
 }
 function personDialog(id) {
   const c = s(),
@@ -1087,6 +1104,7 @@ $("#tabs").onclick = (e) => {
   if (b) {
     tab = b.dataset.tab;
     search = "";
+    addMode = null;
     selected.clear();
     render();
   }
@@ -1155,6 +1173,34 @@ $("#main").addEventListener("change", (e) => {
     } else if (t.dataset.queue) {
       t.checked ? selected.add(t.dataset.queue) : selected.delete(t.dataset.queue);
       updateRedetailButton(stage);
+    } else if (t.dataset.name || t.dataset.rifle) {
+      const id = t.dataset.name || t.dataset.rifle,
+        p = c.participants.find((x) => x.id === id);
+      updateParticipant(
+        c,
+        id,
+        {
+          name: t.dataset.name ? t.value : p.name,
+          weapon: t.dataset.rifle ? t.value : p.weapon,
+          detailId: p.detailId,
+        },
+        "Edited in the participant list",
+      );
+      save();
+      later(render);
+    } else if (t.id === "group-size") groupSize = Number(t.value);
+    else if (t.dataset.assign) {
+      assignDetail(
+        c,
+        t.dataset.assign,
+        t.value === ""
+          ? null
+          : t.value === "new"
+            ? nextDetailNumber(c)
+            : Number(t.value),
+      );
+      save();
+      later(render);
     } else if (t.dataset.hits) saveHit(t);
     else if (t.dataset.threshold) {
       const [program, variant, id] = t.dataset.threshold.split("|"),
@@ -1272,14 +1318,14 @@ $("#main").addEventListener("click", (e) => {
       render();
       return;
     }
-    if (b.dataset.person) {
-      personDialog(b.dataset.person);
-      return;
-    }
-    if (b.dataset.assign) {
-      assignDetail(c, b.dataset.assign, Number(b.dataset.number));
+    if (b.dataset.remove) {
+      removeParticipant(c, b.dataset.remove);
       save();
       render();
+      return;
+    }
+    if (b.dataset.person) {
+      personDialog(b.dataset.person);
       return;
     }
     if (b.dataset.resetThresholds) {
@@ -1312,8 +1358,77 @@ $("#main").addEventListener("click", (e) => {
         render();
         break;
       case "add":
-        addDialog();
+        addMode = isCS(c) ? "choose" : "list";
+        pasteDetail = nextDetailNumber(c);
+        render();
         break;
+      case "add-by-detail":
+        addMode = "detail";
+        pasteDetail = nextDetailNumber(c);
+        render();
+        break;
+      case "add-list":
+        addMode = "list";
+        render();
+        break;
+      case "add-close":
+      case "add-done":
+        addMode = null;
+        addNote = "";
+        render();
+        break;
+      case "add-next":
+      case "add-save": {
+        const names = $("#add-names").value,
+          weapon = $("#add-weapon")?.value || c.settings.weapon,
+          byDetail = b.dataset.action === "add-next",
+          people = addParticipants(
+            c,
+            names,
+            weapon,
+            byDetail ? ensureDetail(c, pasteDetail).id : null,
+          );
+        addNote = "";
+        if (byDetail) {
+          const rule = DETAIL_RULES[c.program],
+            size = members(c, ensureDetail(c, pasteDetail).id).length;
+          if (rule && (size < rule.min || size > rule.max))
+            addNote = `Detail ${pasteDetail} has ${size} ${size === 1 ? "firer" : "firers"}. ${typeLabel(c.program, c.variant)} details take ${rule.min}–${rule.max}. Fix it in the list below when you finish.`;
+          pasteDetail += 1;
+        } else addMode = null;
+        save();
+        render();
+        if (!addNote)
+          toast(
+            `${people.length} ${people.length === 1 ? "participant" : "participants"} added.`,
+          );
+        break;
+      }
+      case "clear-participants":
+        dialog(
+          "Clear participants?",
+          `<p class="note">This removes all ${c.participants.length} participants and their details from this shoot.</p>`,
+          "Clear participants",
+          () => {
+            const n = clearParticipants(c);
+            save();
+            $("#dialog").close();
+            addMode = null;
+            render();
+            toast(`${n} participants cleared.`);
+          },
+          "Cancel",
+        );
+        break;
+      case "auto-detail": {
+        const size = Number($("#group-size").value);
+        groupSize = size;
+        const n = autoDetail(c, size);
+        save();
+        render();
+        toast(`${n} participants put into groups of ${size}.`);
+        break;
+      }
       case "fill-all":
         fillWeapons(c, $("#fill-weapon").value);
         save();

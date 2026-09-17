@@ -58,15 +58,10 @@ const previousVersion = {
   );
   await page.getByLabel("Shoot name").fill("Recovery shoot");
   await page.getByRole("button", { name: "Create shoot", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Add participants", exact: false })
-    .first()
-    .click();
-  await page.locator("textarea[name=names]").fill("Backup Firer");
-  await page
-    .locator("#dialog")
-    .getByRole("button", { name: "Add", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Add participants", exact: true }).click();
+  await page.locator("#add-names").fill("Backup Firer");
+  await page.getByRole("button", { name: "Add participants", exact: true }).click();
+  await tab(page, "Stage A · Day");
   await page.getByRole("button", { name: "Options for Backup Firer" }).click();
   await page
     .getByRole("button", { name: "Enter Stage A · Day", exact: true })
@@ -106,7 +101,12 @@ const previousVersion = {
   await page
     .getByRole("button", { name: "Continue Recovery shoot", exact: true })
     .click();
-  assert.ok((await page.locator("#main").innerText()).includes("Backup Firer"));
+  assert.equal(
+    await page
+      .getByRole("textbox", { name: "Name for Backup Firer" })
+      .inputValue(),
+    "Backup Firer",
+  );
 
   // Another tab's change blocks overwriting.
   const other = await context.newPage();
@@ -144,8 +144,11 @@ const previousVersion = {
   }, previousVersion);
   await older.goto(server.url);
   await older.getByRole("button", { name: "Continue ATP (M)" }).click();
-  assert.ok(
-    (await older.locator("#main").innerText()).includes("SAR21 SS/HK416"),
+  assert.equal(
+    await older
+      .getByRole("combobox", { name: "Rifle for Earlier Firer" })
+      .inputValue(),
+    "SAR21 SS/HK416",
   );
   assert.equal(
     await older.evaluate(

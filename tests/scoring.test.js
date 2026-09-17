@@ -4,7 +4,6 @@ import {
   REFERENCE_ONLY,
   VERSION,
   weaponsFor,
-  baseWeapons,
   weaponGroup,
   profileFor,
 } from "../profiles.js";
@@ -22,8 +21,11 @@ import {
   addParticipants,
   parseRoster,
   assignDetail,
+  autoDetail,
+  clearParticipants,
   detailIssues,
   members,
+  sortedDetails,
   compositionErrors,
   fillWeapons,
   updateParticipant,
@@ -133,9 +135,6 @@ test("Rifles with identical scoring share one option", () => {
   assert.deepEqual(weaponsFor("CS_M"), ["SAR21/SAR21 SS/M203", "LMG"]);
   assert.deepEqual(weaponsFor("CS_SP"), ["SAR21", "M16/LMG"]);
   assert.equal(weaponGroup("CS_M", "standard", "M203"), "SAR21/SAR21 SS/M203");
-  assert.deepEqual(baseWeapons("CS_M"), ["SAR21/SAR21 SS/M203"]);
-  assert.deepEqual(baseWeapons("CS_SP"), ["SAR21"]);
-  assert.deepEqual(baseWeapons("ATP_M"), weaponsFor("ATP_M"));
 });
 test("Unsupported rifles stay out of selectors and scoring", () => {
   assert.throws(() => profileFor("BTP", "standard", "LMG"));
@@ -225,9 +224,39 @@ test("Detail buttons assign firers; skipped, small and large details are reporte
   assert.deepEqual(detailIssues(s), []);
   people.forEach((p) => assignDetail(s, p.id, 1));
   assert.match(detailIssues(s).join(" "), /Too many firers: 8\/6/);
+  assignDetail(s, people[0].id, null);
+  assert.equal(people[0].detailId, null);
   const t = setup("CS_SP", "standard", 4);
   detailScore(t.s, t.d, "A", 40);
   assert.throws(() => assignDetail(t.s, t.p.id, 2), /recorded scores/);
+});
+test("Auto-detail fills groups in roster order, and participants can be cleared", () => {
+  const s = newShoot("CS_M"),
+    people = addParticipants(
+      s,
+      "A\nB\nC\nD\nE\nF\nG\nH\nI\nJ\nK\nL",
+      rifle("CS_M"),
+    );
+  assert.equal(autoDetail(s, 5), 12);
+  assert.deepEqual(
+    sortedDetails(s).map((d) => members(s, d.id).map((p) => p.name)),
+    [
+      ["A", "B", "C", "D", "E"],
+      ["F", "G", "H", "I", "J"],
+      ["K", "L"],
+    ],
+  );
+  assert.throws(() => autoDetail(s, 5), /already has a detail/);
+  assert.throws(() => autoDetail(s, 0), /1 to 20/);
+  assignDetail(s, people[11].id, null);
+  autoDetail(s, 5);
+  assert.equal(members(s, s.details[2].id).length, 2);
+  assert.equal(clearParticipants(s), 12);
+  assert.deepEqual(s.participants, []);
+  assert.deepEqual(s.details, []);
+  const scored = setup("BTP");
+  recordIndividual(scored.s, scored.p, "A", "10");
+  assert.throws(() => clearParticipants(scored.s), /Delete the shoot/);
 });
 test("CS floors each stage before addition: 59/6 + 65/6 = 9+10", () => {
   const { s, d, p } = setup("CS_SP", "standard", 6);
@@ -332,35 +361,38 @@ test("CS detail sizes and ATP (SP) redetail limit", () => {
   dispatch(s, "A", queue(s, "A").slice(0, 5).map((e) => e.key));
   assert.equal(setup("ATP_M", "standard", 50).people.length, 50);
 });
-test("Combined non-SAR21 cap applies to roster and stage rifles", () => {
-  const { s, d, people } = setup("CS_SP", "standard", 6);
-  for (const i of [0, 1])
-    updateParticipant(s, people[i].id, {
-      name: people[i].name,
-      detailId: d.id,
-      weapon: "M16/LMG",
-    });
-  assert.throws(
-    () =>
-      updateParticipant(s, people[2].id, {
-        name: people[2].name,
+test("Mixed details cap non-SAR21 rifles, but a detail on one rifle does not", () => {
+  const { s, d, people } = setup("CS_SP", "standard", 6),
+    give = (n, weapon) =>
+      updateParticipant(s, people[n].id, {
+        name: people[n].name,
         detailId: d.id,
-        weapon: "M16/LMG",
-      }),
-    /non-SAR21/,
+        weapon,
+      });
+  for (const i of [0, 1, 2]) give(i, "M16/LMG");
+  assert.match(
+    compositionErrors(s, members(s, d.id)).join(" "),
+    /Too many non-SAR21 weapons: 3\/2/,
   );
-  people[2].weapon = "M16/LMG";
-  people[2].profile = profileFor("CS_SP", "standard", "M16/LMG");
-  const draft = getDraft(s, d.id, "A");
-  draft.aggregate = "30";
-  assert.match(validateDraft(s, draft).errors.join(" "), /non-SAR21/);
-  assert.throws(() => saveDetail(s, draft));
   assert.throws(() => dispatch(s, "A", [`detail:${d.id}`]), /non-SAR21/);
+  assert.throws(() => detailScore(s, d, "A", 30), /non-SAR21/);
+  // An all-LMG detail is allowed, and firers can be switched back one at a time.
+  for (const i of [3, 4, 5]) give(i, "M16/LMG");
+  assert.deepEqual(compositionErrors(s, members(s, d.id)), []);
+  give(0, "SAR21");
+  assert.match(
+    compositionErrors(s, members(s, d.id)).join(" "),
+    /Too many non-SAR21/,
+  );
+  for (const i of [1, 2, 3]) give(i, "SAR21");
+  assert.deepEqual(compositionErrors(s, members(s, d.id)), []);
 });
-test("M203 counts as SAR21 in CS (M); fill all checks the cap", () => {
+test("M203 counts as SAR21 in CS (M); every firer can be put on LMG", () => {
   const { s, people } = setup("CS_M", "standard", 5, "M203");
   assert.deepEqual(compositionErrors(s, people), []);
-  assert.throws(() => fillWeapons(s, "LMG"), /non-SAR21/);
+  fillWeapons(s, "LMG");
+  assert.ok(people.every((p) => p.weapon === "LMG"));
+  assert.deepEqual(compositionErrors(s, people), []);
   fillWeapons(s, "SAR21/SAR21 SS/M203");
   assert.ok(people.every((p) => p.weapon === "SAR21/SAR21 SS/M203"));
 });

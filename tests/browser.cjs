@@ -78,16 +78,22 @@ async function enterHits(page, person, hits) {
     assert.equal(await page.locator("#tabs button").count(), 2);
     await page.getByLabel("Shoot name").fill("Alpha Coy BTP");
     await page.getByRole("button", { name: "Create shoot", exact: true }).click();
-    await page
-      .getByRole("button", { name: "Add participants", exact: false })
-      .first()
-      .click();
-    assert.equal(await page.locator("#dialog select").count(), 0);
-    await page
-      .locator("textarea[name=names]")
-      .fill("Alex Tan\nBenjamin Lee\nChris Wong");
-    await page.locator("#dialog").getByRole("button", { name: "Add", exact: true }).click();
+    await page.getByRole("button", { name: "Add participants", exact: true }).click();
+    await page.locator("#add-names").fill("Alex Tan\nBenjamin Lee\nChris Wong");
+    await page.getByRole("button", { name: "Add participants", exact: true }).click();
     assert.ok(!(await page.locator("#main").innerText()).includes("Detail"));
+    // Names are edited in the list itself.
+    const nameBox = page.getByRole("textbox", { name: "Name for Chris Wong" });
+    await nameBox.fill("Chris Wong Jr");
+    await nameBox.press("Tab");
+    await waitFor(page, () =>
+      JSON.parse(localStorage.getItem("detail-ic-v2")).shoots[0].participants.some(
+        (p) => p.name === "Chris Wong Jr",
+      ),
+    );
+    const renamed = page.getByRole("textbox", { name: "Name for Chris Wong Jr" });
+    await renamed.fill("Chris Wong");
+    await renamed.press("Tab");
 
     // Scores save on Enter; the redetail controls are visible without scrolling.
     await tab(page, "Stage A · Day");
@@ -164,44 +170,60 @@ async function enterHits(page, person, hits) {
       await page.getByRole("switch", { name: "Enable BTP", exact: true }).isDisabled(),
     );
 
-    // Combat Shoot: detail numbers from the paste, then one tap per firer.
+    // Combat Shoot: paste detail by detail, then fix sizes with the dropdowns.
     await tab(page, "Shoots");
     await page.getByText("CS (SP)", { exact: true }).click();
     await page.getByLabel("Shoot name").fill("Bravo Coy CS");
     await page.getByRole("button", { name: "Create shoot", exact: true }).click();
     assert.ok(!(await page.locator("#shoot-type").isDisabled()));
-    assert.equal(await page.locator("#fill-weapon").count(), 0);
+    assert.equal(await page.locator("#fill-weapon").count(), 1);
+    await page.getByRole("button", { name: "Add participants", exact: true }).click();
+    await page.getByRole("button", { name: "Paste detail by detail" }).click();
+    await page.locator("#add-names").fill("Dana Koh\nEvan Lim\nFarah Ali");
+    await page.getByRole("button", { name: "Confirm and next detail" }).click();
+    assert.ok((await page.locator(".add-note").innerText()).includes("Detail 1 has 3 firers"));
+    await page.locator("#add-names").fill("Grace Tan");
+    await page.getByRole("button", { name: "Confirm and next detail" }).click();
+    assert.ok((await page.locator(".add-note").innerText()).includes("Detail 2 has 1 firer"));
+    await page.getByRole("button", { name: "Done", exact: true }).click();
+    assert.ok((await page.locator(".issues").innerText()).includes("Too few"));
     await page
-      .getByRole("button", { name: "Add participants", exact: false })
-      .first()
-      .click();
-    assert.equal(await page.locator("#dialog select").count(), 0);
-    await page
-      .locator("textarea[name=names]")
-      .fill("Dana Koh, 1\nEvan Lim\nFarah Ali\nGrace Tan");
-    await page.locator("#dialog").getByRole("button", { name: "Add", exact: true }).click();
-    const issues = await page.locator(".issues").innerText();
-    assert.ok(issues.includes("3 participants need a detail"));
-    assert.ok(issues.includes("Too few"));
-    for (const person of ["Evan Lim", "Farah Ali", "Grace Tan"])
-      await page.getByRole("button", { name: `${person} detail 1`, exact: true }).click();
+      .getByRole("combobox", { name: "Detail for Grace Tan" })
+      .selectOption("1");
     assert.equal(await page.locator(".issues").count(), 0);
+
+    // Extra names with no detail can be auto-detailed into groups.
+    await page.getByRole("button", { name: "Add participants", exact: true }).click();
+    await page.getByRole("button", { name: "Paste the whole list" }).click();
+    await page.locator("#add-names").fill("Henry Ng\nIvan Goh\nJoel Sim\nKai Ong");
+    await page.getByRole("button", { name: "Add participants", exact: true }).click();
+    await page.getByRole("spinbutton", { name: "Detail size" }).fill("4");
+    await page.getByRole("button", { name: "Auto-detail", exact: true }).click();
+    assert.equal(await page.locator(".unassigned").count(), 0);
+    assert.equal(await page.locator(".issues").count(), 0);
+
+    // Rifles are changed per firer in the list; an all-LMG detail is allowed.
+    for (const person of ["Henry Ng", "Ivan Goh", "Joel Sim", "Kai Ong"])
+      await page
+        .getByRole("combobox", { name: `Rifle for ${person}` })
+        .selectOption("M16/LMG");
+    assert.equal(await page.locator(".issues").count(), 0);
+    await page
+      .getByRole("combobox", { name: "Rifle for Kai Ong" })
+      .selectOption("SAR21");
+    assert.ok((await page.locator(".issues").innerText()).includes("non-SAR21"));
+    await page
+      .getByRole("combobox", { name: "Rifle for Kai Ong" })
+      .selectOption("M16/LMG");
+    assert.equal(await page.locator(".issues").count(), 0);
+
     await page.locator("#search").fill("Farah");
     assert.equal(await page.locator("tbody tr").count(), 4);
     assert.equal(await page.locator("tr.match").count(), 1);
     await page.locator("#search").fill("");
 
-    // LMG and M16 are chosen per participant, within the non-SAR21 limit.
-    for (const person of ["Dana Koh", "Evan Lim", "Farah Ali"]) {
-      await page.getByRole("button", { name: `Options for ${person}` }).click();
-      await page.locator("#dialog select[name=weapon]").selectOption("M16/LMG");
-      await page.locator("#dialog").getByRole("button", { name: "Save", exact: true }).click();
-    }
-    assert.ok((await page.locator("#dialog .error").innerText()).includes("non-SAR21"));
-    await page.getByRole("button", { name: "Close", exact: true }).click();
-
-    await tab(page, "Stage A");
-    assert.ok((await page.locator("tr", { hasText: "Dana Koh" }).innerText()).includes("M16/LMG"));
+    await tab(page, "Stage A");    await tab(page, "Stage A");
+    assert.equal(await page.locator(".issues").count(), 0);
     await page.getByRole("spinbutton", { name: "Detail 1 total hits", exact: true }).fill("43");
 
     // A full offline reload recovers the unfinished detail entry.
@@ -213,14 +235,14 @@ async function enterHits(page, person, hits) {
       await page.getByRole("spinbutton", { name: "Detail 1 total hits" }).inputValue(),
       "43",
     );
-    await page.getByRole("button", { name: "Confirm scores", exact: true }).click();
+    await page.getByRole("button", { name: "Confirm scores for Detail 1", exact: true }).click();
     assert.equal(
       await page.evaluate(
         () => JSON.parse(localStorage.getItem("detail-ic-v2")).shoots[1].attempts[0].score,
       ),
       10,
     );
-    assert.equal(await page.locator(".score-panel").count(), 0);
+    assert.equal(await page.locator(".score-panel").count(), 1);
     assert.ok((await page.locator("#main").innerText()).includes("Show 1 scored detail"));
 
     // A manual detail saved as a new detail joins redetailing and flags its source detail.
@@ -229,8 +251,9 @@ async function enterHits(page, person, hits) {
       await page.getByRole("checkbox", { name: `Include ${person}` }).check();
     assert.equal(
       await page.getByRole("combobox", { name: "Dana Koh rifle" }).inputValue(),
-      "M16/LMG",
+      "SAR21",
     );
+    await page.getByRole("combobox", { name: "Dana Koh rifle" }).selectOption("M16/LMG");
     await page.getByRole("spinbutton", { name: "Manual detail total hits" }).fill("48");
     assert.ok((await page.locator(".manual-summary").innerText()).includes("→ 12/15"));
     await page.getByRole("button", { name: "Save as new detail", exact: true }).click();
@@ -239,6 +262,7 @@ async function enterHits(page, person, hits) {
       () => JSON.parse(localStorage.getItem("detail-ic-v2")).shoots[1],
     );
     assert.equal(saved.attempts.length, 8);
+    assert.equal(saved.participants.length, 8);
     assert.ok(saved.details.some((d) => d.temporary && d.memberIds.length === 4));
     await waitFor(page, () =>
       [...document.querySelectorAll(".queue-row")].some((r) =>
@@ -249,6 +273,17 @@ async function enterHits(page, person, hits) {
     await tab(page, "Participants");
     assert.equal(await page.locator(".detail-head .warn").count(), 1);
     await tab(page, "Stage A");
+
+    await tab(page, "Participants");
+    await page.getByRole("button", { name: "Clear participants", exact: true }).click();
+    await page
+      .locator("#dialog")
+      .getByRole("button", { name: "Clear participants", exact: true })
+      .click();
+    assert.ok(
+      (await page.locator("#dialog .error").innerText()).includes("Delete the shoot"),
+    );
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
 
     await tab(page, "Shoots");
     assert.equal(await page.locator(".shoot-row").count(), 2);
@@ -282,7 +317,7 @@ async function enterHits(page, person, hits) {
     assert.deepEqual(errors, []);
     await browser.close();
     console.log(
-      `${name}: shoots, delete, settings, thresholds, autosave, undo, priorities, redetail prompt, detail assignment, rifles, confirm, manual detail, mobile and offline reload passed`,
+      `${name}: shoots, delete, settings, thresholds, roster editing, auto-detail, autosave, undo, priorities, redetail prompt, detail assignment, rifles, confirm, manual detail, mobile and offline reload passed`,
     );
   }
 })().catch((e) => {

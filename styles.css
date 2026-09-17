@@ -587,7 +587,9 @@ td {
 }
 .row-weapon {
   font-size: 11px;
-  max-width: 110px;
+  width: 100%;
+  min-width: 120px;
+  max-width: 230px;
   padding: 7px;
 }
 .draft-summary {
@@ -931,7 +933,44 @@ tr.flash td {
   margin: -8px 0 14px;
 }
 .issues {
-  border: 1px solid #fee2e2;
+  border: 1px solid #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 11px;
+  line-height: 1.7;
+  white-space: pre-line;
+  padding: 10px 12px;
+}
+.issues .inline-link {
+  color: #92400e;
+  text-decoration: underline;
+  font-size: 11px;
+}
+.add-panel textarea {
+  min-height: 130px;
+}
+.add-bar {
+  margin-bottom: 14px;
+}
+.add-note:empty {
+  display: none;
+}
+.name-input {
+  width: 100%;
+  min-width: 120px;
+  padding: 6px 7px;
+}
+#group-size {
+  width: 56px;
+  padding: 6px;
+}
+.detail-head .actions .muted {
+  white-space: nowrap;
+}
+select.assign {
+  font-size: 11px;
+  padding: 6px;
+  min-width: 96px;
 }
 .unassigned {
   border-color: #fcd34d;
@@ -1035,7 +1074,8 @@ tr.flash td {
     max-width: 120px;
   }
   .row-weapon {
-    max-width: 82px;
+    min-width: 96px;
+    max-width: 130px;
     font-size: 10px;
     padding: 7px 4px;
   }
