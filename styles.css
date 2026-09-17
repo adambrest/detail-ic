@@ -133,6 +133,103 @@ h1 .logo {
   margin-left: auto;
   white-space: nowrap;
 }
+.links {
+  display: flex;
+  gap: 6px;
+}
+.link {
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 9px;
+  white-space: nowrap;
+}
+.link:hover {
+  background: var(--panel2);
+  color: var(--text);
+}
+.required {
+  font-size: 12px;
+  font-weight: 650;
+  margin: -6px 0 10px;
+}
+.rifle-type {
+  margin-bottom: 10px;
+}
+.threshold-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+.threshold-head .info {
+  margin: 0;
+}
+.threshold-head .inline-link {
+  margin-left: auto;
+}
+.info.warn {
+  color: #b45309;
+  border-color: #fcd34d;
+  background: #fffbeb;
+  margin-left: 6px;
+  font-size: 9px;
+}
+.info.warn .tooltip {
+  right: auto;
+  left: -8px;
+}
+.temporary {
+  border-style: dashed;
+}
+td.rifle {
+  font-size: 11px;
+  white-space: nowrap;
+}
+.manual-list {
+  max-height: 45vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+.manual-group h3 {
+  font-size: 11px;
+  color: var(--muted);
+  background: #f8fafc;
+  padding: 7px 10px;
+}
+.manual-row {
+  display: grid;
+  grid-template-columns: 1fr 120px 64px;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 10px;
+  border-top: 1px solid var(--line);
+}
+.manual-row.on {
+  background: #f5f9ff;
+}
+.manual-row select:disabled,
+.manual-row input:disabled {
+  opacity: 0.35;
+}
+.manual-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.manual-row select {
+  font-size: 11px;
+  padding: 6px;
+}
+.manual-row input[type="number"] {
+  width: 64px;
+}
 main {
   max-width: 1120px;
   margin: 0 auto;
@@ -767,12 +864,6 @@ tr.awaiting td {
 tr.match td {
   background: #fef9c3;
 }
-tr.absent td {
-  opacity: 0.45;
-}
-tr.absent td.more-cell {
-  opacity: 1;
-}
 tr.flash td {
   animation: flash 1.4s ease-out;
 }
@@ -883,6 +974,10 @@ tr.flash td {
   }
   #status {
     font-size: 10px;
+  }
+  .link {
+    padding: 5px 7px;
+    font-size: 11px;
   }
   .grid .queue {
     max-width: none;

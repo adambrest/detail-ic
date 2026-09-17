@@ -6,6 +6,7 @@ import {
   isCS,
   profileFor,
   weaponsFor,
+  baseWeapons,
   weaponGroup,
   typeLabel,
 } from "./profiles.js";
@@ -24,7 +25,7 @@ export function newStore() {
 }
 export function preset(store, program, variant = "standard") {
   return (store.presets[typeKey(program, variant)] ??= {
-    weapon: weaponsFor(program, variant)[0],
+    weapon: baseWeapons(program, variant)[0],
     objective: "marksman",
     targets: {},
   });
@@ -131,24 +132,47 @@ export function audit(s, action, data = {}) {
 export function addDetail(s, number) {
   const d = {
     id: uid(),
-    name: `Detail ${number ?? Math.max(0, ...s.details.map(detailNumber)) + 1}`,
+    name: `Detail ${number ?? Math.max(0, ...s.details.filter((d) => !d.temporary).map(detailNumber)) + 1}`,
   };
   s.details.push(d);
   audit(s, "Detail added", { detail: structuredClone(d) });
   return d;
 }
 export function members(s, detailId) {
-  return s.participants.filter((p) => p.detailId === detailId);
+  const d = detailId && s.details.find((d) => d.id === detailId);
+  return d?.temporary
+    ? d.memberIds
+        .map((id) => s.participants.find((p) => p.id === id))
+        .filter(Boolean)
+    : s.participants.filter((p) => p.detailId === detailId);
+}
+// The rifle a firer uses in a detail: temporary details keep their own choice.
+export function rosterWeapon(s, detailId, p) {
+  return s.details.find((d) => d.id === detailId)?.weapons?.[p.id] ?? p.weapon;
 }
 export const detailNumber = (d) => Number(d.name.match(/\d+$/)?.[0]) || 0;
 export function sortedDetails(s) {
-  return s.details.toSorted((a, b) => detailNumber(a) - detailNumber(b));
+  return s.details.toSorted(
+    (a, b) =>
+      !!a.temporary - !!b.temporary || detailNumber(a) - detailNumber(b),
+  );
+}
+// Temporary details holding firers who belong to this detail.
+export function borrowedBy(s, detailId) {
+  return s.details
+    .filter((d) => d.temporary)
+    .map((d) => ({
+      detail: d,
+      people: members(s, d.id).filter((p) => p.detailId === detailId),
+    }))
+    .filter((x) => x.people.length);
 }
 export function ensureDetail(s, number) {
   if (!Number.isInteger(number) || number < 1 || number > 500)
     throw Error("Detail numbers must be whole numbers from 1.");
   return (
-    s.details.find((d) => detailNumber(d) === number) ?? addDetail(s, number)
+    s.details.find((d) => !d.temporary && detailNumber(d) === number) ??
+    addDetail(s, number)
   );
 }
 // Reads "Name", "Name,2", "Name<tab>2" or "Name 2". Numbers are only read for detailed shoots.
@@ -194,7 +218,9 @@ export function detailIssues(s) {
   if (!isCS(s)) return [];
   const issues = [],
     unassigned = s.participants.filter((p) => !p.detailId).length,
-    used = sortedDetails(s).filter((d) => members(s, d.id).length),
+    used = sortedDetails(s).filter(
+      (d) => !d.temporary && members(s, d.id).length,
+    ),
     highest = Math.max(0, ...used.map(detailNumber));
   if (unassigned)
     issues.push(
@@ -370,26 +396,8 @@ export function getDraft(s, detailId, stage) {
     stage,
     createdAt: now(),
     rosterIds: members(s, detailId).map((p) => p.id),
-    rows: members(s, detailId).map((p) => ({
-      participantId: p.id,
-      weapon: p.weapon,
-      hits: "",
-      accounted: true,
-    })),
+    rows: members(s, detailId).map((p) => ({ participantId: p.id, hits: "" })),
     aggregate: "",
-  });
-}
-export function setPresent(s, detailId, stage, participantId, present) {
-  const row = getDraft(s, detailId, stage).rows.find(
-    (r) => r.participantId === participantId,
-  );
-  if (!row) throw Error("Participant not found in this detail.");
-  row.accounted = present;
-  if (!present) row.hits = "";
-  audit(s, present ? "Marked present" : "Marked not present", {
-    participantId,
-    detailId,
-    stage,
   });
 }
 export function resetDraft(s, detailId, stage) {
@@ -408,10 +416,82 @@ export function parseHits(input, max) {
   if (value > max) return { error: `Hits must be 0–${max}.` };
   return { value };
 }
+// Shared checks for a detail's scores, whether from its entry table or a manual detail.
+function scoreRows(s, stage, input, aggregateInput, errors) {
+  const shared = isCS(s) && ["A", "C"].includes(stage);
+  const rows = input.map((row) => {
+    let profile, component;
+    try {
+      profile = profileFor(s.program, s.variant, row.weapon);
+      component = profile.components.find((c) => c.id === stage);
+      if (!component) throw Error("Unknown stage.");
+    } catch (e) {
+      errors.push(e.message);
+    }
+    const parsed = component
+      ? parseHits(row.hits, component.max)
+      : { error: "Unsupported weapon." };
+    return { ...row, profile, component, parsed };
+  });
+  if (rows.length)
+    errors.push(
+      ...compositionErrors(
+        s,
+        rows.map((r) => ({ weapon: r.weapon })),
+      ),
+    );
+  const hasAggregate =
+    aggregateInput !== "" &&
+    aggregateInput !== null &&
+    aggregateInput !== undefined;
+  const someHits = rows.some((r) => r.hits !== "");
+  let aggregate = null;
+  if (shared && hasAggregate) {
+    const max = rows.reduce((n, r) => n + (r.component?.max || 0), 0),
+      p = parseHits(aggregateInput, max);
+    if (p.error) errors.push(`Detail total: ${p.error}`);
+    else aggregate = p.value;
+  }
+  if (!shared && hasAggregate)
+    errors.push(
+      "Individual results are required; a detail total cannot supply individual scores.",
+    );
+  if (!shared || !hasAggregate || someHits) {
+    for (const r of rows)
+      if (r.parsed.error)
+        errors.push(
+          `${r.person?.name || "Unknown participant"}: ${r.parsed.error}`,
+        );
+    if (rows.every((r) => !r.parsed.error)) {
+      const sum = rows.reduce((n, r) => n + r.parsed.value, 0);
+      if (shared && hasAggregate && aggregate !== null && sum !== aggregate)
+        errors.push(
+          `Total mismatch: individual hits ${sum}, detail total ${aggregate} (difference ${Math.abs(sum - aggregate)}).`,
+        );
+      if (!hasAggregate) aggregate = sum;
+    }
+  }
+  return {
+    errors: [...new Set(errors)],
+    rows,
+    aggregate,
+    divisor: rows.length,
+    shared,
+    score:
+      shared && aggregate !== null && rows.length
+        ? Math.floor(aggregate / rows.length)
+        : null,
+    mode:
+      shared && hasAggregate
+        ? someHits
+          ? "reconciled"
+          : "aggregate"
+        : "individual",
+  };
+}
 export function validateDraft(s, draft) {
   const roster = members(s, draft.detailId),
-    errors = [],
-    shared = isCS(s) && ["A", "C"].includes(draft.stage);
+    errors = [];
   const ids = roster.map((p) => p.id),
     rowIds = draft.rows.map((r) => r.participantId);
   if (!sameIds(ids, draft.rosterIds))
@@ -426,85 +506,33 @@ export function validateDraft(s, draft) {
     errors.push("A roster participant is missing from score entry.");
   const rows = draft.rows.map((row) => {
     const person = roster.find((p) => p.id === row.participantId);
-    let profile, component;
-    try {
-      profile = profileFor(s.program, s.variant, row.weapon);
-      component = profile.components.find((c) => c.id === draft.stage);
-      if (!component) throw Error("Unknown stage.");
-    } catch (e) {
-      errors.push(e.message);
-    }
-    if (person && !isCS(s) && person.weapon !== row.weapon)
-      errors.push(
-        `${person.name}: rifle must remain ${person.weapon} for this record.`,
-      );
-    const parsed = component
-      ? parseHits(row.hits, component.max)
-      : { error: "Unsupported weapon." };
-    return { ...row, person, profile, component, parsed };
+    return {
+      participantId: row.participantId,
+      person,
+      weapon: person ? rosterWeapon(s, draft.detailId, person) : "",
+      hits: row.hits,
+    };
   });
-  // Firers marked not present are left out of this attempt and its average.
-  const present = rows.filter((r) => r.accounted !== false);
-  if (roster.length && !present.length)
-    errors.push("Everyone is marked not present.");
-  if (present.length)
-    errors.push(
-      ...compositionErrors(
-        s,
-        present.map((r) => ({ weapon: r.weapon })),
-      ),
-    );
-  const hasAggregate =
-    draft.aggregate !== "" &&
-    draft.aggregate !== null &&
-    draft.aggregate !== undefined;
-  const someHits = present.some((r) => r.hits !== "");
-  let aggregate = null;
-  if (shared && hasAggregate) {
-    const max = present.reduce((n, r) => n + (r.component?.max || 0), 0),
-      p = parseHits(draft.aggregate, max);
-    if (p.error) errors.push(`Detail total: ${p.error}`);
-    else aggregate = p.value;
-  }
-  if (!shared && hasAggregate)
-    errors.push(
-      "Individual results are required; a detail total cannot supply individual scores.",
-    );
-  if (!shared || !hasAggregate || someHits) {
-    for (const r of present)
-      if (r.parsed.error)
-        errors.push(
-          `${r.person?.name || "Unknown participant"}: ${r.parsed.error}`,
-        );
-    if (present.every((r) => !r.parsed.error)) {
-      const sum = present.reduce((n, r) => n + r.parsed.value, 0);
-      if (shared && hasAggregate && aggregate !== null && sum !== aggregate)
-        errors.push(
-          `Total mismatch: individual hits ${sum}, detail total ${aggregate} (difference ${Math.abs(sum - aggregate)}).`,
-        );
-      if (!hasAggregate) aggregate = sum;
-    }
-  }
-  if (!roster.length) errors.push("Detail has no participants.");
-  return {
-    errors: [...new Set(errors)],
-    rows,
-    present,
-    aggregate,
-    divisor: present.length,
-    shared,
-    score:
-      shared && aggregate !== null && present.length
-        ? Math.floor(aggregate / present.length)
-        : null,
-    mode:
-      shared && hasAggregate
-        ? someHits
-          ? "reconciled"
-          : "aggregate"
-        : "individual",
-    roster,
-  };
+  const v = scoreRows(s, draft.stage, rows, draft.aggregate, errors);
+  if (!roster.length) v.errors.push("Detail has no participants.");
+  return { ...v, roster };
+}
+// A detail put together on the spot, e.g. for a swap: any firers, rifles and hits.
+export function validateManual(s, stage, entries, aggregate = "") {
+  const errors = [],
+    ids = entries.map((e) => e.participantId);
+  if (!entries.length) errors.push("Choose the firers in this detail.");
+  if (new Set(ids).size !== ids.length)
+    errors.push("Duplicate participant in score entry.");
+  const rows = entries.map((e) => ({
+    participantId: e.participantId,
+    person: s.participants.find((p) => p.id === e.participantId),
+    weapon: e.weapon,
+    hits: e.hits ?? "",
+  }));
+  if (rows.some((r) => !r.person))
+    errors.push("Unexpected participant in score entry.");
+  return scoreRows(s, stage, rows, aggregate, errors);
 }
 export function sameIds(a, b) {
   return (
@@ -514,12 +542,10 @@ export function sameIds(a, b) {
     a.every((id) => b.includes(id))
   );
 }
-export function saveDetail(s, draft) {
-  const v = validateDraft(s, draft);
-  if (v.errors.length) throw Error(v.errors.join("\n"));
+function recordDetailAttempt(s, stage, detailId, v, extra = {}) {
   const at = now(),
     detailAttemptId = uid(),
-    roster = v.present.map((r) => ({
+    roster = v.rows.map((r) => ({
       id: r.person.id,
       name: r.person.name,
       recordId: r.person.recordId,
@@ -530,12 +556,9 @@ export function saveDetail(s, draft) {
     }));
   const detailAttempt = {
     id: detailAttemptId,
-    detailId: draft.detailId,
-    stage: draft.stage,
+    detailId,
+    stage,
     roster,
-    absent: v.rows
-      .filter((r) => r.accounted === false)
-      .map((r) => r.participantId),
     program: s.program,
     variant: s.variant,
     aggregateHits: v.aggregate,
@@ -546,6 +569,7 @@ export function saveDetail(s, draft) {
     status: "valid",
     recordedAt: at,
     recorder: "Local device",
+    ...extra,
   };
   s.shared.push(detailAttempt);
   for (const row of roster)
@@ -555,7 +579,7 @@ export function saveDetail(s, draft) {
       recordId: row.recordId,
       program: s.program,
       variant: s.variant,
-      stage: draft.stage,
+      stage,
       weapon: row.weapon,
       profile: row.profile,
       rawHits: row.rawHits,
@@ -565,17 +589,70 @@ export function saveDetail(s, draft) {
       recordedAt: at,
       recorder: "Local device",
     });
-  detailAttempt.closedDispatches = closeDispatch(
-    s,
-    draft.stage,
-    `detail:${draft.detailId}`,
-  );
-  s.manualQueue = s.manualQueue.filter(
-    (q) => q.stage !== draft.stage || q.key !== `detail:${draft.detailId}`,
-  );
-  audit(s, "Scores finalized", { detailAttemptId });
-  delete s.drafts[draftKey(draft.detailId, draft.stage)];
+  if (detailId) {
+    detailAttempt.closedDispatches = closeDispatch(
+      s,
+      stage,
+      `detail:${detailId}`,
+    );
+    s.manualQueue = s.manualQueue.filter(
+      (q) => q.stage !== stage || q.key !== `detail:${detailId}`,
+    );
+  }
   return detailAttempt;
+}
+export function saveDetail(s, draft) {
+  const v = validateDraft(s, draft);
+  if (v.errors.length) throw Error(v.errors.join("\n"));
+  const a = recordDetailAttempt(s, draft.stage, draft.detailId, v);
+  audit(s, "Scores finalized", { detailAttemptId: a.id });
+  delete s.drafts[draftKey(draft.detailId, draft.stage)];
+  return a;
+}
+// Scores a manual detail once, or keeps it as a temporary detail for redetailing.
+export function recordManualDetail(
+  s,
+  stage,
+  entries,
+  aggregate = "",
+  { keep = false } = {},
+) {
+  if (!isCS(s)) throw Error("Manual details are for Combat Shoot.");
+  const v = validateManual(s, stage, entries, aggregate);
+  if (v.errors.length) throw Error(v.errors.join("\n"));
+  let detailId = null;
+  if (keep) {
+    const d = {
+      id: uid(),
+      name: `Temporary detail ${s.details.filter((d) => d.temporary).length + 1}`,
+      temporary: true,
+      memberIds: entries.map((e) => e.participantId),
+      weapons: Object.fromEntries(
+        entries.map((e) => [e.participantId, e.weapon]),
+      ),
+    };
+    s.details.push(d);
+    detailId = d.id;
+    audit(s, "Temporary detail added", { detail: structuredClone(d) });
+  }
+  const a = recordDetailAttempt(s, stage, detailId, v, { manual: true });
+  audit(s, "Manual detail scored", { detailAttemptId: a.id, keep });
+  return a;
+}
+// Removes a temporary detail that no longer has any counted scores.
+export function dropTemporaryDetail(s, id) {
+  const d = s.details.find((d) => d.id === id && d.temporary);
+  if (
+    !d ||
+    s.shared.some((a) => a.detailId === id && a.status === "valid") ||
+    s.dispatches.some((x) => x.key === `detail:${id}` && x.status === "awaiting")
+  )
+    return false;
+  s.details = s.details.filter((x) => x.id !== id);
+  for (const key of Object.keys(s.drafts))
+    if (s.drafts[key].detailId === id) delete s.drafts[key];
+  audit(s, "Temporary detail removed", { detailId: id });
+  return true;
 }
 export function recordIndividual(
   s,
@@ -720,8 +797,9 @@ export function target(s, p, stage, objective = s.settings.objective) {
     const a = best(s, p, "A");
     return a === null ? null : Math.max(0, p.profile[objective] - a);
   }
+  const weapon = isCS(s) ? baseWeapons(s.program, s.variant)[0] : p.weapon;
   return (
-    s.settings.targets[`${p.weapon}:${stage}:${objective}`] ??
+    s.settings.targets[`${weapon}:${stage}:${objective}`] ??
     Math.ceil((p.profile[objective] * c.max) / p.profile.total)
   );
 }
@@ -760,13 +838,10 @@ export function entities(s) {
         members: [p],
       }));
 }
-export function stageMembers(s, detailId, stage) {
-  const roster = members(s, detailId),
-    draft = s.drafts[draftKey(detailId, stage)];
-  return roster.map((p) => ({
+export function stageMembers(s, detailId) {
+  return members(s, detailId).map((p) => ({
     ...p,
-    weapon:
-      draft?.rows.find((r) => r.participantId === p.id)?.weapon || p.weapon,
+    weapon: rosterWeapon(s, detailId, p),
   }));
 }
 export function stageCompositionErrors(s, detailId, stage) {
@@ -781,7 +856,7 @@ export function stageCompositionErrors(s, detailId, stage) {
     )
   )
     return ["Score entries are out of date. Clear them before redetailing."];
-  return compositionErrors(s, stageMembers(s, detailId, stage));
+  return compositionErrors(s, stageMembers(s, detailId));
 }
 export function notYetShot(s, stage) {
   return s.participants.filter((p) => best(s, p, stage) === null);
@@ -805,15 +880,12 @@ export function queue(s, stage) {
         s.manualQueue.some((q) => q.stage === stage && q.key === e.key) ||
         e.members.some((p) => {
           const v = best(s, p, stage),
-            g = goal(s, p, stage),
-            r = result(s, p);
+            g = goal(s, p, stage);
           return (
             v === null ||
             (g &&
               v < p.profile.components.find((c) => c.id === stage).max &&
-              (r.total === null
-                ? v < (target(s, p, stage, g.objective) ?? 0)
-                : r.total < g.threshold))
+              v < (target(s, p, stage, g.objective) ?? 0))
           );
         }),
     );
@@ -825,8 +897,7 @@ export function queue(s, stage) {
     e.priority = e.members
       .map((p) => {
         const g = goal(s, p, stage),
-          v = best(s, p, stage),
-          r = result(s, p);
+          v = best(s, p, stage);
         return {
           p,
           rank: v === null ? -1 : (g?.rank ?? 2),
@@ -834,10 +905,8 @@ export function queue(s, stage) {
             v === null
               ? 0
               : g
-                ? r.total === null
-                  ? Math.max(0, (target(s, p, stage, g.objective) ?? 0) - v) /
-                    p.profile.components.find((c) => c.id === stage).max
-                  : (g.threshold - r.total) / p.profile.total
+                ? Math.max(0, (target(s, p, stage, g.objective) ?? 0) - v) /
+                  p.profile.components.find((c) => c.id === stage).max
                 : Infinity,
         };
       })
@@ -898,10 +967,7 @@ export function dispatch(s, stage, keys) {
       roster: e.members.map((p) => ({
         id: p.id,
         recordId: p.recordId,
-        weapon: e.detail
-          ? stageMembers(s, e.detail.id, stage).find((m) => m.id === p.id)
-              .weapon
-          : p.weapon,
+        weapon: e.detail ? rosterWeapon(s, e.detail.id, p) : p.weapon,
       })),
       status: "awaiting",
       at: now(),

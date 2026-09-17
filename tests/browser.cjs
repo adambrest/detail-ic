@@ -45,13 +45,28 @@ async function enterHits(page, person, hits) {
     );
     await page.getByRole("switch", { name: "Enable BTP", exact: true }).click();
     assert.equal(
-      await page.getByRole("combobox", { name: "BTP default rifle" }).count(),
+      await page.getByRole("combobox", { name: "BTP rifle type" }).count(),
       0,
     );
-    await page.getByText("Scoring rules").first().click();
-    const settingsText = await page.locator("#main").innerText();
-    assert.ok(!settingsText.includes("Source"));
-    assert.ok(!settingsText.includes("requires"));
+    const btp = await page.locator(".preset.open").innerText();
+    assert.ok(btp.includes("SAR21") && btp.includes("Pass 16/32 · Marksman 26/32"));
+    assert.ok(btp.includes("Auto-detailing thresholds"));
+    assert.ok(!btp.includes("Source") && !btp.includes("requires"));
+    assert.equal(await page.getByRole("button", { name: "Save suggestions" }).count(), 0);
+    const threshold = page.getByRole("spinbutton", { name: "BTP Stage A · Day threshold" });
+    assert.equal(await threshold.inputValue(), "13");
+    await threshold.fill("14");
+    await threshold.press("Tab");
+    await waitFor(page, () =>
+      JSON.parse(localStorage.getItem("detail-ic-v2")).presets.BTP.targets["SAR21:A:marksman"] === 14,
+    );
+    await page.getByRole("button", { name: "Reset", exact: true }).click();
+    assert.equal(
+      await page.getByRole("spinbutton", { name: "BTP Stage A · Day threshold" }).inputValue(),
+      "13",
+    );
+    assert.equal(await page.locator('a[href="https://github.com/adambrest/detail-ic"]').count(), 1);
+    assert.equal(await page.locator('a[href*="detail-ic/issues/new"]').count(), 1);
     await page.screenshot({ path: `tests/${name}-settings.png`, fullPage: true });
 
     // New shoot needs a name.
@@ -153,10 +168,12 @@ async function enterHits(page, person, hits) {
     await page.getByLabel("Shoot name").fill("Bravo Coy CS");
     await page.getByRole("button", { name: "Create shoot", exact: true }).click();
     assert.ok(!(await page.locator("#shoot-type").isDisabled()));
+    assert.equal(await page.locator("#fill-weapon").count(), 0);
     await page
       .getByRole("button", { name: "Add participants", exact: false })
       .first()
       .click();
+    assert.equal(await page.locator("#dialog select").count(), 0);
     await page
       .locator("textarea[name=names]")
       .fill("Dana Koh, 1\nEvan Lim\nFarah Ali\nGrace Tan");
@@ -172,32 +189,18 @@ async function enterHits(page, person, hits) {
     assert.equal(await page.locator("tr.match").count(), 1);
     await page.locator("#search").fill("");
 
-    await tab(page, "Stage A");
-    await page.getByRole("spinbutton", { name: "Detail 1 total hits", exact: true }).fill("43");
-    for (const person of ["Dana Koh", "Evan Lim", "Farah Ali"])
-      await page
-        .getByRole("combobox", { name: `${person} rifle for Stage A` })
-        .selectOption("M16/LMG");
-    assert.ok((await page.locator(".draft-errors").innerText()).includes("non-SAR21"));
-    await page.getByRole("button", { name: "Confirm scores", exact: true }).click();
-    assert.equal(
-      await page.evaluate(
-        () => JSON.parse(localStorage.getItem("detail-ic-v2")).shoots[1].attempts.length,
-      ),
-      0,
-    );
-    await page
-      .getByRole("combobox", { name: "Farah Ali rifle for Stage A" })
-      .selectOption("SAR21");
+    // LMG and M16 are chosen per participant, within the non-SAR21 limit.
+    for (const person of ["Dana Koh", "Evan Lim", "Farah Ali"]) {
+      await page.getByRole("button", { name: `Options for ${person}` }).click();
+      await page.locator("#dialog select[name=weapon]").selectOption("M16/LMG");
+      await page.locator("#dialog").getByRole("button", { name: "Save", exact: true }).click();
+    }
+    assert.ok((await page.locator("#dialog .error").innerText()).includes("non-SAR21"));
+    await page.getByRole("button", { name: "Close", exact: true }).click();
 
-    // Not present greys the row until marked present again.
-    await page.getByRole("button", { name: "Options for Grace Tan" }).click();
-    await page.getByRole("button", { name: "Not present for this detail" }).click();
-    assert.equal(await page.locator("tr.absent").count(), 1);
-    assert.ok((await page.locator(".draft-summary").innerText()).includes("1 not present"));
-    await page.getByRole("button", { name: "Options for Grace Tan" }).click();
-    await page.getByRole("button", { name: "Mark present" }).click();
-    assert.equal(await page.locator("tr.absent").count(), 0);
+    await tab(page, "Stage A");
+    assert.ok((await page.locator("tr", { hasText: "Dana Koh" }).innerText()).includes("M16/LMG"));
+    await page.getByRole("spinbutton", { name: "Detail 1 total hits", exact: true }).fill("43");
 
     // A full offline reload recovers the unfinished detail entry.
     await server.stop();
@@ -207,10 +210,6 @@ async function enterHits(page, person, hits) {
     assert.equal(
       await page.getByRole("spinbutton", { name: "Detail 1 total hits" }).inputValue(),
       "43",
-    );
-    assert.equal(
-      await page.getByRole("combobox", { name: "Dana Koh rifle for Stage A" }).inputValue(),
-      "M16/LMG",
     );
     await page.getByRole("button", { name: "Confirm scores", exact: true }).click();
     assert.equal(
@@ -222,6 +221,33 @@ async function enterHits(page, person, hits) {
     assert.equal(await page.locator(".score-panel").count(), 0);
     assert.ok((await page.locator("#main").innerText()).includes("Show 1 scored detail"));
 
+    // A manual detail saved as a new detail joins redetailing and flags its source detail.
+    await page.getByRole("button", { name: "Manual detail", exact: true }).click();
+    for (const person of ["Dana Koh", "Evan Lim", "Farah Ali", "Grace Tan"])
+      await page.getByRole("checkbox", { name: `Include ${person}` }).check();
+    assert.equal(
+      await page.getByRole("combobox", { name: "Dana Koh rifle" }).inputValue(),
+      "M16/LMG",
+    );
+    await page.getByRole("spinbutton", { name: "Manual detail total hits" }).fill("48");
+    assert.ok((await page.locator(".manual-summary").innerText()).includes("→ 12/15"));
+    await page.getByRole("button", { name: "Save as new detail", exact: true }).click();
+    await waitFor(page, () => !document.querySelector("#dialog").open);
+    const saved = await page.evaluate(
+      () => JSON.parse(localStorage.getItem("detail-ic-v2")).shoots[1],
+    );
+    assert.equal(saved.attempts.length, 8);
+    assert.ok(saved.details.some((d) => d.temporary && d.memberIds.length === 4));
+    await waitFor(page, () =>
+      [...document.querySelectorAll(".queue-row")].some((r) =>
+        r.innerText.includes("Temporary detail 1"),
+      ),
+    );
+    assert.equal(await page.locator(".queue-row .warn").count(), 1);
+    await tab(page, "Participants");
+    assert.equal(await page.locator(".detail-head .warn").count(), 1);
+    await tab(page, "Stage A");
+
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: `tests/${name}-mobile.png`, fullPage: true });
     assert.equal(
@@ -231,12 +257,12 @@ async function enterHits(page, person, hits) {
     assert.ok(await inViewport(page, page.locator("#redetail")));
     await page.reload();
     await tab(page, "Final scores");
-    assert.ok((await page.locator("tbody tr").first().innerText()).includes("10/15"));
-    assert.ok((await page.locator("#status").innerText()).includes("Offline"));
+    assert.ok((await page.locator("tbody tr").first().innerText()).includes("12/15"));
+    await waitFor(page, () => document.querySelector("#status").textContent.includes("Offline"));
     assert.deepEqual(errors, []);
     await browser.close();
     console.log(
-      `${name}: shoots, settings, autosave, undo, priorities, redetail prompt, detail assignment, presence, confirm, mobile and offline reload passed`,
+      `${name}: shoots, settings, thresholds, autosave, undo, priorities, redetail prompt, detail assignment, rifles, confirm, manual detail, mobile and offline reload passed`,
     );
   }
 })().catch((e) => {
