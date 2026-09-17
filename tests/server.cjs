@@ -1,0 +1,4 @@
+const http=require('node:http');
+const fs=require('node:fs/promises');
+const path=require('node:path');
+exports.startServer=async()=>{const root=path.resolve(__dirname,'..');const server=http.createServer(async(req,res)=>{try{const requested=new URL(req.url,'http://localhost').pathname;const file=path.resolve(root,'.'+(requested==='/'?'/index.html':decodeURIComponent(requested)));if(!file.startsWith(root+path.sep)){res.writeHead(403);res.end();return;}const bytes=await fs.readFile(file);res.setHeader('Content-Type',({'.html':'text/html','.js':'application/javascript','.css':'text/css','.svg':'image/svg+xml','.webmanifest':'application/manifest+json'})[path.extname(file)]||'application/octet-stream');res.end(bytes);}catch{res.writeHead(404);res.end();}});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));return {url:`http://127.0.0.1:${server.address().port}`,stop:()=>new Promise(resolve=>{server.close(resolve);server.closeAllConnections();})};};

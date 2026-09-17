@@ -1,0 +1,183 @@
+export const VERSION = "2026-09-17.2";
+export const PROGRAMS = {
+  BTP: "BTP",
+  ATP_M: "ATP (M)",
+  ATP_SP: "ATP (SP)",
+  CS_M: "CS (M)",
+  CS_SP: "CS (SP)",
+  APS: "APS",
+};
+export const WEAPON_FAMILY = {
+  SAR21: "SAR21",
+  "SAR21 MMS": "SAR21",
+  "SAR21 SS": "SAR21",
+  HK416: "HK416",
+  M16: "M16",
+  M203: "M203",
+  LMG: "LMG",
+};
+export const DETAIL_RULES = {
+  CS_SP: { min: 4, max: 6, nonSAR: 2 },
+  CS_M: { min: 5, max: 7, nonSAR: 2 },
+  ATP_SP: { max: 5 },
+};
+export const isCS = (s) => s.program.startsWith("CS_");
+function rules(
+  program,
+  variant,
+  weapons,
+  limits,
+  pass,
+  marksman,
+  source,
+  extra = {},
+) {
+  return weapons.map((weapon) => ({
+    id: `${program}:${variant}:${weapon}`,
+    version: VERSION,
+    program,
+    variant,
+    weapon,
+    eligibility: "active",
+    pass,
+    marksman,
+    total: limits.reduce((a, b) => a + b, 0),
+    source,
+    provenance: "photographed",
+    method: program.startsWith("CS_") ? "floor_detail_A_C" : "individual_sum",
+    equivalence: program.startsWith("CS_") ? `${program}:${VERSION}` : null,
+    components: limits.map((max, i) => ({
+      id: "ABCDEF"[i],
+      label: `Stage ${"ABCDEF"[i]}`,
+      max,
+      shared: program.startsWith("CS_") && i !== 1,
+    })),
+    ...extra,
+  }));
+}
+export const PROFILES = [
+  ...rules("BTP", "standard", ["SAR21"], [16, 16], 16, 26, "S7", {
+    provenance: "user_clarified",
+    notes: "SAR21; Marksman ceil(32 × 80%) = 26.",
+    components: [
+      { id: "A", label: "Stage A · Day", max: 16, shared: false },
+      { id: "B", label: "Stage B · Night", max: 16, shared: false },
+    ],
+  }),
+  ...rules(
+    "ATP_M",
+    "standard",
+    ["SAR21", "SAR21 MMS", "M203"],
+    [24, 8, 16],
+    24,
+    39,
+    "S3",
+  ),
+  ...rules(
+    "ATP_M",
+    "standard",
+    ["SAR21 SS", "HK416"],
+    [24, 8, 16],
+    32,
+    39,
+    "S3",
+  ),
+  ...rules("ATP_M", "standard", ["LMG"], [70, 8, 48], 32, 63, "S10"),
+  ...rules(
+    "ATP_SP",
+    "standard",
+    ["SAR21", "SAR21 MMS", "M16", "M203"],
+    [16, 8, 12],
+    18,
+    29,
+    "S1",
+  ),
+  ...rules(
+    "CS_M",
+    "standard",
+    ["SAR21", "SAR21 SS", "M203", "LMG"],
+    [20, 8, 20],
+    24,
+    39,
+    "S8",
+    {
+      provenance: "photographed + user_clarified",
+      notes:
+        "Floor each detail average before selecting the best earned stage score.",
+    },
+  ),
+  ...rules(
+    "CS_SP",
+    "standard",
+    ["SAR21", "M16", "LMG"],
+    [15, 8, 15],
+    19,
+    31,
+    "S9",
+    {
+      provenance: "photographed + user_clarified",
+      notes:
+        "Floor each detail average before selecting the best earned stage score.",
+    },
+  ),
+  ...rules("APS", "standard", ["SAR21", "M16"], [6, 6, 6, 6], 12, 20, "S6", {
+    components: [2, 3, 4, 5].map((n) => ({
+      id: String(n),
+      label: `Practice ${n}`,
+      max: 6,
+      shared: false,
+    })),
+    excluded: [
+      { label: "Sighting 1A", max: 3 },
+      { label: "Sighting 1B", max: 3 },
+    ],
+  }),
+  ...rules("APS", "ns", ["SAR21"], [10, 10, 10], 15, 24, "S5", {
+    provenance: "photographed + user_clarified",
+    notes: "SAR21, NSmen.",
+    components: [1, 2, 3].map((n) => ({
+      id: String(n),
+      label: `Practice ${n}`,
+      max: 10,
+      shared: false,
+    })),
+    excluded: [{ label: "Sighter", max: 6 }],
+  }),
+];
+// Reference evidence is intentionally excluded from selectors and grading.
+export const REFERENCE_ONLY = [
+  {
+    program: "ATP_SP",
+    weapon: "LMG",
+    limits: [60, 8, 40],
+    total: 108,
+    pass: 27,
+    marksman: 54,
+    source: "S11",
+    eligibility: "excluded_by_user",
+  },
+];
+export function weaponsFor(program, variant = "standard") {
+  return PROFILES.filter(
+    (p) => p.program === program && p.variant === variant,
+  ).map((p) => p.weapon);
+}
+export function profileFor(program, variant, weapon) {
+  const p = PROFILES.find(
+    (p) =>
+      p.program === program && p.variant === variant && p.weapon === weapon,
+  );
+  if (!p)
+    throw Error(
+      `${weapon} is not supported for ${PROGRAMS[program] || program}${variant === "ns" ? " (NS)" : ""}.`,
+    );
+  return structuredClone(p);
+}
+export function stages(s) {
+  return profileFor(s.program, s.variant, s.settings.weapon).components;
+}
+export function targetStages(s) {
+  return s.program === "BTP"
+    ? stages(s).filter((c) => c.id === "A")
+    : stages(s);
+}
