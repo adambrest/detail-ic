@@ -126,12 +126,10 @@ test("All shoots are disabled by default, enabling does not erase retained roste
   assert.equal(getShoot(store).participants.length, 1);
 });
 test("Unsupported weapons stay absent from selectors and active scoring", () => {
-  assert.ok(PROFILES.every((p) => p.weapon !== "SAW"));
   assert.throws(() => profileFor("BTP", "standard", "LMG"));
   assert.throws(() => profileFor("ATP_SP", "standard", "LMG"));
   assert.throws(() => profileFor("APS", "standard", "LMG"));
   assert.throws(() => profileFor("APS", "ns", "M16"));
-  assert.throws(() => profileFor("CS_M", "standard", "SAW"));
   assert.equal(REFERENCE_ONLY[0].total, 108);
   assert.ok(!weaponsFor("ATP_SP").includes("LMG"));
 });

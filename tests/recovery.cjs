@@ -8,31 +8,6 @@ const {startServer}=require("./server.cjs");
     page = await context.newPage(),
     errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
-  await page.addInitScript(() => {
-    if (!localStorage.getItem("smart-detailer-v1"))
-      localStorage.setItem(
-        "smart-detailer-v1",
-        JSON.stringify({
-          schema: 1,
-          sessions: [
-            {
-              program: "ATP_M",
-              participants: [
-                { id: "legacy", name: "Legacy Firer", weapon: "SAW" },
-              ],
-              attempts: [
-                {
-                  stage: "A",
-                  hits: 50,
-                  divisor: 1,
-                  members: [{ participantId: "legacy" }],
-                },
-              ],
-            },
-          ],
-        }),
-      );
-  });
   await page.goto(server.url);
   await page.waitForFunction(() => navigator.serviceWorker.controller);
   assert.deepEqual(
@@ -45,14 +20,6 @@ const {startServer}=require("./server.cjs");
     .locator("#tabs")
     .getByRole("button", { name: "Settings", exact: true })
     .click();
-  await page.getByText("Earlier records (1)", { exact: true }).click();
-  await page.getByRole("button", { name: "View", exact: true }).click();
-  assert.ok(
-    (await page.locator("#dialog").innerText()).includes("Legacy Firer"),
-  );
-  assert.ok((await page.locator("#dialog").innerText()).includes("SAW"));
-  await page.getByRole("button", { name: "Close", exact: true }).click();
-  assert.equal(await page.locator("select option[value=SAW]").count(), 0);
   await page.getByRole("switch", { name: "Enable BTP", exact: true }).click();
   await page
     .locator("#tabs")
@@ -108,6 +75,16 @@ const {startServer}=require("./server.cjs");
   await page.waitForFunction(() => !document.querySelector("#dialog").open);
   await page.reload();
   assert.ok((await page.locator("#main").innerText()).includes("Backup Firer"));
+  await page
+    .locator("#tabs")
+    .getByRole("button", { name: "Settings", exact: true })
+    .click();
+  await page.getByText("Earlier records (1)", { exact: true }).click();
+  await page.getByRole("button", { name: "View", exact: true }).click();
+  assert.ok(
+    (await page.locator("#dialog").innerText()).includes("Backup Firer"),
+  );
+  await page.getByRole("button", { name: "Close", exact: true }).click();
   const other = await context.newPage();
   await other.goto(server.url);
   await other
@@ -139,14 +116,14 @@ const {startServer}=require("./server.cjs");
   assert.ok(!persisted.enabled.includes("CS_M"));
   assert.ok(
     persisted.archives.some(
-      (a) => a.data?.sessions?.[0]?.participants?.[0]?.weapon === "SAW",
+      (a) => a.shoot?.participants?.[0]?.name === "Backup Firer",
     ),
   );
   assert.deepEqual(errors, []);
   await browser.close();
   await server.stop();
   console.log(
-    "Recovery: historical data preserved without SAW remapping, manual score entry, backup validation/restore, and stale-tab protection passed",
+    "Recovery: manual score entry, backup validation/restore, earlier records, and stale-tab protection passed",
   );
 })().catch((e) => {
   console.error(e);

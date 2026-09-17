@@ -101,10 +101,17 @@ header {
   min-height: 56px;
 }
 h1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 16px;
   letter-spacing: -0.3px;
   margin: 0;
   white-space: nowrap;
+}
+h1 .logo {
+  width: 32px;
+  height: 32px;
 }
 #tabs {
   display: flex;

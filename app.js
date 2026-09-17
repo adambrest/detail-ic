@@ -59,8 +59,7 @@ const $ = (q) => document.querySelector(q),
           "'": "&#39;",
         })[c],
     );
-const KEY = "detail-ic-v2",
-  OLD_KEY = "smart-detailer-v1";
+const KEY = "detail-ic-v2";
 let store,
   lastSaved = null,
   storageError = false,
@@ -72,16 +71,6 @@ let store,
 try {
   lastSaved = localStorage.getItem(KEY);
   store = lastSaved ? validateStore(JSON.parse(lastSaved)) : newStore();
-  if (!lastSaved) {
-    const old = localStorage.getItem(OLD_KEY);
-    if (old)
-      store.archives.push({
-        id: uid(),
-        label: "Earlier scoring rules",
-        savedAt: now(),
-        data: JSON.parse(old),
-      });
-  }
 } catch (e) {
   store = newStore();
   storageError = true;
@@ -702,10 +691,10 @@ function restore() {
 }
 function archiveDialog(id) {
   const archive = store.archives.find((a) => a.id === id);
-  const shoots = archive.shoot ? [archive.shoot] : archive.data?.sessions || [];
+  const shoots = archive.shoot ? [archive.shoot] : [];
   dialog(
     archive.label,
-    `<p class="note">Read-only history. These records have not been recalculated using the new scoring rules.</p>${shoots
+    `<p class="note">Read-only history.</p>${shoots
       .map(
         (shoot) =>
           `<h3>${esc(PROGRAMS[shoot.program] || shoot.program)}</h3><div class="table-wrap"><table><thead><tr><th>Name</th><th>Weapon</th><th>Recorded attempts</th></tr></thead><tbody>${shoot.participants
@@ -713,14 +702,10 @@ function archiveDialog(id) {
               (p) =>
                 `<tr><td>${esc(p.name)}</td><td>${esc(p.weapon)}</td><td>${
                   (shoot.attempts || [])
-                    .filter(
-                      (a) =>
-                        a.participantId === p.id ||
-                        a.members?.some((m) => m.participantId === p.id),
-                    )
+                    .filter((a) => a.participantId === p.id)
                     .map(
                       (a) =>
-                        `<div>Stage ${esc(a.stage)}: ${a.score ?? a.hits}${a.divisor > 1 ? ` / ${a.divisor}` : ""}${a.voided || a.status === "void" ? " (voided)" : ""}</div>`,
+                        `<div>Stage ${esc(a.stage)}: ${a.score}${a.status === "void" ? " (voided)" : ""}</div>`,
                     )
                     .join("") || "—"
                 }</td></tr>`,
