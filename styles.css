@@ -920,6 +920,10 @@ tr.flash td {
 .shoot-row .note {
   margin: 2px 0 0;
 }
+.shoots-data {
+  justify-content: flex-end;
+  margin: 0;
+}
 .shoot-name {
   font-size: 14px;
 }

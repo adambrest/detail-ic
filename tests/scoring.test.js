@@ -12,6 +12,7 @@ import {
   newStore,
   newShoot,
   createShoot,
+  deleteShoot,
   enableShoot,
   getShoot,
   preset,
@@ -144,9 +145,17 @@ test("Unsupported rifles stay out of selectors and scoring", () => {
   assert.equal(REFERENCE_ONLY[0].total, 108);
   assert.ok(!weaponsFor("ATP_SP").some((w) => w.includes("LMG")));
 });
-test("Shoots need an enabled type; disabling a type keeps its shoots", () => {
+test("Every type is on by default; disabling one keeps its shoots", () => {
   const store = newStore();
-  assert.deepEqual(store.enabled, []);
+  assert.deepEqual(store.enabled.toSorted(), [
+    "APS",
+    "ATP_M",
+    "ATP_SP",
+    "BTP",
+    "CS_M",
+    "CS_SP",
+  ]);
+  enableShoot(store, "BTP", false);
   assert.throws(() => createShoot(store, "BTP", "standard", "Alpha"), /Enable/);
   enableShoot(store, "BTP", true);
   const s = createShoot(store, "BTP", "standard", "Alpha");
@@ -158,10 +167,15 @@ test("Shoots need an enabled type; disabling a type keeps its shoots", () => {
   const second = createShoot(store, "BTP", "standard", "Bravo");
   assert.equal(store.shoots.length, 2);
   assert.equal(store.active, second.id);
+  deleteShoot(store, second.id);
+  assert.equal(store.shoots.length, 1);
+  assert.equal(store.active, store.shoots[0].id);
+  deleteShoot(store, store.active);
+  assert.equal(store.active, null);
+  assert.throws(() => deleteShoot(store, "missing"), /not found/);
 });
 test("Presets apply their Automatic priority and suggestions to shoots", () => {
   const store = newStore();
-  enableShoot(store, "ATP_M", true);
   const s = createShoot(store, "ATP_M", "standard", "Alpha");
   const pr = preset(store, "ATP_M");
   pr.objective = "pass";
@@ -591,7 +605,6 @@ test("Unknown or incompatible profile versions cannot enter best score selection
 });
 test("Backup round trip keeps shoots, drafts and best attempt IDs", () => {
   const store = newStore();
-  enableShoot(store, "CS_SP", true);
   const s = createShoot(store, "CS_SP", "standard", "Alpha"),
     people = addParticipants(s, "A 1\nB 1\nC 1\nD 1", "SAR21"),
     d = s.details[0];

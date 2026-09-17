@@ -50,15 +50,12 @@ const previousVersion = {
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(server.url);
   await page.waitForFunction(() => navigator.serviceWorker.controller);
-  assert.deepEqual(
+  assert.equal(
     await page.evaluate(
-      () => JSON.parse(localStorage.getItem("detail-ic-v2")).enabled,
+      () => JSON.parse(localStorage.getItem("detail-ic-v2")).enabled.length,
     ),
-    [],
+    6,
   );
-  await tab(page, "Settings");
-  await page.getByRole("switch", { name: "Enable BTP", exact: true }).click();
-  await tab(page, "Shoots");
   await page.getByLabel("Shoot name").fill("Recovery shoot");
   await page.getByRole("button", { name: "Create shoot", exact: true }).click();
   await page
@@ -77,14 +74,14 @@ const previousVersion = {
   await page.locator("#dialog input[name=hits]").fill("16");
   await page.getByRole("button", { name: "Save score", exact: true }).click();
   const data = await page.evaluate(() => localStorage.getItem("detail-ic-v2"));
-  await tab(page, "Settings");
+  await tab(page, "Shoots");
   const downloading = page.waitForEvent("download");
   await page
     .getByRole("button", { name: "Export backup", exact: true })
     .click();
   assert.ok((await downloading).suggestedFilename().startsWith("detail-ic-"));
   await page
-    .getByRole("button", { name: "Restore backup", exact: true })
+    .getByRole("button", { name: "Import backup", exact: true })
     .click();
   await page.locator("input[type=file]").setInputFiles({
     name: "bad.json",
@@ -133,8 +130,8 @@ const previousVersion = {
   const persisted = await page.evaluate(() =>
     JSON.parse(localStorage.getItem("detail-ic-v2")),
   );
-  assert.ok(persisted.enabled.includes("ATP_M"));
-  assert.ok(!persisted.enabled.includes("CS_M"));
+  assert.ok(!persisted.enabled.includes("ATP_M"));
+  assert.ok(persisted.enabled.includes("CS_M"));
   assert.equal(persisted.shoots.length, 1);
 
   // Data saved by the previous version opens with grouped rifles.

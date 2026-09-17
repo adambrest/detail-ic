@@ -32,18 +32,20 @@ async function enterHits(page, person, hits) {
     assert.equal(await page.title(), "Detail IC");
     const landing = await page.locator("#main").innerText();
     assert.ok(landing.includes("New shoot"));
-    assert.ok(landing.includes("Turn on the shoot types"));
+    assert.equal(await page.locator(".type-option").count(), 7);
 
-    // Settings only open for enabled types; BTP has no rifle choice or source line.
+    // Every type is on by default; turning one off closes its settings.
     await tab(page, "Settings");
-    assert.equal(await page.getByRole("switch", { checked: false }).count(), 6);
-    await page.locator("[data-expand=BTP]").click();
+    assert.equal(await page.getByRole("switch", { checked: true }).count(), 6);
+    await page.locator("[data-expand=ATP_SP]").click();
+    await page.getByRole("switch", { name: "Enable ATP (SP)", exact: true }).click();
     assert.ok(
       (await page.locator(".preset.open").innerText()).includes(
-        "Turn on BTP to edit its settings",
+        "Turn on ATP (SP) to edit its settings",
       ),
     );
-    await page.getByRole("switch", { name: "Enable BTP", exact: true }).click();
+    await page.locator("[data-expand=ATP_SP]").click();
+    await page.locator("[data-expand=BTP]").click();
     assert.equal(
       await page.getByRole("combobox", { name: "BTP rifle type" }).count(),
       0,
@@ -53,6 +55,7 @@ async function enterHits(page, person, hits) {
     assert.ok(btp.includes("Auto-detailing thresholds"));
     assert.ok(!btp.includes("Source") && !btp.includes("requires"));
     assert.equal(await page.getByRole("button", { name: "Save suggestions" }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: "Export backup" }).count(), 0);
     const threshold = page.getByRole("spinbutton", { name: "BTP Stage A · Day threshold" });
     assert.equal(await threshold.inputValue(), "13");
     await threshold.fill("14");
@@ -160,7 +163,6 @@ async function enterHits(page, person, hits) {
     assert.ok(
       await page.getByRole("switch", { name: "Enable BTP", exact: true }).isDisabled(),
     );
-    await page.getByRole("switch", { name: "Enable CS (SP)", exact: true }).click();
 
     // Combat Shoot: detail numbers from the paste, then one tap per firer.
     await tab(page, "Shoots");
@@ -248,6 +250,24 @@ async function enterHits(page, person, hits) {
     assert.equal(await page.locator(".detail-head .warn").count(), 1);
     await tab(page, "Stage A");
 
+    await tab(page, "Shoots");
+    assert.equal(await page.locator(".shoot-row").count(), 2);
+    const downloading = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Export backup", exact: true }).click();
+    assert.ok((await downloading).suggestedFilename().startsWith("detail-ic-"));
+    await page.getByRole("button", { name: "Import backup", exact: true }).click();
+    await page.getByRole("button", { name: "Close", exact: true }).click();
+    await page.getByRole("button", { name: "Delete Alpha Coy BTP" }).click();
+    await page.getByRole("button", { name: "Delete shoot", exact: true }).click();
+    await waitFor(page, () => document.querySelectorAll(".shoot-row").length === 1);
+    assert.equal(
+      await page.evaluate(
+        () => JSON.parse(localStorage.getItem("detail-ic-v2")).shoots.length,
+      ),
+      1,
+    );
+    await tab(page, "Stage A");
+
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: `tests/${name}-mobile.png`, fullPage: true });
     assert.equal(
@@ -262,7 +282,7 @@ async function enterHits(page, person, hits) {
     assert.deepEqual(errors, []);
     await browser.close();
     console.log(
-      `${name}: shoots, settings, thresholds, autosave, undo, priorities, redetail prompt, detail assignment, rifles, confirm, manual detail, mobile and offline reload passed`,
+      `${name}: shoots, delete, settings, thresholds, autosave, undo, priorities, redetail prompt, detail assignment, rifles, confirm, manual detail, mobile and offline reload passed`,
     );
   }
 })().catch((e) => {

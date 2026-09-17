@@ -21,6 +21,7 @@ import {
   getShoot,
   enableShoot,
   hasScores,
+  deleteShoot,
   changeShootType,
   audit,
   addDetail,
@@ -267,11 +268,11 @@ function renderShoots() {
         ? `<section class="panel"><div class="panel-head"><h3>Shoots <span class="count">${list.length}</span></h3></div>${list
             .map(
               (x) =>
-                `<div class="shoot-row"><div><strong>${esc(x.name)}</strong><p class="note">${esc(typeLabel(x.program, x.variant))} · ${esc(dateLabel(x.createdAt))} · ${x.participants.length} participants · ${hasScores(x) ? "Scores recorded" : "No scores yet"}</p></div><button ${x.id === store.active ? 'class="primary"' : ""} data-open-shoot="${x.id}" aria-label="${x.id === store.active ? "Continue" : "Open"} ${esc(x.name)}">${x.id === store.active ? "Continue" : "Open"}</button></div>`,
+                `<div class="shoot-row"><div><strong>${esc(x.name)}</strong><p class="note">${esc(typeLabel(x.program, x.variant))} · ${esc(dateLabel(x.createdAt))} · ${x.participants.length} participants · ${hasScores(x) ? "Scores recorded" : "No scores yet"}</p></div><div class="actions"><button class="danger" data-delete-shoot="${x.id}" aria-label="Delete ${esc(x.name)}">Delete</button><button ${x.id === store.active ? 'class="primary"' : ""} data-open-shoot="${x.id}" aria-label="${x.id === store.active ? "Continue" : "Open"} ${esc(x.name)}">${x.id === store.active ? "Continue" : "Open"}</button></div></div>`,
             )
             .join("")}</section>`
         : ""
-    }</div>`;
+    }<div class="toolbar shoots-data"><button data-action="backup">Export backup</button><button data-action="restore">Import backup</button></div></div>`;
 }
 // Detail buttons offered per participant: as many details as the minimum size allows.
 function detailCount(c) {
@@ -703,7 +704,7 @@ function renderSettings() {
       })
       .join(
         "",
-      )}<div class="settings-section"><h3>Data</h3><div class="actions"><button data-action="backup">Export backup</button><button data-action="restore">Restore backup</button></div><p class="note" id="offline-note">${offlineReady ? "Available offline. Shoots and scores are saved on this device." : "Preparing offline files…"}</p></div></div>`;
+      )}<div class="settings-section"><p class="note" id="offline-note">${offlineReady ? "Available offline. Shoots and scores are saved on this device." : "Preparing offline files…"}</p></div></div>`;
 }
 function thresholdInfo(program, objective) {
   return `Automatic redetailing keeps listing a firer for a stage until their best score reaches its threshold. Defaults spread the ${objective === "marksman" ? "Marksman" : "Pass"} score across the stages, rounded up.${program === "BTP" ? " Stage B's threshold is whatever is still needed after Stage A." : ""}`;
@@ -1233,6 +1234,24 @@ $("#main").addEventListener("click", (e) => {
     if (b.dataset.aps) {
       apsView = b.dataset.aps;
       render();
+      return;
+    }
+    if (b.dataset.deleteShoot) {
+      const shoot = getShoot(store, b.dataset.deleteShoot);
+      dialog(
+        `Delete ${shoot.name}?`,
+        `<p class="note">This removes its ${shoot.participants.length} participants and every score in it from this device. Export a backup first if you might need them.</p>`,
+        "Delete shoot",
+        () => {
+          deleteShoot(store, shoot.id);
+          save();
+          $("#dialog").close();
+          tab = "shoots";
+          render();
+          toast(`${shoot.name} deleted.`);
+        },
+        "Cancel",
+      );
       return;
     }
     if (b.dataset.openShoot) {

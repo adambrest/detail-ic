@@ -17,7 +17,7 @@ export const typeKey = (program, variant = "standard") =>
 export function newStore() {
   return {
     schema: 3,
-    enabled: [],
+    enabled: Object.keys(PROGRAMS),
     active: null,
     presets: {},
     shoots: [],
@@ -86,6 +86,13 @@ export function enableShoot(store, program, on) {
   if (on) store.enabled.push(program);
 }
 export const hasScores = (s) => s.attempts.length > 0;
+export function deleteShoot(store, id) {
+  const s = getShoot(store, id);
+  if (!s) throw Error("Shoot not found.");
+  store.shoots = store.shoots.filter((x) => x.id !== id);
+  if (store.active === id) store.active = store.shoots[0]?.id ?? null;
+  return s;
+}
 export function changeShootType(s, program, variant = "standard") {
   if (hasScores(s))
     throw Error(
