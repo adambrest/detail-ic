@@ -614,8 +614,10 @@ function summaryPanel(c, stage = null) {
   const notes = insights(c, stage),
     id = `${c.id}:${stage ?? "final"}`;
   if (!notes.length) return "";
-  const count = notes.reduce((n, x) => n + x.items.length, 0);
-  return `<details class="panel summary" data-summary="${esc(id)}" ${closedSummaries.has(id) ? "" : "open"}><summary><h3>Summary</h3><span class="count">${count} ${count === 1 ? "note" : "notes"}</span></summary>${notes
+  const count = notes
+    .filter((x) => x.level !== "info")
+    .reduce((n, x) => n + x.items.length, 0);
+  return `<details class="panel summary" data-summary="${esc(id)}" ${closedSummaries.has(id) ? "" : "open"}><summary><h3>Summary</h3><span class="count">${count ? `${count} ${count === 1 ? "warning" : "warnings"}` : "No warnings"}</span></summary>${notes
     .map(
       (n) =>
         `<div class="insight insight-${n.level}"><strong>${esc(n.title)}</strong><ul>${n.items

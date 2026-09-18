@@ -9,6 +9,7 @@ import {
   baseWeapons,
   weaponGroup,
   typeLabel,
+  stages,
 } from "./profiles.js";
 export const uid = () => crypto.randomUUID();
 export const now = () => new Date().toISOString();
@@ -1036,27 +1037,60 @@ export function insights(s, stage = null) {
     notes = [];
   const add = (level, title, items) =>
     items.length && notes.push({ level, title, items });
-  // Stages already shot can still be reshot, so these are calls to act, not
-  // verdicts: without a better score somewhere, the level is out of reach.
+  const count = (fn) => people.filter(fn).length,
+    made = count(({ st }) => st.marksman === "made"),
+    open = count(({ st }) => st.marksman === "possible"),
+    behind = count(({ st }) => st.marksman === "missed");
+  add("info", "Overview", [
+    `Marksman: ${made} made, ${open} still possible, ${behind} not possible on current scores`,
+    ...(stage
+      ? [
+          (() => {
+            const q = firingQueue(s, stage),
+              scored = s.participants.filter((p) => best(s, p, stage) !== null)
+                .length,
+              waiting = q.reduce((n, e) => n + e.members.length, 0),
+              skipped = q
+                .filter((e) => e.skipped)
+                .reduce((n, e) => n + e.members.length, 0);
+            return `${stages(s).find((c) => c.id === stage).label}: ${scored} of ${s.participants.length} have a score, ${waiting} waiting to fire${skipped ? ` (${skipped} skipped)` : ""}`;
+          })(),
+        ]
+      : []),
+  ]);
+  // On current scores the level is out of reach; name the reshoot that would
+  // bring it back: any one stage that is enough, or else the fewest stages.
+  const without = (p, st, level) => {
+    const gap = p.profile[level] - st.potential,
+      shot = p.profile.components
+        .filter((c) => best(s, p, c.id) !== null)
+        .map((c) => ({ c, gain: c.max - best(s, p, c.id) })),
+      one = shot.filter((x) => x.gain >= gap).map((x) => x.c.label),
+      some = [];
+    if (!one.length)
+      for (const x of shot.toSorted((a, b) => b.gain - a.gain)) {
+        some.push(x.c.label);
+        if (shot.filter((y) => some.includes(y.c.label)).reduce((n, y) => n + y.gain, 0) >= gap)
+          break;
+      }
+    const how = one.length
+      ? `without a ${one.join(" or ")} reshoot`
+      : `without reshooting ${some.join(" and ")}`;
+    return `${p.name}: at best ${st.potential}/${p.profile.total} ${how} (needs ${gap} more)`;
+  };
   add(
     "bad",
-    "Pass needs a reshoot",
+    "Pass not possible on current scores",
     people
       .filter(({ st }) => st.pass === "missed")
-      .map(
-        ({ p, st }) =>
-          `${p.name}: at best ${st.potential}/${p.profile.total} on current scores`,
-      ),
+      .map(({ p, st }) => without(p, st, "pass")),
   );
   add(
     "warn",
-    "Marksman needs a reshoot",
+    "Marksman not possible on current scores",
     people
       .filter(({ st }) => st.marksman === "missed" && st.pass !== "missed")
-      .map(
-        ({ p, st }) =>
-          `${p.name}: at best ${st.potential}/${p.profile.total} on current scores`,
-      ),
+      .map(({ p, st }) => without(p, st, "marksman")),
   );
   add(
     "info",
@@ -1101,7 +1135,64 @@ export function insights(s, stage = null) {
             `${p.name}: ${v}/${p.profile.components.find((c) => c.id === stage).max} (pass pace ${pace})`,
         ),
     );
+    // Quick wins: a point or two short of their threshold here.
+    add(
+      "info",
+      "Close to the threshold",
+      s.participants
+        .map((p) => {
+          const v = best(s, p, stage),
+            g = v === null ? null : goal(s, p, stage),
+            t = g ? target(s, p, stage, g.objective) : null;
+          return { p, v, t, g };
+        })
+        .filter(({ v, t }) => t !== null && t - v > 0 && t - v <= 2)
+        .toSorted((a, b) => a.t - a.v - (b.t - b.v))
+        .map(
+          ({ p, v, t, g }) =>
+            `${p.name}: ${v} → ${t} for ${g.objective === "marksman" ? "Marksman" : "Pass"} (${t - v} short)`,
+        ),
+    );
+    // Several tries without getting better: coach them, or stop spending time.
+    add(
+      "warn",
+      "Not improving",
+      s.participants
+        .map((p) => ({
+          p,
+          vals: s.attempts
+            .filter(
+              (a) =>
+                a.participantId === p.id &&
+                a.stage === stage &&
+                a.status === "valid" &&
+                eligible(s, p, a),
+            )
+            .map((a) => (detailed ? a.rawHits : a.score))
+            .filter((v) => v !== null && v !== undefined),
+        }))
+        .filter(
+          ({ p, vals }) =>
+            vals.length >= 3 &&
+            Math.max(...vals.slice(-2)) <= Math.max(...vals.slice(0, -2)) &&
+            !nothingToGain(s, p, stage),
+        )
+        .map(
+          ({ p, vals }) =>
+            `${p.name}: ${vals.length} tries (${vals.join(", ")}), no better lately`,
+        ),
+    );
     if (detailed) {
+      // Firers with nothing to gain who could lift a weak detail's average.
+      const weak = queue(s, stage).length,
+        helpers = s.participants.filter((p) => nothingToGain(s, p, stage));
+      if (weak && helpers.length)
+        add("info", "Free to help a weak detail", [
+          `${helpers
+            .slice(0, 10)
+            .map((p) => p.name)
+            .join(", ")}${helpers.length > 10 ? ` and ${helpers.length - 10} more` : ""}`,
+        ]);
       const records = (d) =>
         s.shared.filter(
           (a) => a.detailId === d.id && a.stage === stage && a.status === "valid",

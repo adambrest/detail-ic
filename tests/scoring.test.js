@@ -718,11 +718,14 @@ test("Insights flag settled outcomes, the last stage, poor shooters and details"
   recordIndividual(s, people[2], "A", "12");
   assert.equal(standing(s, people[1]).pass, "missed");
   const all = Object.fromEntries(insights(s).map((n) => [n.title, n.items]));
-  assert.deepEqual(all["Pass needs a reshoot"], [
-    "Person 2: at best 18/48 on current scores",
+  assert.deepEqual(all["Pass not possible on current scores"], [
+    "Person 2: at best 18/48 without a Stage A or Stage B reshoot (needs 6 more)",
   ]);
-  assert.deepEqual(all["Marksman needs a reshoot"], [
-    "Person 3: at best 33/48 on current scores",
+  assert.deepEqual(all["Marksman not possible on current scores"], [
+    "Person 3: at best 33/48 without a Stage A reshoot (needs 6 more)",
+  ]);
+  assert.deepEqual(all["Overview"], [
+    "Marksman: 0 made, 1 still possible, 2 not possible on current scores",
   ]);
   assert.deepEqual(all["One stage left"], [
     "Person 1: needs 7/16 in Stage C for Marksman, 0 to pass",
@@ -730,6 +733,44 @@ test("Insights flag settled outcomes, the last stage, poor shooters and details"
   const a = Object.fromEntries(insights(s, "A").map((n) => [n.title, n.items]));
   // Pass pace for A is 24 × 24/48 = 12.
   assert.deepEqual(a["Poor shooters"], ["Person 2: 2/24 (pass pace 12)"]);
+});
+test("When no single reshoot is enough, insights name the stages together", () => {
+  const { s, p } = setup("ATP_M", "standard", 1);
+  recordIndividual(s, p, "A", "16");
+  recordIndividual(s, p, "B", "0");
+  recordIndividual(s, p, "C", "8");
+  const all = Object.fromEntries(insights(s).map((n) => [n.title, n.items]));
+  assert.deepEqual(all["Marksman not possible on current scores"], [
+    "Person 1: at best 24/48 without reshooting Stage A and Stage B (needs 15 more)",
+  ]);
+});
+test("Insights point out quick wins and firers who are not improving", () => {
+  const { s, people } = setup("BTP", "standard", 2);
+  // Starting threshold for BTP Stage A is 13/16.
+  recordIndividual(s, people[0], "A", "12");
+  for (const v of ["8", "9", "7", "6"]) recordIndividual(s, people[1], "A", v);
+  const a = Object.fromEntries(insights(s, "A").map((n) => [n.title, n.items]));
+  assert.deepEqual(a["Close to the threshold"], [
+    "Person 1: 12 → 13 for Marksman (1 short)",
+  ]);
+  assert.deepEqual(a["Not improving"], [
+    "Person 2: 4 tries (8, 9, 7, 6), no better lately",
+  ]);
+  assert.ok(a["Overview"].includes("Stage A · Day: 2 of 2 have a score, 0 waiting to fire"));
+});
+test("Firers with nothing to gain are offered as helpers while a detail is weak", () => {
+  const store = newStore(),
+    s = createShoot(store, "CS_SP", "standard", "H");
+  addParticipants(
+    s,
+    Array.from({ length: 8 }, (_, i) => `P${i + 1} ${i < 4 ? 1 : 2}`),
+    "SAR21",
+  );
+  const [d1, d2] = sortedDetails(s);
+  detailScore(s, d1, "A", 60);
+  detailScore(s, d2, "A", 20);
+  const a = Object.fromEntries(insights(s, "A").map((n) => [n.title, n.items]));
+  assert.deepEqual(a["Free to help a weak detail"], ["P1, P2, P3, P4"]);
 });
 test("Detail insights name the weakest shooter, or say hits are missing", () => {
   const store = newStore(),
