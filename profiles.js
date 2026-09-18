@@ -26,7 +26,6 @@ export const NON_SAR = new Set(["LMG"]);
 export const DETAIL_RULES = {
   CS_SP: { min: 4, max: 6, nonSAR: 2 },
   CS_M: { min: 5, max: 7, nonSAR: 2 },
-  ATP_SP: { max: 5 },
 };
 export const isCS = (s) => s.program.startsWith("CS_");
 function rules(

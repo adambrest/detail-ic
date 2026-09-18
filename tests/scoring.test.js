@@ -440,11 +440,8 @@ test("CS detail sizes and ATP (SP) redetail limit", () => {
   const { s, people } = setup("ATP_SP", "standard", 6);
   for (const p of people) recordIndividual(s, p, "A", "1");
   assert.equal(queue(s, "A").length, 6);
-  assert.throws(
-    () => dispatch(s, "A", queue(s, "A").map((e) => e.key)),
-    /Up to 5 firers/,
-  );
-  dispatch(s, "A", queue(s, "A").slice(0, 5).map((e) => e.key));
+  // Outside Combat Shoot there is no detail size: everyone can go at once.
+  dispatch(s, "A", queue(s, "A").map((e) => e.key));
   assert.equal(setup("ATP_M", "standard", 50).people.length, 50);
 });
 test("A detail takes at most two non-SAR21 rifles, however they are arranged", () => {

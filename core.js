@@ -1447,9 +1447,6 @@ export function dispatch(s, stage, keys) {
   const all = entities(s, stage),
     selected = keys.map((key) => all.find((e) => e.key === key)).filter(Boolean);
   if (!selected.length) throw Error("Select firers to redetail.");
-  const cap = !isCS(s) && DETAIL_RULES[s.program]?.max;
-  if (cap && selected.length > cap)
-    throw Error(`Up to ${cap} firers at a time.`);
   for (const e of selected) {
     const errors = e.detail ? stageCompositionErrors(s, e.detail.id, stage) : [];
     if (errors.length) throw Error(`${e.detail.name}: ${errors.join(" ")}`);

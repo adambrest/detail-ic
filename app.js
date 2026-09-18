@@ -602,9 +602,7 @@ function methodInfo(c) {
   } ▲ High priority firers go first and ▼ low priority firers go last.`;
 }
 function queuePanel(c, stage, q) {
-  const cs = isCS(c),
-    started = c.attempts.some((a) => a.stage === stage && a.status === "valid"),
-    cap = !cs && DETAIL_RULES[c.program]?.max,
+  const started = c.attempts.some((a) => a.stage === stage && a.status === "valid"),
     ready = q.filter((e) => !e.errors.length).length,
     count = q
       .filter((e) => selected.has(e.key))
@@ -624,7 +622,7 @@ function queuePanel(c, stage, q) {
     )
     .join(
       "",
-    )}</select>${info(methodInfo(c))}</div><div class="queue-actions"><button data-action="select-all" ${!started || !ready ? "disabled" : ""}>${cap && ready > cap ? `Select next ${cap}` : "Select all"}</button><button class="primary" id="redetail" data-action="redetail" ${count && started ? "" : "disabled"}>Redetail${count ? ` (${count})` : ""}</button></div></div>${!started ? `<div class="panel-body note">No ${esc(stageLabel(c, stage))} scores yet.</div>` : ""}<div class="queue-list" ${!started ? "hidden" : ""}>${
+    )}</select>${info(methodInfo(c))}</div><div class="queue-actions"><button data-action="select-all" ${!started || !ready ? "disabled" : ""}>Select all</button><button class="primary" id="redetail" data-action="redetail" ${count && started ? "" : "disabled"}>Redetail${count ? ` (${count})` : ""}</button></div></div>${!started ? `<div class="panel-body note">No ${esc(stageLabel(c, stage))} scores yet.</div>` : ""}<div class="queue-list" ${!started ? "hidden" : ""}>${
     q
       .map((e, i) => {
         if (search && !e.members.some(filtered)) return "";
@@ -1037,7 +1035,7 @@ function presetBody(program) {
         : ""
     }</section>`;
   };
-  return `${program === "APS" ? `<div class="seg" style="margin-bottom:14px"><button data-aps="standard" class="${apsView === "standard" ? "on" : ""}">APS</button><button data-aps="ns" class="${apsView === "ns" ? "on" : ""}">APS (NS)</button></div>` : ""}<div class="field inline rifle-type"><span>New participants start on</span>${list.length > 1 ? `<select data-default-weapon="${key}" aria-label="${esc(label)} default rifle">${option(list, pr.weapon)}</select>` : `<strong>${esc(pr.weapon)}</strong>`}</div>${rule ? `<p class="limit">${rule.min ? `${rule.min}–${rule.max} firers per detail. Up to ${rule.nonSAR} non-SAR21 weapons per detail. Stages A and C: detail hits ÷ firers, rounded down.` : `Up to ${rule.max} firers at a time.`}</p>` : ""}<p class="muted rifle-sets-head">Thresholds by rifle</p>${list.map(rifle).join("")}`;
+  return `${program === "APS" ? `<div class="seg" style="margin-bottom:14px"><button data-aps="standard" class="${apsView === "standard" ? "on" : ""}">APS</button><button data-aps="ns" class="${apsView === "ns" ? "on" : ""}">APS (NS)</button></div>` : ""}<div class="field inline rifle-type"><span>New participants start on</span>${list.length > 1 ? `<select data-default-weapon="${key}" aria-label="${esc(label)} default rifle">${option(list, pr.weapon)}</select>` : `<strong>${esc(pr.weapon)}</strong>`}</div>${rule ? `<p class="limit">${rule.min ? `${rule.min}–${rule.max} firers per detail. Up to ${rule.nonSAR} non-SAR21 weapons per detail. Stages A and C: detail hits ÷ firers, rounded down.` : ""}</p>` : ""}<p class="muted rifle-sets-head">Thresholds by rifle</p>${list.map(rifle).join("")}`;
 }
 function dialog(title, body, label, submit, closeLabel = "Close", onClose) {
   const d = $("#dialog"),
@@ -1978,11 +1976,9 @@ $("#main").addEventListener("click", (e) => {
         toast("Rifle applied to everyone.");
         break;
       case "select-all": {
-        const cap = !isCS(c) && DETAIL_RULES[c.program]?.max;
         selected = new Set(
           queue(c, stage)
             .filter((x) => !x.errors.length)
-            .slice(0, cap || undefined)
             .map((x) => x.key),
         );
         render();
