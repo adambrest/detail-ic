@@ -201,6 +201,9 @@ function toast(text, undo) {
     undo ? 6000 : 3500,
   );
 }
+function offlineNote() {
+  return `${offlineReady ? "Available offline. Shoots and scores are saved on this device." : "Preparing offline files…"} Version ${globalThis.APP_VERSION ?? "—"}.`;
+}
 function info(text) {
   return `<button class="info" type="button" aria-label="${esc(text)}">i<span class="tooltip">${esc(text)}</span></button>`;
 }
@@ -737,7 +740,7 @@ function renderSettings() {
       })
       .join(
         "",
-      )}<div class="settings-section"><p class="note" id="offline-note">${offlineReady ? "Available offline. Shoots and scores are saved on this device." : "Preparing offline files…"}</p></div></div>`;
+      )}<div class="settings-section"><p class="note" id="offline-note">${esc(offlineNote())}</p></div></div>`;
 }
 function thresholdInfo(program, objective) {
   return `Automatic redetailing keeps listing a firer for a stage until their best score reaches its threshold. Defaults spread the ${objective === "marksman" ? "Marksman" : "Pass"} score across the stages, rounded up.${program === "BTP" ? " Stage B's threshold is whatever is still needed after Stage A." : ""}`;
@@ -1487,16 +1490,67 @@ render();
 if (storageError)
   warning("Saved data could not be read. It has not been overwritten.");
 else save();
+// A new version installs in the background and waits for the Update button.
 if ("serviceWorker" in navigator) {
+  let registration = null,
+    applying = false,
+    replaced = false,
+    hadController = !!navigator.serviceWorker.controller;
+  const showUpdate = () => {
+    $("#update").hidden = false;
+    $("#status").hidden = true;
+  };
+  $("#update").onclick = () => {
+    if (!replaced && !registration?.waiting) return;
+    save();
+    applying = true;
+    if (replaced) return location.reload();
+    $("#update").disabled = true;
+    $("#update").textContent = "Updating…";
+    registration.waiting.postMessage({ type: "SKIP_WAITING" });
+  };
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (applying) location.reload();
+    else if (hadController) {
+      replaced = true;
+      showUpdate();
+    }
+    hadController = true;
+  });
   navigator.serviceWorker
-    .register("./sw.js")
-    .then(async () => {
+    .register("./sw.js", { updateViaCache: "none" })
+    .then(async (reg) => {
+      registration = reg;
       await navigator.serviceWorker.ready;
       offlineReady = true;
       status();
-      if ($("#offline-note"))
-        $("#offline-note").textContent =
-          "Available offline. Shoots and scores are saved on this device.";
+      if ($("#offline-note")) $("#offline-note").textContent = offlineNote();
+      let checking = false;
+      const check = async () => {
+        if (checking || document.visibilityState === "hidden" || !navigator.onLine)
+          return;
+        checking = true;
+        try {
+          await reg.update();
+          if (reg.waiting) showUpdate();
+        } catch (e) {
+        } finally {
+          checking = false;
+        }
+      };
+      if (reg.waiting) showUpdate();
+      reg.addEventListener("updatefound", () => {
+        const fresh = reg.installing;
+        fresh?.addEventListener("statechange", () => {
+          if (fresh.state === "installed" && navigator.serviceWorker.controller)
+            showUpdate();
+        });
+      });
+      check();
+      setInterval(check, 60000);
+      addEventListener("focus", check);
+      addEventListener("online", check);
+      document.addEventListener("visibilitychange", check);
     })
     .catch(() => {
       if ($("#offline-note"))
