@@ -1103,9 +1103,24 @@ export function insights(s, stage = null) {
         )
           break;
       }
+    // On a stage tab, improving on this stage is already the plan: a fix this
+    // stage alone covers is no warning, and a mix names only the other stages.
+    const here = stage && stages(s).find((c) => c.id === stage).label,
+      goal = level === "marksman" ? "for Marksman" : "to pass",
+      full = st.open.length
+        ? `, even with full marks in ${names(st.open.map((c) => c.label))}`
+        : "";
+    if (here && one.includes(here)) return null;
+    if (here && some.includes(here)) {
+      const rest = some.filter((l) => l !== here);
+      return {
+        name: p.name,
+        how: `a better ${here} and ${rest.length === 1 ? `a ${rest[0]} reshoot` : `reshoots of ${names(rest)}`} ${goal}${full}`,
+      };
+    }
     return {
       name: p.name,
-      how: `${one.length ? `a ${one.join(" or ")} reshoot` : `reshoots of ${names(some)}`} ${level === "marksman" ? "for Marksman" : "to pass"}${st.open.length ? `, even with full marks in ${names(st.open.map((c) => c.label))}` : ""}`,
+      how: `${one.length ? `a ${one.join(" or ")} reshoot` : `reshoots of ${names(some)}`} ${goal}${full}`,
     };
   };
   // Firers who need the same fix are one line, so a pattern shows as a pattern
@@ -1127,7 +1142,8 @@ export function insights(s, stage = null) {
     grouped(
       people
         .filter(({ st }) => st.pass === "missed")
-        .map(({ p, st }) => reshoot(p, st, "pass")),
+        .map(({ p, st }) => reshoot(p, st, "pass"))
+        .filter(Boolean),
     ),
   );
   // Still able to pass, but only with more than three-quarters of what is left:
@@ -1154,7 +1170,8 @@ export function insights(s, stage = null) {
     grouped(
       people
         .filter(({ st }) => st.marksman === "missed" && st.pass !== "missed")
-        .map(({ p, st }) => reshoot(p, st, "marksman")),
+        .map(({ p, st }) => reshoot(p, st, "marksman"))
+        .filter(Boolean),
     ),
   );
   if (stage) {

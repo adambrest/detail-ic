@@ -605,6 +605,7 @@ function queuePanel(c, stage, q) {
   const cs = isCS(c),
     started = c.attempts.some((a) => a.stage === stage && a.status === "valid"),
     cap = !cs && DETAIL_RULES[c.program]?.max,
+    ready = q.filter((e) => !e.errors.length).length,
     count = q
       .filter((e) => selected.has(e.key))
       .reduce((n, e) => n + e.members.length, 0);
@@ -623,14 +624,16 @@ function queuePanel(c, stage, q) {
     )
     .join(
       "",
-    )}</select>${info(methodInfo(c))}</div><div class="queue-actions"><button data-action="select-all" ${!started ? "disabled" : ""}>${cap ? `Select next ${cap}` : "Select all"}</button><button class="primary" id="redetail" data-action="redetail" ${count && started ? "" : "disabled"}>Redetail${count ? ` (${count})` : ""}</button></div></div>${!started ? `<div class="panel-body note">No ${esc(stageLabel(c, stage))} scores yet.</div>` : ""}<div class="queue-list" ${!started ? "hidden" : ""}>${
+    )}</select>${info(methodInfo(c))}</div><div class="queue-actions"><button data-action="select-all" ${!started || !ready ? "disabled" : ""}>${cap && ready > cap ? `Select next ${cap}` : "Select all"}</button><button class="primary" id="redetail" data-action="redetail" ${count && started ? "" : "disabled"}>Redetail${count ? ` (${count})` : ""}</button></div></div>${!started ? `<div class="panel-body note">No ${esc(stageLabel(c, stage))} scores yet.</div>` : ""}<div class="queue-list" ${!started ? "hidden" : ""}>${
     q
       .map((e, i) => {
+        if (search && !e.members.some(filtered)) return "";
         const name = e.detail ? e.detail.name : e.members[0].name,
           max = e.priority.p.profile.components.find((x) => x.id === stage).max;
         return `<div class="queue-row ${search && e.members.some(filtered) ? "match" : ""}" data-key="${esc(e.key)}"><input type="checkbox" data-queue="${esc(e.key)}" ${selected.has(e.key) ? "checked" : ""} ${e.errors.length ? "disabled" : ""} aria-label="Select ${esc(name)}"><span class="count">${i + 1}</span><div><strong>${esc(name)}</strong>${e.detail ? borrowedNote(c, e.detail, stage) : ""}${e.above ? badge("Above threshold") : ""}<p class="note">${e.errors.length ? "Fix this detail in Participants" : `Attempt ${e.attempt} · ${e.reason}`}</p></div><button type="button" class="prio ${e.tag || ""}" data-priority="${esc(e.key)}" aria-label="${esc(name)} priority: ${e.tag || "normal"}" title="${e.tag === "high" ? "High priority" : e.tag === "low" ? "Low priority" : "Set priority"}">${e.tag === "high" ? "▲" : e.tag === "low" ? "▼" : "↕"}</button></div>`;
       })
-      .join("") || '<div class="panel-body note">No firers to redetail.</div>'
+      .join("") ||
+    `<div class="panel-body note">${search && q.length ? "No matching firers to redetail." : "No firers to redetail."}</div>`
   }</div>${detailedStage(c, stage) ? weakPanel(c, stage) : ""}${reachedPanel(c, stage, q)}</section>`;
 }
 // What the operator should know before choosing who fires next.
@@ -656,7 +659,7 @@ function summaryPanel(c, stage = null) {
 // Weak firers pull a detail's average down. Each gets a button to build a
 // manual detail around them with strong shooters.
 function weakPanel(c, stage) {
-  const list = weakFirers(c, stage);
+  const list = weakFirers(c, stage).filter(({ p }) => !search || filtered(p));
   if (!list.length) return "";
   const max = stages(c).find((x) => x.id === stage).max;
   return `<details class="reached weak-list" open><summary>${list.length} weak ${list.length === 1 ? "firer" : "firers"}</summary>${list
@@ -668,8 +671,8 @@ function weakPanel(c, stage) {
 }
 // Firers who already met the stage threshold, with a way to send them again.
 function reachedPanel(c, stage, q) {
-  const listed = new Set(q.map((e) => e.key)),
-    done = entities(c, stage).filter(
+  const listed = new Set(q.map((e) => e.key));
+  let done = entities(c, stage).filter(
       (e) =>
         !listed.has(e.key) &&
         e.members.some((p) => best(c, p, stage) !== null) &&
@@ -677,10 +680,11 @@ function reachedPanel(c, stage, q) {
           (d) => d.key === e.key && d.stage === stage && d.status === "awaiting",
         ),
     );
+  const found = (e) => search && e.members.some(filtered);
+  if (search) done = done.filter(found);
   if (!done.length) return "";
-  const score = (e) => Math.max(...e.members.map((p) => best(c, p, stage) ?? 0)),
-    found = (e) => search && e.members.some(filtered);
-  return `<details class="reached"${showReached || done.some(found) ? " open" : ""}><summary>${done.length} at or above the threshold</summary>${done
+  const score = (e) => Math.max(...e.members.map((p) => best(c, p, stage) ?? 0));
+  return `<details class="reached"${showReached || search ? " open" : ""}><summary>${done.length} at or above the threshold</summary>${done
     .toSorted((a, b) => score(a) - score(b))
     .map((e) => {
       const name = e.detail ? e.detail.name : e.members[0].name,

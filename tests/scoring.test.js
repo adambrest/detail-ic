@@ -757,6 +757,22 @@ test("When no single reshoot is enough, insights name the stages together", () =
   assert.deepEqual(all["Marksman not possible"], [
     "Person 1: needs reshoots of Stage A and Stage B for Marksman",
   ]);
+  // On the Stage A tab, doing better on A is already the plan: name only B.
+  const a = Object.fromEntries(insights(s, "A").map((n) => [n.title, n.items]));
+  assert.deepEqual(a["Marksman not possible"], [
+    "Person 1: needs a better Stage A and a Stage B reshoot for Marksman",
+  ]);
+});
+test("On a stage tab, a fix that stage alone covers is not a warning", () => {
+  const { s, people } = setup("ATP_M", "standard", 3);
+  recordIndividual(s, people[2], "B", "5");
+  recordIndividual(s, people[2], "A", "12");
+  const a = Object.fromEntries(insights(s, "A").map((n) => [n.title, n.items]));
+  assert.equal(a["Marksman not possible"], undefined);
+  const b = Object.fromEntries(insights(s, "B").map((n) => [n.title, n.items]));
+  assert.deepEqual(b["Marksman not possible"], [
+    "Person 3: needs a Stage A reshoot for Marksman, even with full marks in Stage C",
+  ]);
 });
 test("Insights point out firers who are not improving", () => {
   const { s, people } = setup("BTP", "standard", 2);
@@ -794,8 +810,11 @@ test("Detail insights name the weakest shooter, and group firers with the same f
     "Detail 1: averages 8, recommended 17 for Marksman. Weakest: P6 with 1",
     "Detail 2: averages 5, recommended 17 for Marksman",
   ]);
-  // All twelve need the same fix: one line, not twelve.
-  assert.deepEqual(a["Marksman not possible"], [
+  // All twelve need the same fix: one line, not twelve. On the Stage A tab
+  // that fix is Stage A itself, so it is not repeated as a warning.
+  assert.equal(a["Marksman not possible"], undefined);
+  const all = Object.fromEntries(insights(s).map((n) => [n.title, n.items]));
+  assert.deepEqual(all["Marksman not possible"], [
     "12 firers need a Stage A reshoot for Marksman, even with full marks in Stage B and Stage C: P1, P2, P3 and 9 more",
   ]);
   // A total-only detail is not a critical warning; the confirm prompt covers it.
