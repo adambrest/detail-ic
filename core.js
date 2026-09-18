@@ -1031,7 +1031,8 @@ export function passPace(p, stage) {
 }
 // Warnings to help the operator decide who to send, who to move and when to
 // stop chasing: outcomes already settled, what is needed on the last stage,
-// poor shooters from their own hits, and details dragging below pass pace.
+// poor shooters from their own hits, and details averaging under what a pass
+// needs. "What a pass needs" in a stage is the pass mark's share of that stage.
 export function insights(s, stage = null) {
   const people = s.participants.map((p) => ({ p, st: standing(s, p) })),
     notes = [];
@@ -1119,7 +1120,7 @@ export function insights(s, stage = null) {
         .toSorted((a, b) => a.v - b.v)
         .map(
           ({ p, v, pace }) =>
-            `${p.name}: ${v}/${p.profile.components.find((c) => c.id === stage).max} (pass pace ${pace})`,
+            `${p.name}: ${v}/${p.profile.components.find((c) => c.id === stage).max} (a pass needs about ${pace} here)`,
         ),
     );
     // Quick wins: a point or two short of their threshold here.
@@ -1186,7 +1187,7 @@ export function insights(s, stage = null) {
         );
       add(
         "warn",
-        "Details below pass pace",
+        "Details averaging under what a pass needs",
         stageDetails(s, stage)
           .map((d) => {
             const list = records(d);
@@ -1198,7 +1199,7 @@ export function insights(s, stage = null) {
             const weakest = known.length
               ? known.reduce((a, b) => (b.rawHits < a.rawHits ? b : a))
               : null;
-            return `${d.name}: averages ${top.score} (pass pace ${pace})${weakest ? `. Weakest: ${weakest.name} with ${weakest.rawHits}` : ""}`;
+            return `${d.name}: averages ${top.score} (a pass needs about ${pace} here)${weakest ? `. Weakest: ${weakest.name} with ${weakest.rawHits}` : ""}`;
           })
           .filter(Boolean),
       );
@@ -1540,7 +1541,7 @@ export function firerHits(s, p, stage) {
       .filter((v) => v !== null && v !== undefined);
   return raw.length ? Math.max(...raw) : null;
 }
-// Firers whose own hits are below pass pace, weakest first.
+// Firers whose own hits are under what a pass needs in the stage, weakest first.
 export function weakFirers(s, stage) {
   return s.participants
     .map((p) => ({ p, hits: firerHits(s, p, stage), pace: passPace(p, stage) }))

@@ -734,8 +734,8 @@ test("Insights flag settled outcomes, the last stage, poor shooters and details"
     "Person 1: needs 7/16 in Stage C for Marksman, 0 to pass",
   ]);
   const a = Object.fromEntries(insights(s, "A").map((n) => [n.title, n.items]));
-  // Pass pace for A is 24 × 24/48 = 12.
-  assert.deepEqual(a["Poor shooters"], ["Person 2: 2/24 (pass pace 12)"]);
+  // A pass needs about 24 × 24/48 = 12 in A.
+  assert.deepEqual(a["Poor shooters"], ["Person 2: 2/24 (a pass needs about 12 here)"]);
 });
 test("When no single reshoot is enough, insights name the stages together", () => {
   const { s, p } = setup("ATP_M", "standard", 1);
@@ -787,15 +787,15 @@ test("Detail insights name the weakest shooter, or say hits are missing", () => 
   detailScore(s, d1, "A", null, { individuals: [12, 11, 10, 9, 8, 1] });
   detailScore(s, d2, "A", 30);
   const a = Object.fromEntries(insights(s, "A").map((n) => [n.title, n.items]));
-  // Pass pace for CS (M) Stage A is 24 × 20/48 = 10.
+  // A pass needs about 24 × 20/48 = 10 in CS (M) Stage A.
   assert.deepEqual(a["Poor shooters"], [
-    "P6: 1/20 (pass pace 10)",
-    "P5: 8/20 (pass pace 10)",
-    "P4: 9/20 (pass pace 10)",
+    "P6: 1/20 (a pass needs about 10 here)",
+    "P5: 8/20 (a pass needs about 10 here)",
+    "P4: 9/20 (a pass needs about 10 here)",
   ]);
-  assert.deepEqual(a["Details below pass pace"], [
-    "Detail 1: averages 8 (pass pace 10). Weakest: P6 with 1",
-    "Detail 2: averages 5 (pass pace 10)",
+  assert.deepEqual(a["Details averaging under what a pass needs"], [
+    "Detail 1: averages 8 (a pass needs about 10 here). Weakest: P6 with 1",
+    "Detail 2: averages 5 (a pass needs about 10 here)",
   ]);
   assert.deepEqual(a["Totals only, no individual hits"], [
     "Detail 2: poor-shooter checks are off for it",

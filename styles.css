@@ -471,6 +471,7 @@ td {
 }
 .more {
   border: 0;
+  background: transparent;
   font-size: 20px;
   line-height: 16px;
   padding: 4px 8px;
@@ -577,7 +578,7 @@ td {
   display: none;
 }
 /* The stage tab is the firing order: a place number, the entry up next, Skip. */
-.seat {
+span.seat {
   display: inline-grid;
   place-items: center;
   min-width: 22px;
@@ -589,11 +590,14 @@ td {
   font-size: 11px;
   font-weight: 650;
 }
+/* The seat number in a score table is a plain cell, so a highlighted row
+   stays one even band. */
 td.seat {
-  display: table-cell;
-  background: none;
   width: 28px;
   text-align: center;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
 }
 .score-panel.next {
   border-left: 3px solid var(--accent);

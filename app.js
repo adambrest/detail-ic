@@ -582,7 +582,7 @@ function methodInfo(c) {
       smart:
         "Smart: anyone at risk of failing first, then quick wins (a point or two short), then the rest by how close they are to Marksman. That is where a reshoot most likely changes a result.",
       highest: "Highest best score first.",
-      first: "Earliest shot first: whoever shot longest ago goes again first.",
+      first: "Chronological order: whoever shot longest ago goes again first.",
     }[c.settings.order] ?? "Lowest best score first."
   } ▲ High priority firers go first and ▼ low priority firers go last.`;
 }
@@ -597,10 +597,10 @@ function queuePanel(c, stage, q) {
   if (!started)
     return `<section class="panel queue"><div class="queue-head"><div class="queue-title"><h3>Redetailing</h3></div><p class="note">Opens once the first ${esc(stageLabel(c, stage))} scores are in.</p></div></section>`;
   return `<section class="panel queue"><div class="queue-head"><div class="queue-title"><h3>Redetailing</h3>${!started ? "" : `<span class="count">${q.reduce((n, e) => n + e.members.length, 0)} firers</span>`}</div><div class="queue-method"><select id="order" aria-label="Redetailing order">${[
-    ["smart", "Smart: most likely to change a result"],
+    ["smart", "Smart: at risk of failing, then closest to Marksman"],
     ["lowest", "Lowest score first"],
     ["highest", "Highest score first"],
-    ["first", "Earliest shot first"],
+    ["first", "Chronological order"],
   ]
     .map(
       ([key, label]) =>
@@ -644,10 +644,10 @@ function weakPanel(c, stage) {
   const list = weakFirers(c, stage);
   if (!list.length) return "";
   const max = stages(c).find((x) => x.id === stage).max;
-  return `<details class="reached weak-list" open><summary>${list.length} weak ${list.length === 1 ? "firer" : "firers"}: below pass pace on their own hits</summary>${list
+  return `<details class="reached weak-list" open><summary>${list.length} weak ${list.length === 1 ? "firer" : "firers"}: under what a pass needs, on their own hits</summary>${list
     .map(({ p, hits, pace }) => {
       const d = c.details.find((x) => x.id === p.detailId);
-      return `<div class="reached-row ${search && filtered(p) ? "match" : ""}"><span class="count">!</span><div><strong>${esc(p.name)}</strong><p class="note">${hits}/${max} (pass pace ${pace})${d ? ` · ${esc(d.name)}` : ""}</p></div><button type="button" data-build="${p.id}" aria-label="Build a detail around ${esc(p.name)}">Build detail</button></div>`;
+      return `<div class="reached-row ${search && filtered(p) ? "match" : ""}"><span class="count">!</span><div><strong>${esc(p.name)}</strong><p class="note">${hits}/${max} (a pass needs about ${pace} here)${d ? ` · ${esc(d.name)}` : ""}</p></div><button type="button" data-build="${p.id}" aria-label="Build a detail around ${esc(p.name)}">Build detail</button></div>`;
     })
     .join("")}</details>`;
 }
