@@ -576,7 +576,7 @@ function methodInfo(c) {
   return `Only firers below their threshold are listed; each row says why. ${
     {
       smart:
-        "Smart: anyone at risk of failing first, then quick wins (a point or two short), then the rest by how close they are to Marksman. That is where a reshoot most likely changes a result.",
+        "Automatic: 1. Firers at risk of failing, who cannot pass without a better score here. 2. Quick wins, a point or two under their threshold. 3. Everyone else, closest to their threshold first. A firer's threshold is their share of what they still need for Marksman, worked out from the scores already in; Stage B aims for 7/8.",
       highest: "Highest best score first.",
       first: "Chronological order: whoever shot longest ago goes again first.",
     }[c.settings.order] ?? "Lowest best score first."
@@ -593,7 +593,7 @@ function queuePanel(c, stage, q) {
   if (!started)
     return `<section class="panel queue"><div class="queue-head"><div class="queue-title"><h3>Redetailing</h3></div><p class="note">Opens once the first ${esc(stageLabel(c, stage))} scores are in.</p></div></section>`;
   return `<section class="panel queue"><div class="queue-head"><div class="queue-title"><h3>Redetailing</h3>${!started ? "" : `<span class="count">${q.reduce((n, e) => n + e.members.length, 0)} firers</span>`}</div><div class="queue-method"><select id="order" aria-label="Redetailing order">${[
-    ["smart", "Smart: at risk of failing, then closest to Marksman"],
+    ["smart", "Automatic"],
     ["lowest", "Lowest score first"],
     ["highest", "Highest score first"],
     ["first", "Chronological order"],

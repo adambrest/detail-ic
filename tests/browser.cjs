@@ -168,7 +168,7 @@ async function addNames(page, names) {
       page,
       () => document.querySelectorAll(".queue-row").length === 2,
     );
-    // Smart order by default: Benjamin is 2 short, a quicker win than Alex,
+    // Automatic order by default: Benjamin is 2 short, a quicker win than Alex,
     // and each row says why it is there.
     const topRow = await page.locator(".queue-row").first().innerText();
     assert.ok(topRow.includes("Benjamin Lee"), topRow);
