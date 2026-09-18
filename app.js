@@ -33,7 +33,7 @@ import {
   rosterWeapon,
   assignDetail,
   autoDetail,
-  detailIssues,
+  rosterIssues,
   addParticipants,
   ensureDetail,
   updateParticipant,
@@ -343,7 +343,7 @@ function renderParticipants() {
           '<p>Paste full names, one per line.</p><button class="primary" data-action="add">Add participants</button>',
         );
   else if (cs) {
-    const issues = detailIssues(c),
+    const issues = rosterIssues(c),
       unassigned = members(c, null),
       groups = [
         ...(unassigned.length ? [[null, unassigned]] : []),
@@ -364,7 +364,7 @@ function renderParticipants() {
         .join("");
   } else
     body = `<section class="panel">${table(c.participants.filter(filtered))}</section>`;
-  const ready = c.participants.length && !detailIssues(c).length;
+  const ready = c.participants.length && !rosterIssues(c).length;
   $("#main").innerHTML =
     shootHead(`<span class="spacer"></span>${rifle}`, true) +
     (hasScores(c)
@@ -412,7 +412,7 @@ function renderStage(stage) {
 }
 // Roster problems that will block scoring, with one link to fix them.
 function issuesPanel(c) {
-  const issues = detailIssues(c);
+  const issues = rosterIssues(c);
   return issues.length
     ? `<div class="panel issues" role="status">${esc(issues.join("\n"))}\n<button class="inline-link" data-action="participants">Fix in Participants</button></div>`
     : "";
@@ -869,8 +869,8 @@ function renderSettings() {
         "",
       )}</div>`;
 }
-function thresholdInfo(program, objective) {
-  return `Automatic redetailing keeps listing a firer for a stage until their best score reaches its threshold. Defaults spread the ${objective === "marksman" ? "Marksman" : "Pass"} score across the stages, rounded up.${program === "BTP" ? " Stage B's threshold is whatever is still needed after Stage A." : ""}`;
+function thresholdInfo() {
+  return "Redetailing keeps listing a firer for a stage until their best score reaches its threshold, they reach Marksman, or they max the stage. Defaults spread the Marksman score across the stages, rounded up. Once the other stages are scored, the threshold becomes whatever is still needed.";
 }
 function presetBody(program) {
   const variant = program === "APS" ? apsView : "standard",
@@ -895,7 +895,7 @@ function presetBody(program) {
     custom = rows.some(
       (c) => pr.targets[`${pr.weapon}:${c.id}:${pr.objective}`] !== undefined,
     );
-  return `${program === "APS" ? `<div class="seg" style="margin-bottom:14px"><button data-aps="standard" class="${apsView === "standard" ? "on" : ""}">APS</button><button data-aps="ns" class="${apsView === "ns" ? "on" : ""}">APS (NS)</button></div>` : ""}<div class="field inline rifle-type"><span>Rifle type</span>${list.length > 1 ? `<select data-default-weapon="${key}" aria-label="${esc(label)} rifle type">${option(list, pr.weapon)}</select>` : `<strong>${esc(pr.weapon)}</strong>`}</div><p class="required">Pass ${ratio(profile.pass, profile.total)} · Marksman ${ratio(profile.marksman, profile.total)}</p>${rule ? `<p class="limit">${rule.min ? `${rule.min}–${rule.max} firers per detail. Up to ${rule.nonSAR} non-SAR21 weapons per detail. Stages A and C: detail hits ÷ firers, rounded down.` : `Up to ${rule.max} firers at a time.`}</p>` : ""}<label class="field inline"><span>Automatic</span><select data-objective="${key}" aria-label="${esc(label)} Automatic priority"><option value="marksman" ${pr.objective === "marksman" ? "selected" : ""}>Marksman first</option><option value="pass" ${pr.objective === "pass" ? "selected" : ""}>Pass first</option></select></label><div class="threshold-head"><span class="muted">Auto-detailing thresholds</span>${info(thresholdInfo(program, pr.objective))}<button type="button" class="reset" data-reset-thresholds="${key}" ${custom ? "" : "disabled"}>Reset thresholds</button></div>${rows
+  return `${program === "APS" ? `<div class="seg" style="margin-bottom:14px"><button data-aps="standard" class="${apsView === "standard" ? "on" : ""}">APS</button><button data-aps="ns" class="${apsView === "ns" ? "on" : ""}">APS (NS)</button></div>` : ""}<div class="field inline rifle-type"><span>Rifle type</span>${list.length > 1 ? `<select data-default-weapon="${key}" aria-label="${esc(label)} rifle type">${option(list, pr.weapon)}</select>` : `<strong>${esc(pr.weapon)}</strong>`}</div><p class="required">Pass ${ratio(profile.pass, profile.total)} · Marksman ${ratio(profile.marksman, profile.total)}</p>${rule ? `<p class="limit">${rule.min ? `${rule.min}–${rule.max} firers per detail. Up to ${rule.nonSAR} non-SAR21 weapons per detail. Stages A and C: detail hits ÷ firers, rounded down.` : `Up to ${rule.max} firers at a time.`}</p>` : ""}<div class="threshold-head"><span class="muted">Auto-detailing thresholds</span>${info(thresholdInfo())}<button type="button" class="reset" data-reset-thresholds="${key}" ${custom ? "" : "disabled"}>Reset thresholds</button></div>${rows
     .map((c) => {
       const max = profile.components.find((x) => x.id === c.id).max;
       return `<div class="target-row"><label for="target-${program}-${c.id}">${esc(c.label)}</label><input id="target-${program}-${c.id}" data-threshold="${key}|${c.id}" type="number" min="0" max="${max}" step="1" inputmode="numeric" value="${target(shoot, p, c.id)}" aria-label="${esc(label)} ${esc(c.label)} threshold"><span class="muted">/${max}</span></div>`;
@@ -982,11 +982,10 @@ function manualDetailDialog(stage) {
 function personDialog(id) {
   const c = s(),
     p = c.participants.find((x) => x.id === id),
-    stage = tab.startsWith("stage:") ? tab.split(":")[1] : null,
-    canEnter = stage && !detailedStage(c, stage);
+    stage = tab.startsWith("stage:") ? tab.split(":")[1] : null;
   dialog(
     p.name,
-    `<p class="note">${esc(p.weapon)}${isCS(c) ? "" : ` · ${esc(stages(c).map((x) => `${x.label} ${ratio(best(c, p, x.id), x.max)}`).join(" · "))}`}</p><div class="actions">${canEnter ? `<button type="button" class="primary" data-manual="${stage}">Enter ${esc(stageLabel(c, stage))}</button>` : ""}<button type="button" id="history">History</button>${p.profile.excluded?.length ? '<button type="button" id="sighting">Sighting</button>' : ""}<button type="button" id="reshoot">Queue reshoot</button></div>`,
+    `<p class="note">${esc(p.weapon)}${isCS(c) ? "" : ` · ${esc(stages(c).map((x) => `${x.label} ${ratio(best(c, p, x.id), x.max)}`).join(" · "))}`}</p><div class="actions"><button type="button" id="history">History</button>${p.profile.excluded?.length ? '<button type="button" id="sighting">Sighting</button>' : ""}<button type="button" id="reshoot">Queue reshoot</button></div>`,
     null,
     null,
     "Close",
@@ -1006,24 +1005,6 @@ function personDialog(id) {
       },
     );
   if ($("#sighting")) $("#sighting").onclick = () => sightingDialog(p);
-  $("#dialog")
-    .querySelectorAll("[data-manual]")
-    .forEach((b) => (b.onclick = () => manualDialog(p, b.dataset.manual)));
-}
-function manualDialog(p, stage) {
-  const c = s(),
-    x = p.profile.components.find((x) => x.id === stage);
-  dialog(
-    `${p.name} · ${x.label}`,
-    `<label class="field"><span>Hits /${x.max}</span><input name="hits" type="number" min="0" max="${x.max}" step="1" required autofocus></label><label class="field"><span>Note (optional)</span><input name="reason"></label>`,
-    "Save score",
-    (f) => {
-      recordIndividual(c, p, stage, f.get("hits"), p.weapon, f.get("reason"));
-      save();
-      $("#dialog").close();
-      render();
-    },
-  );
 }
 function sightingDialog(p) {
   const c = s();
@@ -1367,12 +1348,6 @@ $("#main").addEventListener("change", (e) => {
     } else if (t.dataset.defaultWeapon) {
       const [program, variant] = t.dataset.defaultWeapon.split("|");
       preset(store, program, variant).weapon = t.value;
-      save();
-      render();
-    } else if (t.dataset.objective) {
-      const [program, variant] = t.dataset.objective.split("|");
-      preset(store, program, variant).objective = t.value;
-      applyPresets(store);
       save();
       render();
     }

@@ -1,4 +1,4 @@
-export const VERSION = "2026-09-18.2";
+export const VERSION = "2026-09-18.3";
 export const PROGRAMS = {
   BTP: "BTP",
   ATP_M: "ATP (M)",
@@ -20,8 +20,8 @@ export const TYPES = [
 export const typeLabel = (program, variant = "standard") =>
   (PROGRAMS[program] || program) + (variant === "ns" ? " (NS)" : "");
 // Only plain SAR21 variants share an option; anything that can carry its own
-// requirement (SAR21 SS, HK416, M16) stays separate.
-export const NON_SAR = new Set(["M16", "LMG"]);
+// requirement (SAR21 SS, HK416) stays separate. M16 is out of service.
+export const NON_SAR = new Set(["LMG"]);
 // Combat Shoot detail sizes; ATP (SP) limits how many fire at a time.
 export const DETAIL_RULES = {
   CS_SP: { min: 4, max: 6, nonSAR: 2 },
@@ -85,7 +85,7 @@ export const PROFILES = [
   ...rules(
     "ATP_SP",
     "standard",
-    ["SAR21/SAR21 MMS/M203", "M16"],
+    ["SAR21/SAR21 MMS/M203"],
     [16, 8, 12],
     18,
     29,
@@ -108,7 +108,7 @@ export const PROFILES = [
   ...rules(
     "CS_SP",
     "standard",
-    ["SAR21", "M16", "LMG"],
+    ["SAR21", "LMG"],
     [15, 8, 15],
     19,
     31,
@@ -119,7 +119,7 @@ export const PROFILES = [
         "Floor each detail average before selecting the best earned stage score.",
     },
   ),
-  ...rules("APS", "standard", ["SAR21", "M16"], [6, 6, 6, 6], 12, 20, "S6", {
+  ...rules("APS", "standard", ["SAR21"], [6, 6, 6, 6], 12, 20, "S6", {
     components: [2, 3, 4, 5].map((n) => ({
       id: String(n),
       label: `Practice ${n}`,
@@ -169,11 +169,12 @@ export function weaponsFor(program, variant = "standard") {
 }
 // Finds the rifle option containing a single rifle name, e.g. M203 → SAR21/SAR21 MMS/M203.
 export function weaponGroup(program, variant, name) {
-  const names = String(name).split("/");
+  const names = String(name).split("/"),
+    options = weaponsFor(program, variant);
   return (
-    weaponsFor(program, variant).find(
-      (w) => w === name || w.split("/").some((n) => names.includes(n)),
-    ) ?? name
+    options.find((w) => w === name || w.split("/").some((n) => names.includes(n))) ??
+    options[0] ??
+    name
   );
 }
 export function profileFor(program, variant, weapon) {

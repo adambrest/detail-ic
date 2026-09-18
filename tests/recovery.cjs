@@ -59,12 +59,15 @@ const previousVersion = {
   await page
     .getByRole("button", { name: "Confirm participants", exact: true })
     .click();
-  await page.getByRole("button", { name: "Options for Backup Firer" }).click();
+  const hits = page.getByRole("spinbutton", {
+    name: "Backup Firer hits",
+    exact: true,
+  });
+  await hits.fill("16");
+  await hits.press("Enter");
   await page
-    .getByRole("button", { name: "Enter Stage A · Day", exact: true })
+    .getByRole("button", { name: "Confirm scores", exact: true })
     .click();
-  await page.locator("#dialog input[name=hits]").fill("16");
-  await page.getByRole("button", { name: "Save score", exact: true }).click();
   const data = await page.evaluate(() => localStorage.getItem("detail-ic-v2"));
   await tab(page, "Shoots");
   const downloading = page.waitForEvent("download");

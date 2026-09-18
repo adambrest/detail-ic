@@ -84,8 +84,8 @@ export const hasScores = (s) => s.attempts.length > 0;
 // Locking says the roster and details are settled, so scoring can start.
 export function setRosterLock(s, on) {
   if (on && !s.participants.length) throw Error("Add participants first.");
-  if (on && detailIssues(s).length)
-    throw Error(detailIssues(s).join("\n"));
+  if (on && rosterIssues(s).length)
+    throw Error(rosterIssues(s).join("\n"));
   s.locked = !!on;
   audit(s, on ? "Participants confirmed" : "Participants unlocked");
 }
@@ -292,11 +292,26 @@ export function autoDetail(s) {
   audit(s, "Auto-detailed", { sizes, count: waiting.length });
   return sizes;
 }
-// Problems that stop a detailed shoot from being scored.
-export function detailIssues(s) {
-  if (!isCS(s)) return [];
+// Problems that stop a shoot from being scored.
+export function rosterIssues(s) {
   const issues = [],
-    unassigned = s.participants.filter((p) => !p.detailId).length,
+    seen = new Map();
+  for (const p of s.participants) {
+    const key = p.name.trim().toLowerCase();
+    seen.set(key, (seen.get(key) ?? 0) + 1);
+  }
+  const repeated = [...seen]
+    .filter(([, n]) => n > 1)
+    .map(
+      ([key]) =>
+        s.participants.find((p) => p.name.trim().toLowerCase() === key).name,
+    );
+  if (repeated.length)
+    issues.push(
+      `Same name more than once: ${repeated.join(", ")}. Give each firer a different name.`,
+    );
+  if (!isCS(s)) return issues;
+  const unassigned = s.participants.filter((p) => !p.detailId).length,
     used = sortedDetails(s).filter(
       (d) => !d.temporary && members(s, d.id).length,
     ),
@@ -873,11 +888,16 @@ export function undoAttempt(s, id) {
     if (closed?.includes(d.id) && d.status === "scored") d.status = "awaiting";
 }
 export function target(s, p, stage, objective = s.settings.objective) {
-  const c = p.profile.components.find((c) => c.id === stage);
-  if (s.program === "BTP" && stage === "B") {
-    const a = best(s, p, "A");
-    return a === null ? null : Math.max(0, p.profile[objective] - a);
-  }
+  const c = p.profile.components.find((c) => c.id === stage),
+    others = p.profile.components
+      .filter((x) => x.id !== stage)
+      .map((x) => best(s, p, x.id));
+  // With every other stage scored, the threshold is simply what is still needed.
+  if (others.every((v) => v !== null))
+    return Math.min(
+      c.max,
+      Math.max(0, p.profile[objective] - others.reduce((a, b) => a + b, 0)),
+    );
   const weapon = isCS(s) ? baseWeapons(s.program, s.variant)[0] : p.weapon;
   return (
     s.settings.targets[`${weapon}:${stage}:${objective}`] ??
@@ -1040,7 +1060,9 @@ export function queue(s, stage) {
   );
 }
 export function dispatch(s, stage, keys) {
-  const selected = entities(s, stage).filter((e) => keys.includes(e.key));
+  // Keep the order the redetailer chose, so the score table follows it.
+  const all = entities(s, stage),
+    selected = keys.map((key) => all.find((e) => e.key === key)).filter(Boolean);
   if (!selected.length) throw Error("Select firers to redetail.");
   const cap = !isCS(s) && DETAIL_RULES[s.program]?.max;
   if (cap && selected.length > cap)
@@ -1144,7 +1166,7 @@ export function exportCsv(s) {
 // Upgrades saved data from earlier app versions. Schema 2 kept one roster per
 // shoot type and listed rifles individually; rifles are now grouped.
 export function migrateStore(data) {
-  if (data?.schema === 3) return data;
+  if (data?.schema === 3) return repairWeapons(data);
   if (data?.schema !== 2 || !data.shoots) throw Error("Invalid Detail IC backup.");
   const store = newStore();
   const old = [
@@ -1198,6 +1220,36 @@ export function migrateStore(data) {
     store.shoots.push(s);
   }
   store.active = store.shoots[0]?.id ?? null;
+  return store;
+}
+// Maps rifles that are no longer offered onto the option that replaces them.
+export function repairWeapons(store) {
+  for (const s of store.shoots ?? []) {
+    const options = weaponsFor(s.program, s.variant),
+      map = (w) =>
+        options.includes(w) ? w : weaponGroup(s.program, s.variant, w),
+      profile = (w) => profileFor(s.program, s.variant, w);
+    for (const p of s.participants) {
+      p.weapon = map(p.weapon);
+      if (p.profile?.version !== VERSION) p.profile = profile(p.weapon);
+    }
+    for (const a of s.attempts) {
+      a.weapon = map(a.weapon);
+      if (a.profile?.version !== VERSION) a.profile = profile(a.weapon);
+    }
+    for (const d of s.shared ?? [])
+      for (const m of d.roster) {
+        m.weapon = map(m.weapon);
+        if (m.profile?.version !== VERSION) m.profile = profile(m.weapon);
+      }
+    for (const d of s.dispatches ?? [])
+      for (const m of d.roster) m.weapon = map(m.weapon);
+    for (const d of s.details ?? [])
+      if (d.weapons)
+        for (const key of Object.keys(d.weapons))
+          d.weapons[key] = map(d.weapons[key]);
+    s.settings.weapon = map(s.settings.weapon);
+  }
   return store;
 }
 export function validateStore(store) {
