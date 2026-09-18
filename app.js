@@ -59,6 +59,7 @@ import {
   nothingToGain,
   insights,
   weakFirers,
+  advice,
   buildAround,
   planRest,
   firerHits,
@@ -193,6 +194,24 @@ function save() {
     return false;
   }
 }
+// Shows an input's error as red text under it. The page has been re-rendered,
+// so the field is found again by its data attribute.
+function fieldError(t, message) {
+  const key = Object.keys(t.dataset)[0],
+    attr = key && `data-${key.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`)}`,
+    field =
+      (t.id && document.getElementById(t.id)) ||
+      (attr && $(`[${attr}="${CSS.escape(t.dataset[key])}"]`));
+  const home = field?.closest(".target-row, td, .field, .toolbar");
+  if (!home) return toast(message);
+  const note = document.createElement("div");
+  note.className = "field-error";
+  note.setAttribute("role", "alert");
+  note.textContent = message;
+  // Inside a table cell the note goes under the input; elsewhere under the row.
+  if (home.tagName === "TD") home.append(note);
+  else home.after(note);
+}
 function toast(text, undo) {
   const t = $("#toast");
   t.innerHTML = `<span>${esc(text)}</span>${undo ? '<button type="button" id="undo">Undo</button>' : ""}`;
@@ -280,7 +299,7 @@ function renderShoots() {
   $("#main").innerHTML =
     `<div class="shoots"><section class="panel"><div class="panel-head"><h2>New shoot</h2></div><div class="panel-body">${
       types.length
-        ? `<form id="new-shoot"><div class="type-grid" role="radiogroup" aria-label="Shoot type">${types.map(([p, v], i) => `<label class="type-option"><input type="radio" name="type" value="${p}|${v}" ${i === 0 ? "checked" : ""}><span>${esc(typeLabel(p, v))}</span></label>`).join("")}</div><label class="field"><span>Shoot name</span><input name="name" required autocomplete="off" placeholder="e.g. Alpha Coy · ${esc(dateLabel(now()))}"></label><button class="primary" type="submit">Create shoot</button></form>`
+        ? `<form id="new-shoot" novalidate><div class="type-grid" role="radiogroup" aria-label="Shoot type">${types.map(([p, v], i) => `<label class="type-option"><input type="radio" name="type" value="${p}|${v}" ${i === 0 ? "checked" : ""}><span>${esc(typeLabel(p, v))}</span></label>`).join("")}</div><label class="field"><span>Shoot name</span><input name="name" autocomplete="off" placeholder="e.g. Alpha Coy · ${esc(dateLabel(now()))}"></label><div class="error" role="alert"></div><button class="primary" type="submit">Create shoot</button></form>`
         : ""
     }</div></section>${
       list.length
@@ -576,7 +595,7 @@ function methodInfo(c) {
   return `Only firers below their threshold are listed; each row says why. ${
     {
       smart:
-        "Automatic: 1. Firers at risk of failing, who cannot pass without a better score here. 2. Quick wins, a point or two under their threshold. 3. Everyone else, closest to their threshold first. A firer's threshold is their share of what they still need for Marksman, worked out from the scores already in; Stage B aims for 7/8.",
+        "Automatic: 1. Firers at risk of failing, who cannot pass without a better score here. 2. Everyone else, furthest from their threshold first, since they need the most attempts and practice. A firer's threshold is their share of what they still need for Marksman, worked out from the scores already in; Stage B aims for 7/8.",
       highest: "Highest best score first.",
       first: "Chronological order: whoever shot longest ago goes again first.",
     }[c.settings.order] ?? "Lowest best score first."
@@ -640,10 +659,10 @@ function weakPanel(c, stage) {
   const list = weakFirers(c, stage);
   if (!list.length) return "";
   const max = stages(c).find((x) => x.id === stage).max;
-  return `<details class="reached weak-list" open><summary>${list.length} weak ${list.length === 1 ? "firer" : "firers"}: under what a pass needs, on their own hits</summary>${list
-    .map(({ p, hits, pace }) => {
+  return `<details class="reached weak-list" open><summary>${list.length} weak ${list.length === 1 ? "firer" : "firers"}</summary>${list
+    .map(({ p, hits }) => {
       const d = c.details.find((x) => x.id === p.detailId);
-      return `<div class="reached-row ${search && filtered(p) ? "match" : ""}"><span class="count">!</span><div><strong>${esc(p.name)}</strong><p class="note">${hits}/${max} (a pass needs about ${pace} here)${d ? ` · ${esc(d.name)}` : ""}</p></div><button type="button" data-build="${p.id}" aria-label="Build a detail around ${esc(p.name)}">Build detail</button></div>`;
+      return `<div class="reached-row ${search && filtered(p) ? "match" : ""}"><span class="count">!</span><div><strong>${esc(p.name)}</strong><p class="note">${hits}/${max}${advice(c, p, stage) ? `, ${advice(c, p, stage).text}` : ""}${d ? ` · ${esc(d.name)}` : ""}</p></div><button type="button" data-build="${p.id}" aria-label="Build a detail around ${esc(p.name)}">Build detail</button></div>`;
     })
     .join("")}</details>`;
 }
@@ -1019,7 +1038,7 @@ function presetBody(program) {
 function dialog(title, body, label, submit, closeLabel = "Close", onClose) {
   const d = $("#dialog"),
     buttons = Array.isArray(label) ? label : label ? [{ label }] : [];
-  d.innerHTML = `<form id="dialog-form"><h2 id="dialog-title">${esc(title)}</h2>${body}<div class="error" role="alert"></div><div class="dialog-actions"><button type="button" id="close-dialog">${esc(closeLabel)}</button>${buttons.map((b, i) => `<button type="submit" ${b.value ? `value="${esc(b.value)}"` : ""} class="${i === buttons.length - 1 ? "primary" : ""}">${esc(b.label)}</button>`).join("")}</div></form>`;
+  d.innerHTML = `<form id="dialog-form" novalidate><h2 id="dialog-title">${esc(title)}</h2>${body}<div class="error" role="alert"></div><div class="dialog-actions"><button type="button" id="close-dialog">${esc(closeLabel)}</button>${buttons.map((b, i) => `<button type="submit" ${b.value ? `value="${esc(b.value)}"` : ""} class="${i === buttons.length - 1 ? "primary" : ""}">${esc(b.label)}</button>`).join("")}</div></form>`;
   if (!d.open) d.showModal();
   $("#close-dialog").onclick = () => (onClose ? onClose() : d.close());
   $("#dialog-form").onsubmit = (ev) => {
@@ -1491,6 +1510,7 @@ function restore() {
     async (f) => {
       try {
         const file = f.get("file");
+        if (!file?.name) throw Error("Choose a backup file.");
         if (file.size > 20000000) throw Error("Maximum backup size is 20 MB.");
         const incoming = validateStore(
           migrateStore(JSON.parse(await file.text())),
@@ -1690,8 +1710,8 @@ $("#main").addEventListener("change", (e) => {
       render();
     }
   } catch (err) {
-    toast(err.message);
     render();
+    fieldError(t, err.message);
   }
 });
 $("#main").addEventListener("submit", (e) => {
@@ -1715,7 +1735,9 @@ $("#main").addEventListener("submit", (e) => {
       return;
     }
   } catch (err) {
-    toast(err.message);
+    const box = e.target.querySelector(".error");
+    if (box) box.textContent = err.message;
+    else toast(err.message);
   }
 });
 $("#main").addEventListener("click", (e) => {

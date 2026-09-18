@@ -710,9 +710,9 @@ test("Thresholds share what is still needed as each stage comes in", () => {
   // Only C left: exactly what is missing.
   assert.equal(target(s, people[0], "C"), 11);
 });
-test("Insights flag settled outcomes, the last stage, poor shooters and details", () => {
+test("Insights flag results out of reach and the reshoot that fixes them", () => {
   const { s, people } = setup("ATP_M", "standard", 3);
-  // Person 1: 8 + 24 in, needs 7 in C. Person 2 cannot pass. Person 3 cannot make marksman.
+  // Person 1 is on course. Person 2 cannot pass. Person 3 cannot make Marksman.
   recordIndividual(s, people[0], "B", "8");
   recordIndividual(s, people[0], "A", "24");
   recordIndividual(s, people[1], "B", "0");
@@ -721,21 +721,32 @@ test("Insights flag settled outcomes, the last stage, poor shooters and details"
   recordIndividual(s, people[2], "A", "12");
   assert.equal(standing(s, people[1]).pass, "missed");
   const all = Object.fromEntries(insights(s).map((n) => [n.title, n.items]));
-  assert.deepEqual(all["Pass not possible on current scores"], [
-    "Person 2: at best 18/48 without a Stage A or Stage B reshoot (needs 6 more)",
+  assert.deepEqual(all["Pass not possible"], [
+    "Person 2: needs a Stage A or Stage B reshoot to pass, even with full marks in Stage C",
   ]);
-  assert.deepEqual(all["Marksman not possible on current scores"], [
-    "Person 3: at best 33/48 without a Stage A reshoot (needs 6 more)",
+  assert.deepEqual(all["Marksman not possible"], [
+    "Person 3: needs a Stage A reshoot for Marksman, even with full marks in Stage C",
   ]);
   assert.deepEqual(all["Overview"], [
     "Marksman: 0 made, 1 still possible, 2 not possible on current scores",
   ]);
-  assert.deepEqual(all["One stage left"], [
-    "Person 1: needs 7/16 in Stage C for Marksman, 0 to pass",
-  ]);
+  // Only critical warnings: nothing about who has one stage left.
+  assert.equal(all["One stage left"], undefined);
   const a = Object.fromEntries(insights(s, "A").map((n) => [n.title, n.items]));
-  // A pass needs about 24 × 24/48 = 12 in A.
-  assert.deepEqual(a["Poor shooters"], ["Person 2: 2/24 (a pass needs about 12 here)"]);
+  // Person 2 could still make Marksman by reshooting A: B 0 and C 16 leave 39 to find,
+  // shared between A (24) and C (16), so 24 is recommended.
+  assert.deepEqual(a["Poor shooters"], [
+    "Person 2: 2/24, recommended 24 for Marksman",
+  ]);
+});
+test("Close to failing says exactly what the last stages must give", () => {
+  const { s, p } = setup("ATP_M", "standard", 1);
+  recordIndividual(s, p, "B", "2");
+  recordIndividual(s, p, "A", "6");
+  const all = Object.fromEntries(insights(s).map((n) => [n.title, n.items]));
+  assert.deepEqual(all["Close to failing"], [
+    "Person 1: needs 16/16 in Stage C to pass",
+  ]);
 });
 test("When no single reshoot is enough, insights name the stages together", () => {
   const { s, p } = setup("ATP_M", "standard", 1);
@@ -743,39 +754,25 @@ test("When no single reshoot is enough, insights name the stages together", () =
   recordIndividual(s, p, "B", "0");
   recordIndividual(s, p, "C", "8");
   const all = Object.fromEntries(insights(s).map((n) => [n.title, n.items]));
-  assert.deepEqual(all["Marksman not possible on current scores"], [
-    "Person 1: at best 24/48 without reshooting Stage A and Stage B (needs 15 more)",
+  assert.deepEqual(all["Marksman not possible"], [
+    "Person 1: needs reshoots of Stage A and Stage B for Marksman",
   ]);
 });
-test("Insights point out quick wins and firers who are not improving", () => {
+test("Insights point out firers who are not improving", () => {
   const { s, people } = setup("BTP", "standard", 2);
-  // Starting threshold for BTP Stage A is 13/16.
   recordIndividual(s, people[0], "A", "12");
   for (const v of ["8", "9", "7", "6"]) recordIndividual(s, people[1], "A", v);
   const a = Object.fromEntries(insights(s, "A").map((n) => [n.title, n.items]));
-  assert.deepEqual(a["Close to the threshold"], [
-    "Person 1: 12 → 13 for Marksman (1 short)",
-  ]);
-  assert.deepEqual(a["Not improving"], [
-    "Person 2: 4 tries (8, 9, 7, 6)",
-  ]);
-  assert.ok(a["Overview"].includes("Stage A · Day: 2 of 2 have a score, 0 waiting to fire"));
-});
-test("Firers with nothing to gain are offered as helpers while a detail is weak", () => {
-  const store = newStore(),
-    s = createShoot(store, "CS_SP", "standard", "H");
-  addParticipants(
-    s,
-    Array.from({ length: 8 }, (_, i) => `P${i + 1} ${i < 4 ? 1 : 2}`),
-    "SAR21",
+  assert.deepEqual(a["Not improving"], ["Person 2: 4 tries (8, 9, 7, 6)"]);
+  // A point or two short is not critical, so it is not a warning.
+  assert.equal(a["Close to the threshold"], undefined);
+  assert.ok(
+    a["Overview"].includes(
+      "Stage A · Day: 2 of 2 have a score, 0 waiting to fire",
+    ),
   );
-  const [d1, d2] = sortedDetails(s);
-  detailScore(s, d1, "A", 60);
-  detailScore(s, d2, "A", 20);
-  const a = Object.fromEntries(insights(s, "A").map((n) => [n.title, n.items]));
-  assert.deepEqual(a["Free to help a weak detail"], ["P1, P2, P3, P4"]);
 });
-test("Detail insights name the weakest shooter, or say hits are missing", () => {
+test("Detail insights name the weakest shooter, and group firers with the same fix", () => {
   const store = newStore(),
     s = createShoot(store, "CS_M", "standard", "I");
   addParticipants(
@@ -787,21 +784,24 @@ test("Detail insights name the weakest shooter, or say hits are missing", () => 
   detailScore(s, d1, "A", null, { individuals: [12, 11, 10, 9, 8, 1] });
   detailScore(s, d2, "A", 30);
   const a = Object.fromEntries(insights(s, "A").map((n) => [n.title, n.items]));
-  // A pass needs about 24 × 20/48 = 10 in CS (M) Stage A.
+  // Before B or C are in, CS (M) Stage A starts at 39 × 20/48 = 17 for Marksman.
   assert.deepEqual(a["Poor shooters"], [
-    "P6: 1/20 (a pass needs about 10 here)",
-    "P5: 8/20 (a pass needs about 10 here)",
-    "P4: 9/20 (a pass needs about 10 here)",
+    "P6: 1/20, recommended 17 for Marksman",
+    "P5: 8/20, recommended 17 for Marksman",
+    "P4: 9/20, recommended 17 for Marksman",
   ]);
-  assert.deepEqual(a["Details averaging under what a pass needs"], [
-    "Detail 1: averages 8 (a pass needs about 10 here). Weakest: P6 with 1",
-    "Detail 2: averages 5 (a pass needs about 10 here)",
+  assert.deepEqual(a["Weak details"], [
+    "Detail 1: averages 8, recommended 17 for Marksman. Weakest: P6 with 1",
+    "Detail 2: averages 5, recommended 17 for Marksman",
   ]);
-  assert.deepEqual(a["Totals only, no individual hits"], [
-    "Detail 2: poor-shooter checks are off for it",
+  // All twelve need the same fix: one line, not twelve.
+  assert.deepEqual(a["Marksman not possible"], [
+    "12 firers need a Stage A reshoot for Marksman, even with full marks in Stage B and Stage C: P1, P2, P3 and 9 more",
   ]);
+  // A total-only detail is not a critical warning; the confirm prompt covers it.
+  assert.equal(a["Totals only, no individual hits"], undefined);
 });
-test("Smart order puts a pass at risk first, then quick wins, and says why", () => {
+test("Automatic order puts a pass at risk first, then the furthest behind, and says why", () => {
   const { s, people } = setup("BTP", "standard", 3);
   assert.equal(s.settings.order, "smart");
   // Pass 16, Marksman 26 over two stages of 16. Stage B scored first.
@@ -814,12 +814,13 @@ test("Smart order puts a pass at risk first, then quick wins, and says why", () 
   const q = queue(s, "A");
   assert.deepEqual(
     q.map((e) => e.members[0].name),
-    ["Person 2", "Person 3", "Person 1"],
+    ["Person 2", "Person 1", "Person 3"],
   );
+  // Both stages are in, so the figures are exact: "needs", not "recommended".
   assert.deepEqual(q.map((e) => e.reason), [
-    "pass at risk: best 3, needs 16",
-    "1 short of Marksman (best 11, needs 12)",
-    "5 short of Marksman (best 5, needs 10)",
+    "at risk of failing: best 3, needs 16 to pass",
+    "best 5, needs 10 for Marksman",
+    "best 11, needs 12 for Marksman",
   ]);
 });
 test("A weak firer gets a detail of strong shooters, those still needing it first", () => {
@@ -919,6 +920,17 @@ test("Too few left over: good shooters top them up", () => {
     ["P1", "P2"],
   );
   assert.equal(rest.short, false);
+});
+test("A bad edit keeps the original score, and an edit leaves a waiting redetail alone", () => {
+  const { s, p } = setup("BTP", "standard", 1);
+  const a = recordIndividual(s, p, "A", "9");
+  assert.throws(() => editIndividual(s, a.id, "99"), /Hits must be 0–16/);
+  assert.equal(best(s, p, "A"), 9);
+  assert.equal(s.attempts.find((x) => x.id === a.id).status, "valid");
+  dispatch(s, "A", [`person:${p.id}`]);
+  editIndividual(s, a.id, "10");
+  assert.equal(best(s, p, "A"), 10);
+  assert.equal(s.dispatches[0].status, "awaiting");
 });
 test("Individual stages queue firers by detail, then redetails", () => {
   const { s, people } = setup("BTP", "standard", 3);

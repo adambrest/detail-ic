@@ -508,6 +508,13 @@ td {
   line-height: 1.6;
   border-top: 1px solid #fee2e2;
 }
+/* An input's error, in red under the field it belongs to. */
+.field-error {
+  color: var(--danger);
+  font-size: 11px;
+  margin: 4px 0 6px;
+  white-space: pre-line;
+}
 .errors:empty {
   display: none;
 }

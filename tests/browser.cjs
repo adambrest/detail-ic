@@ -168,19 +168,22 @@ async function addNames(page, names) {
       page,
       () => document.querySelectorAll(".queue-row").length === 2,
     );
-    // Automatic order by default: Benjamin is 2 short, a quicker win than Alex,
-    // and each row says why it is there.
+    // Automatic order by default: Alex is 5 short, further behind than
+    // Benjamin, so he needs the practice first. Each row says why.
     const topRow = await page.locator(".queue-row").first().innerText();
-    assert.ok(topRow.includes("Benjamin Lee"), topRow);
-    assert.ok(topRow.includes("2 short of Marksman (best 11, needs 13)"), topRow);
+    assert.ok(topRow.includes("Alex Tan"), topRow);
+    // Stage B is not in yet, so 13 is a recommendation, not a promise.
+    assert.ok(topRow.includes("best 8, recommended 13 for Marksman"), topRow);
     assert.equal(await page.locator(".queue .info").count(), 1);
     assert.ok(await inViewport(page, page.locator("#redetail")));
     // A priority tag still wins over the smart order.
     await page
-      .getByRole("button", { name: "Alex Tan priority: normal" })
+      .getByRole("button", { name: "Benjamin Lee priority: normal" })
       .click();
     await waitFor(page, () =>
-      document.querySelector(".queue-row")?.innerText.includes("Alex Tan"),
+      document
+        .querySelector(".queue-row")
+        ?.innerText.includes("Benjamin Lee"),
     );
     await page.screenshot({
       path: `tests/${name}-desktop.png`,
