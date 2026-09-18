@@ -13,7 +13,6 @@ import {
   newShoot,
   createShoot,
   deleteShoot,
-  enableShoot,
   getShoot,
   preset,
   applyPresets,
@@ -158,25 +157,11 @@ test("Unsupported rifles stay out of selectors and scoring", () => {
   assert.equal(REFERENCE_ONLY[0].total, 108);
   assert.ok(!weaponsFor("ATP_SP").some((w) => w.includes("LMG")));
 });
-test("Every type is on by default; disabling one keeps its shoots", () => {
+test("Shoots are created, opened and deleted from one list", () => {
   const store = newStore();
-  assert.deepEqual(store.enabled.toSorted(), [
-    "APS",
-    "ATP_M",
-    "ATP_SP",
-    "BTP",
-    "CS_M",
-    "CS_SP",
-  ]);
-  enableShoot(store, "BTP", false);
-  assert.throws(() => createShoot(store, "BTP", "standard", "Alpha"), /Enable/);
-  enableShoot(store, "BTP", true);
   const s = createShoot(store, "BTP", "standard", "Alpha");
   assert.equal(getShoot(store), s);
   addParticipants(s, ["A"], "SAR21");
-  enableShoot(store, "BTP", false);
-  assert.equal(getShoot(store).participants.length, 1);
-  enableShoot(store, "BTP", true);
   const second = createShoot(store, "BTP", "standard", "Bravo");
   assert.equal(store.shoots.length, 2);
   assert.equal(store.active, second.id);

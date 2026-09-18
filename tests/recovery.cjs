@@ -50,12 +50,7 @@ const previousVersion = {
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(server.url);
   await page.waitForFunction(() => navigator.serviceWorker.controller);
-  assert.equal(
-    await page.evaluate(
-      () => JSON.parse(localStorage.getItem("detail-ic-v2")).enabled.length,
-    ),
-    6,
-  );
+  assert.equal((await page.locator(".type-option").count()), 7);
   await page.getByLabel("Shoot name").fill("Recovery shoot");
   await page.getByRole("button", { name: "Create shoot", exact: true }).click();
   await page.getByRole("button", { name: "Add participants", exact: true }).click();
@@ -111,17 +106,20 @@ const previousVersion = {
   // Another tab's change blocks overwriting.
   const other = await context.newPage();
   await other.goto(server.url);
-  await tab(other, "Settings");
+  await other.getByLabel("Shoot name").fill("Second tab shoot");
   await other
-    .getByRole("switch", { name: "Enable ATP (M)", exact: true })
+    .getByRole("button", { name: "Create shoot", exact: true })
     .click();
   await page.waitForFunction(
     () => !document.querySelector("#storage-warning").hidden,
   );
   await tab(page, "Settings");
-  await page
-    .getByRole("switch", { name: "Enable CS (M)", exact: true })
-    .click();
+  const threshold = page.getByRole("spinbutton", {
+    name: "BTP Stage A · Day threshold",
+  });
+  await page.locator("[data-expand=BTP]").click();
+  await threshold.fill("15");
+  await threshold.press("Tab");
   assert.ok(
     (await page.locator("#storage-warning").innerText()).includes(
       "another tab",
@@ -130,9 +128,8 @@ const previousVersion = {
   const persisted = await page.evaluate(() =>
     JSON.parse(localStorage.getItem("detail-ic-v2")),
   );
-  assert.ok(!persisted.enabled.includes("ATP_M"));
-  assert.ok(persisted.enabled.includes("CS_M"));
-  assert.equal(persisted.shoots.length, 1);
+  assert.equal(persisted.shoots.length, 2);
+  assert.equal(persisted.presets?.BTP?.targets?.["SAR21:A:marksman"], undefined);
 
   // Data saved by the previous version opens with grouped rifles.
   const upgraded = await browser.newContext(),

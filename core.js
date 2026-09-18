@@ -19,7 +19,6 @@ export const typeKey = (program, variant = "standard") =>
 export function newStore() {
   return {
     schema: 3,
-    enabled: Object.keys(PROGRAMS),
     active: null,
     presets: {},
     shoots: [],
@@ -70,8 +69,6 @@ export function applyPresets(store) {
   for (const s of store.shoots) applyPreset(store, s);
 }
 export function createShoot(store, program, variant = "standard", name = "") {
-  if (!store.enabled.includes(program))
-    throw Error(`Enable ${PROGRAMS[program] || program} in Settings first.`);
   const s = newShoot(program, variant, name);
   s.settings.weapon = preset(store, program, variant).weapon;
   applyPreset(store, s);
@@ -82,11 +79,6 @@ export function createShoot(store, program, variant = "standard", name = "") {
 }
 export function getShoot(store, id = store.active) {
   return store.shoots.find((s) => s.id === id) || null;
-}
-export function enableShoot(store, program, on) {
-  if (!PROGRAMS[program]) throw Error("Unknown shoot.");
-  store.enabled = store.enabled.filter((p) => p !== program);
-  if (on) store.enabled.push(program);
 }
 export const hasScores = (s) => s.attempts.length > 0;
 // Locking says the roster and details are settled, so scoring can start.
@@ -1137,7 +1129,6 @@ export function migrateStore(data) {
   if (data?.schema === 3) return data;
   if (data?.schema !== 2 || !data.shoots) throw Error("Invalid Detail IC backup.");
   const store = newStore();
-  store.enabled = (data.enabled || []).filter((p) => PROGRAMS[p]);
   const old = [
     ...Object.values(data.shoots),
     ...(data.archives || [])
@@ -1194,8 +1185,6 @@ export function migrateStore(data) {
 export function validateStore(store) {
   if (
     store?.schema !== 3 ||
-    !Array.isArray(store.enabled) ||
-    store.enabled.some((p) => !PROGRAMS[p]) ||
     !Array.isArray(store.shoots) ||
     !store.presets ||
     typeof store.presets !== "object"

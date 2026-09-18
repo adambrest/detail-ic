@@ -19,7 +19,6 @@ import {
   applyPresets,
   createShoot,
   getShoot,
-  enableShoot,
   hasScores,
   setRosterLock,
   detailedStage,
@@ -93,6 +92,7 @@ let store,
   showScored = false,
   addMode = null,
   addNote = "",
+  forcedQueue = new Set(),
   pasteDetail = 1,
   apsView = "standard",
   offlineReady = false,
@@ -205,9 +205,6 @@ function toast(text, undo) {
     undo ? 6000 : 3500,
   );
 }
-function offlineNote() {
-  return `${offlineReady ? "Available offline. Shoots and scores are saved on this device." : "Preparing offline files…"} Version ${globalThis.APP_VERSION ?? "—"}.`;
-}
 function info(text) {
   return `<button class="info" type="button" aria-label="${esc(text)}">i<span class="tooltip">${esc(text)}</span></button>`;
 }
@@ -219,10 +216,7 @@ function filtered(p) {
 }
 function shootHead(extra = "", editable = false) {
   const c = s(),
-    types = TYPES.filter(
-      ([p, v]) =>
-        store.enabled.includes(p) || (p === c.program && v === c.variant),
-    );
+    types = TYPES;
   const type = editable
     ? `<select id="shoot-type" class="shoot-select" aria-label="Shoot type" ${hasScores(c) ? "disabled" : ""}>${types.map(([p, v]) => `<option value="${p}|${v}" ${p === c.program && v === c.variant ? "selected" : ""}>${esc(typeLabel(p, v))}</option>`).join("")}</select>`
     : `<span class="badge">${esc(typeLabel(c.program, c.variant))}</span>`;
@@ -265,7 +259,7 @@ function render() {
   status();
 }
 function renderShoots() {
-  const types = TYPES.filter(([p]) => store.enabled.includes(p)),
+  const types = TYPES,
     list = store.shoots.toSorted(
       (a, b) =>
         (b.id === store.active) - (a.id === store.active) ||
@@ -275,7 +269,7 @@ function renderShoots() {
     `<div class="shoots"><section class="panel"><div class="panel-head"><h2>New shoot</h2></div><div class="panel-body">${
       types.length
         ? `<form id="new-shoot"><div class="type-grid" role="radiogroup" aria-label="Shoot type">${types.map(([p, v], i) => `<label class="type-option"><input type="radio" name="type" value="${p}|${v}" ${i === 0 ? "checked" : ""}><span>${esc(typeLabel(p, v))}</span></label>`).join("")}</div><label class="field"><span>Shoot name</span><input name="name" required autocomplete="off" placeholder="e.g. Alpha Coy · ${esc(dateLabel(now()))}"></label><button class="primary" type="submit">Create shoot</button></form>`
-        : '<p class="note">Turn on the shoot types you run in Settings.</p><button class="primary" data-action="settings">Settings</button>'
+        : ""
     }</div></section>${
       list.length
         ? `<section class="panel"><div class="panel-head"><h3>Shoots <span class="count">${list.length}</span></h3></div>${list
@@ -547,6 +541,8 @@ function methodInfo(c) {
 }
 function queuePanel(c, stage, q) {
   const cs = isCS(c),
+    pending = notYetShot(c, stage),
+    held = pending.length && !forcedQueue.has(`${c.id}:${stage}`),
     cap = !cs && DETAIL_RULES[c.program]?.max,
     count = q
       .filter((e) => selected.has(e.key))
@@ -563,7 +559,11 @@ function queuePanel(c, stage, q) {
     )
     .join(
       "",
-    )}</select>${info(methodInfo(c))}</div><div class="queue-actions"><button data-action="select-all">${cap ? `Select next ${cap}` : "Select all"}</button><button class="primary" id="redetail" data-action="redetail" ${count ? "" : "disabled"}>Redetail${count ? ` (${count})` : ""}</button></div></div><div class="queue-list">${
+    )}</select>${info(methodInfo(c))}</div><div class="queue-actions"><button data-action="select-all" ${held ? "disabled" : ""}>${cap ? `Select next ${cap}` : "Select all"}</button><button class="primary" id="redetail" data-action="redetail" ${count && !held ? "" : "disabled"}>Redetail${count ? ` (${count})` : ""}</button></div></div>${
+    held
+      ? `<div class="queue-held"><div class="errors">${pending.length} ${pending.length === 1 ? "firer has" : "firers have"} no ${esc(stageLabel(c, stage))} score yet: ${esc(pending.slice(0, 8).map((p) => p.name).join(", "))}${pending.length > 8 ? ` and ${pending.length - 8} more` : ""}.</div><div class="panel-body"><p class="note">Everyone shoots once before redetailing starts.</p><button data-action="force-queue">Redetail anyway</button></div></div>`
+      : ""
+  }<div class="queue-list" ${held ? "hidden" : ""}>${
     q
       .map((e, i) => {
         const name = cs ? e.detail.name : e.members[0].name,
@@ -701,30 +701,45 @@ async function runRedetail(stage, keys) {
     `${ids.size} ${ids.size === 1 ? "firer" : "firers"} redetailed. Enter their scores when they finish.`,
   );
 }
-// Brief shuffle of the list while redetailed firers slide out to the score table.
-async function shuffle(list, keys) {
+// Brief shuffle of the list, ending in the order it should be.
+async function shuffle(list, keys = []) {
   const rows = [...list.querySelectorAll(".queue-row")],
     leaving = rows.filter((r) => keys.includes(r.dataset.key)),
     staying = rows.filter((r) => !keys.includes(r.dataset.key)),
-    pause = (ms) => new Promise((done) => setTimeout(done, ms));
+    order = [...staying],
+    pause = (ms) => new Promise((done) => setTimeout(done, ms)),
+    flip = (rearrange) => {
+      const top = new Map(staying.map((r) => [r, r.getBoundingClientRect().top]));
+      rearrange();
+      for (const r of staying) {
+        const dy = top.get(r) - r.getBoundingClientRect().top;
+        if (dy)
+          r.animate(
+            [{ transform: `translateY(${dy}px)` }, { transform: "none" }],
+            { duration: 90, easing: "ease-out" },
+          );
+      }
+    };
   list.classList.add("shuffling");
-  leaving.forEach((r) => r.classList.add("leaving"));
-  await pause(220);
-  leaving.forEach((r) => r.remove());
-  for (let round = 0; round < 5; round++) {
-    const top = new Map(staying.map((r) => [r, r.getBoundingClientRect().top]));
-    staying.sort(() => Math.random() - 0.5).forEach((r) => list.append(r));
-    for (const r of staying) {
-      const dy = top.get(r) - r.getBoundingClientRect().top;
-      if (dy)
-        r.animate(
-          [{ transform: `translateY(${dy}px)` }, { transform: "none" }],
-          { duration: 90, easing: "ease-out" },
-        );
-    }
+  if (leaving.length) {
+    leaving.forEach((r) => r.classList.add("leaving"));
+    await pause(220);
+    leaving.forEach((r) => r.remove());
+  }
+  for (let round = 0; round < 4; round++) {
+    flip(() => staying.sort(() => Math.random() - 0.5).forEach((r) => list.append(r)));
     await pause(95);
   }
+  flip(() => order.forEach((r) => list.append(r)));
+  await pause(110);
   list.classList.remove("shuffling");
+}
+async function reshuffle() {
+  const list = $(".queue-list");
+  if (busy || !list || list.children.length < 2 || reduceMotion()) return;
+  busy = true;
+  await shuffle(list);
+  busy = false;
 }
 function renderFinal() {
   const c = s(),
@@ -760,14 +775,12 @@ function renderSettings() {
       PROGRAMS,
     )
       .map(([program, label]) => {
-        const on = store.enabled.includes(program),
-          open = openPresets.has(program);
-        const inUse = on && s()?.program === program;
-        return `<section class="preset ${open ? "open" : ""}"><div class="preset-head"><button class="expand" data-expand="${program}" aria-expanded="${open}">${label}</button><button class="toggle" role="switch" aria-checked="${on}" data-enable="${program}" aria-label="Enable ${label}" ${inUse ? `disabled title="The open shoot uses ${esc(label)}"` : ""}></button></div><div class="preset-body">${inUse ? `<p class="note">The open shoot uses ${esc(label)}, so it stays on.</p>` : ""}${on ? presetBody(program) : `<p class="note">Turn on ${esc(label)} to edit its settings.</p>`}</div></section>`;
+        const open = openPresets.has(program);
+        return `<section class="preset ${open ? "open" : ""}"><div class="preset-head"><button class="expand" data-expand="${program}" aria-expanded="${open}">${label}</button></div><div class="preset-body">${presetBody(program)}</div></section>`;
       })
       .join(
         "",
-      )}<div class="settings-section"><p class="note" id="offline-note">${esc(offlineNote())}</p></div></div>`;
+      )}</div>`;
 }
 function thresholdInfo(program, objective) {
   return `Automatic redetailing keeps listing a firer for a stage until their best score reaches its threshold. Defaults spread the ${objective === "marksman" ? "Marksman" : "Pass"} score across the stages, rounded up.${program === "BTP" ? " Stage B's threshold is whatever is still needed after Stage A." : ""}`;
@@ -1125,7 +1138,6 @@ function restore() {
           else store.shoots.push(shoot);
         }
         store.presets = { ...incoming.presets, ...store.presets };
-        store.enabled = [...new Set([...store.enabled, ...incoming.enabled])];
         if (incoming.active) store.active = incoming.active;
         applyPresets(store);
         save();
@@ -1210,6 +1222,7 @@ $("#main").addEventListener("change", (e) => {
       c.settings.order = t.value;
       save();
       render();
+      reshuffle();
     } else if (t.dataset.queue) {
       t.checked ? selected.add(t.dataset.queue) : selected.delete(t.dataset.queue);
       updateRedetailButton(stage);
@@ -1303,14 +1316,6 @@ $("#main").addEventListener("click", (e) => {
   try {
     if (b.classList.contains("info")) {
       b.classList.toggle("open");
-      return;
-    }
-    if (b.dataset.enable) {
-      const on = !store.enabled.includes(b.dataset.enable);
-      enableShoot(store, b.dataset.enable, on);
-      if (on) openPresets.add(b.dataset.enable);
-      save();
-      render();
       return;
     }
     if (b.dataset.expand) {
@@ -1513,6 +1518,10 @@ $("#main").addEventListener("click", (e) => {
       case "manual-detail":
         manualDetailDialog(stage);
         break;
+      case "force-queue":
+        forcedQueue.add(`${c.id}:${stage}`);
+        render();
+        break;
       case "toggle-scored":
         showScored = !showScored;
         render();
@@ -1582,7 +1591,6 @@ if ("serviceWorker" in navigator) {
       await navigator.serviceWorker.ready;
       offlineReady = true;
       status();
-      if ($("#offline-note")) $("#offline-note").textContent = offlineNote();
       let checking = false;
       const check = async () => {
         if (checking || document.visibilityState === "hidden" || !navigator.onLine)
@@ -1610,9 +1618,5 @@ if ("serviceWorker" in navigator) {
       addEventListener("online", check);
       document.addEventListener("visibilitychange", check);
     })
-    .catch(() => {
-      if ($("#offline-note"))
-        $("#offline-note").textContent =
-          "Offline setup failed. Reload while connected to try again.";
-    });
+    .catch(() => {});
 }

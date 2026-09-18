@@ -499,6 +499,18 @@ td {
   min-height: 0;
   position: relative;
 }
+.queue-list[hidden] {
+  display: none;
+}
+.queue-held .errors {
+  border-top: 0;
+}
+.queue-held .panel-body {
+  padding: 10px 12px;
+}
+.queue-held .note {
+  margin: 0 0 8px;
+}
 .queue-list.shuffling::before {
   content: "";
   position: sticky;

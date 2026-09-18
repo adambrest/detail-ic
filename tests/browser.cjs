@@ -62,9 +62,10 @@ async function addNames(page, names) {
       1,
     );
 
-    // Settings: every type on, no rifle choice for BTP, thresholds save as typed.
+    // Settings: no switches, no rifle choice for BTP, thresholds save as typed.
     await tab(page, "Settings");
-    assert.equal(await page.getByRole("switch", { checked: true }).count(), 6);
+    assert.equal(await page.getByRole("switch").count(), 0);
+    assert.ok(!(await page.locator("#main").innerText()).includes("Version"));
     await page.locator("[data-expand=BTP]").click();
     assert.equal(
       await page.getByRole("combobox", { name: "BTP rifle type" }).count(),
@@ -114,9 +115,16 @@ async function addNames(page, names) {
       (await page.locator("#tabs .on").innerText()).includes("Stage A · Day"),
     );
 
-    // Redetailing stays empty until firers have shot.
+    // Redetailing is held back until everyone has a first score.
     assert.equal(await page.locator(".queue-row").count(), 0);
     await enterHits(page, "Alex Tan", "8");
+    assert.ok(
+      (await page.locator(".queue-held").innerText()).includes(
+        "2 firers have no Stage A · Day score yet",
+      ),
+    );
+    assert.ok(await page.locator(".queue-list").isHidden());
+    assert.ok(await page.locator("#redetail").isDisabled());
     await enterHits(page, "Benjamin Lee", "11");
     await enterHits(page, "Chris Wong", "14");
     await waitFor(
@@ -197,6 +205,7 @@ async function addNames(page, names) {
         r.innerText.includes("Benjamin Lee"),
       ),
     );
+    await click(page, "Redetail anyway");
     await page.getByRole("checkbox", { name: "Select Benjamin Lee" }).check();
     await page.locator("#redetail").click();
     assert.ok(
@@ -315,11 +324,15 @@ async function addNames(page, names) {
         (a) => a.score === 12,
       ),
     );
+    await click(page, "Redetail anyway");
     await waitFor(page, () =>
       [...document.querySelectorAll(".queue-row")].some((r) =>
         r.innerText.includes("Temp detail 1"),
       ),
     );
+    // Changing the order reshuffles the list.
+    await page.locator("#order").selectOption("lowest");
+    await waitFor(page, () => document.querySelectorAll(".queue-row").length > 0);
 
     // Stage B has no details at all, and can be fired on another rifle.
     await tab(page, "Stage B");
