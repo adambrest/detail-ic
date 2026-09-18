@@ -1074,7 +1074,18 @@ export function cancelDispatch(s, id) {
   audit(s, "Redetail canceled", { dispatchId: id });
 }
 export function manualQueue(s, p, stage) {
-  const key = isCS(s) ? `detail:${p.detailId}` : `person:${p.id}`;
+  const detail = detailedStage(s, stage)
+    ? s.details.find(
+        (d) =>
+          !d.retired &&
+          (d.temporary ? d.stage === stage : true) &&
+          members(s, d.id).some((m) => m.id === p.id),
+      )
+    : null;
+  queueKey(s, detail ? `detail:${detail.id}` : `person:${p.id}`, stage);
+}
+// Puts a detail or a firer back in the redetailing list by hand.
+export function queueKey(s, key, stage) {
   if (!s.manualQueue.some((q) => q.key === key && q.stage === stage))
     s.manualQueue.push({ key, stage });
   audit(s, "Reshoot queued", { key, stage });

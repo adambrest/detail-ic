@@ -56,7 +56,9 @@ const previousVersion = {
   await page.getByRole("button", { name: "Add participants", exact: true }).click();
   await page.locator("#add-names").fill("Backup Firer");
   await page.getByRole("button", { name: "Add participants", exact: true }).click();
-  await tab(page, "Stage A · Day");
+  await page
+    .getByRole("button", { name: "Confirm participants", exact: true })
+    .click();
   await page.getByRole("button", { name: "Options for Backup Firer" }).click();
   await page
     .getByRole("button", { name: "Enter Stage A · Day", exact: true })
@@ -145,7 +147,7 @@ const previousVersion = {
     await older
       .getByRole("combobox", { name: "Rifle for Earlier Firer" })
       .inputValue(),
-    "HK416",
+    "SAR21 SS/HK416",
   );
   assert.equal(
     await older.evaluate(

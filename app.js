@@ -61,6 +61,8 @@ import {
   notYetShot,
   setPriority,
   queue,
+  queueKey,
+  entities,
   dispatch,
   cancelDispatch,
   manualQueue,
@@ -93,6 +95,7 @@ let store,
   addMode = null,
   addNote = "",
   forcedQueue = new Set(),
+  showReached = false,
   pasteDetail = 1,
   apsView = "standard",
   offlineReady = false,
@@ -245,10 +248,14 @@ function render() {
       ["settings", "Settings"],
     ];
   if (!tabs.some((t) => t[0] === tab)) tab = "shoots";
+  // Scoring opens only once the participants are confirmed.
+  const scoring = (key) => key.startsWith("stage:") || key === "final",
+    shut = current && !current.locked;
+  if (shut && scoring(tab)) tab = "participants";
   $("#tabs").innerHTML = tabs
     .map(
       ([key, label]) =>
-        `<button data-tab="${key}" class="${tab === key ? "on" : ""}" ${tab === key ? 'aria-current="page"' : ""}>${esc(label)}</button>`,
+        `<button data-tab="${key}" class="${tab === key ? "on" : ""}" ${tab === key ? 'aria-current="page"' : ""} ${shut && scoring(key) ? 'disabled title="Confirm the participants first"' : ""}>${esc(label)}</button>`,
     )
     .join("");
   if (tab === "shoots") renderShoots();
@@ -336,7 +343,7 @@ function renderParticipants() {
     ).join("")}<option value="new">New detail</option></select></td>`;
   };
   const row = (p) =>
-    `<tr class="${matches(p) ? "match" : ""}"><td class="name"><input class="name-input" type="text" data-name="${p.id}" value="${esc(p.name)}" aria-label="Name for ${esc(p.name)}" ${locked ? "disabled" : ""}></td>${multi ? `<td><select class="row-weapon" data-rifle="${p.id}" aria-label="Rifle for ${esc(p.name)}">${option(weapons(c), p.weapon)}</select></td>` : ""}${cs ? picker(p) : ""}<td class="more-cell">${locked ? "" : `<button class="icon-button danger" data-remove="${p.id}" aria-label="Remove ${esc(p.name)}">✕</button>`}</td></tr>`;
+    `<tr class="${matches(p) ? "match" : ""}"><td class="name"><input class="name-input" type="text" data-name="${p.id}" value="${esc(p.name)}" aria-label="Name for ${esc(p.name)}" ${locked ? "disabled" : ""}></td>${multi ? `<td><select class="row-weapon" data-rifle="${p.id}" aria-label="Rifle for ${esc(p.name)}" ${locked ? "disabled" : ""}>${option(weapons(c), p.weapon)}</select></td>` : ""}${cs ? picker(p) : ""}<td class="more-cell">${locked ? "" : `<button class="icon-button danger" data-remove="${p.id}" aria-label="Remove ${esc(p.name)}">✕</button>`}</td></tr>`;
   const table = (people) =>
     `<div class="table-wrap"><table><thead><tr><th>Full name</th>${multi ? "<th>Rifle</th>" : ""}${cs ? "<th>Detail</th>" : ""}<th></th></tr></thead><tbody>${people.map(row).join("")}</tbody></table></div>`;
   let body = "";
@@ -376,7 +383,7 @@ function renderParticipants() {
       ? '<p class="note lock-note">Scores are recorded, so the shoot type is locked. <button class="inline-link" data-action="shoots">Start a new shoot</button> to use a different type.</p>'
       : "") +
     (locked
-      ? `<div class="panel confirmed"><span>Participants confirmed. Rifles can still change; everything else is locked.</span><div class="actions"><button data-action="unlock">Edit participants</button><button class="primary" data-action="to-stage">Go to ${esc(stages(c)[0].label)}</button></div></div>`
+      ? `<div class="panel confirmed"><span>Participants confirmed and locked.${isCS(c) ? " Stage B rifles can still change on its tab." : ""}</span><div class="actions"><button data-action="unlock">Edit participants</button><button class="primary" data-action="to-stage">Go to ${esc(stages(c)[0].label)}</button></div></div>`
       : "") +
     (locked ? "" : addPanel(c)) +
     (c.participants.length
@@ -395,7 +402,10 @@ function awaiting(c, stage) {
 function resultsCell(c, p, stage) {
   const list = scoreHistory(c, p, stage);
   if (!list.length) return '<span class="muted">—</span>';
-  return `${list.length > 1 ? `<span class="prev">${list.map((a) => a.score).join(" ")}</span>` : ""}<b>${Math.max(...list.map((a) => a.score))}</b>`;
+  const best = Math.max(...list.map((a) => a.score)),
+    rest = list.map((a) => a.score);
+  rest.splice(rest.indexOf(best), 1);
+  return `<b>${best}</b>${rest.length ? `<span class="prev">${rest.join(" ")}</span>` : ""}`;
 }
 function renderStage(stage) {
   const c = s(),
@@ -433,17 +443,29 @@ function individualPanel(c, stage) {
       return d && !d.temporary ? detailNumber(d) : 99;
     },
     rank = (p) => (waiting.has(p.id) ? waiting.get(p.id) : 1e9),
-    people = c.participants
+    shown = c.participants
       .filter(filtered)
-      .toSorted((a, b) => rank(a) - rank(b) || detailOf(a) - detailOf(b));
-  return `<section class="panel score-panel" data-individual><div class="detail-head"><h3>${esc(stageLabel(c, stage))}</h3><span class="count">${c.participants.length} firers</span></div>${cs ? '<p class="note stage-note">Fired individually, in any order. Details do not apply to this stage.</p>' : ""}<div class="table-wrap"><table><thead><tr><th>Full name</th>${cs ? "<th>Rifle</th>" : ""}<th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${people
-    .map((p) => {
-      const max = p.profile.components.find((x) => x.id === stage).max;
-      return `<tr data-row="${p.id}" class="${waiting.has(p.id) ? "awaiting" : ""}"><td class="name">${esc(p.name)}${multi && !cs ? `<div class="sub">${esc(p.weapon)}</div>` : ""}${waiting.has(p.id) ? '<div class="pending">Awaiting scores</div>' : ""}</td>${cs ? `<td><select class="row-weapon" data-stage-rifle="${p.id}" aria-label="${esc(p.name)} rifle for ${esc(stageLabel(c, stage))}">${option(weapons(c), stageRifle(c, p, stage))}</select></td>` : ""}<td><div class="score-input"><input type="number" min="0" max="${max}" step="1" inputmode="numeric" enterkeyhint="next" data-hits="${p.id}" aria-label="${esc(p.name)} hits" placeholder="—"><span class="muted">/${max}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
-    })
-    .join(
-      "",
-    )}</tbody></table></div><div class="errors draft-errors" role="alert"></div><div class="score-footer"><span class="draft-summary">Scores save when you press Enter or leave the box.</span></div></section>`;
+      .toSorted((a, b) => rank(a) - rank(b) || detailOf(a) - detailOf(b)),
+    toShoot = shown.filter(
+      (p) => best(c, p, stage) === null || waiting.has(p.id),
+    ),
+    done = shown.filter((p) => !toShoot.includes(p));
+  const row = (p) => {
+    const max = p.profile.components.find((x) => x.id === stage).max;
+    return `<tr data-row="${p.id}" class="${waiting.has(p.id) ? "awaiting" : ""}"><td class="name">${esc(p.name)}${multi && !cs ? `<div class="sub">${esc(p.weapon)}</div>` : ""}${waiting.has(p.id) ? '<div class="pending">Awaiting scores</div>' : ""}</td>${cs ? `<td><select class="row-weapon" data-stage-rifle="${p.id}" aria-label="${esc(p.name)} rifle for ${esc(stageLabel(c, stage))}">${option(weapons(c), stageRifle(c, p, stage))}</select></td>` : ""}<td><div class="score-input"><input type="number" min="0" max="${max}" step="1" inputmode="numeric" enterkeyhint="next" data-hits="${p.id}" aria-label="${esc(p.name)} hits" placeholder="—"><span class="muted">/${max}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+  };
+  const scoredRow = (p) =>
+    `<tr data-row="${p.id}"><td class="name">${esc(p.name)}</td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+  return (
+    `<section class="panel score-panel" data-individual><div class="detail-head"><h3>${esc(stageLabel(c, stage))}</h3><span class="count">${toShoot.length} to shoot</span></div>${cs ? '<p class="note stage-note">Fired individually, in any order. Details do not apply to this stage.</p>' : ""}${
+      toShoot.length
+        ? `<div class="table-wrap"><table><thead><tr><th>Full name</th>${cs ? "<th>Rifle</th>" : ""}<th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${toShoot.map(row).join("")}</tbody></table></div>`
+        : `<div class="panel-body note">Everyone has a ${esc(stageLabel(c, stage))} score. Redetail firers to enter more.</div>`
+    }<div class="errors draft-errors" role="alert"></div><div class="score-footer"><span class="draft-summary">Scores save when you press Enter or leave the box.</span></div></section>` +
+    (done.length
+      ? `<section class="panel past-scores"><div class="detail-head"><h3>Past scores</h3><span class="count">${done.length} firers</span></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Results</th><th></th></tr></thead><tbody>${done.map(scoredRow).join("")}</tbody></table></div></section>`
+      : "")
+  );
 }
 // Combat Shoot Stage B can be fired on a different rifle, remembered per firer.
 function stageRifle(c, p, stage) {
@@ -571,27 +593,27 @@ function queuePanel(c, stage, q) {
         return `<div class="queue-row" data-key="${esc(e.key)}"><input type="checkbox" data-queue="${esc(e.key)}" ${selected.has(e.key) ? "checked" : ""} ${e.errors.length ? "disabled" : ""} aria-label="Select ${esc(name)}"><span class="count">${i + 1}</span><div><strong>${esc(name)}</strong>${e.detail ? borrowedNote(c, e.detail, stage) : ""}<p class="note">${e.errors.length ? "Fix this detail in Participants" : e.first ? "First attempt" : `Best ${ratio(best(c, e.priority.p, stage), max)}`}</p></div><button type="button" class="prio ${e.tag || ""}" data-priority="${esc(e.key)}" aria-label="${esc(name)} priority: ${e.tag || "normal"}" title="${e.tag === "high" ? "High priority" : e.tag === "low" ? "Low priority" : "Set priority"}">${e.tag === "high" ? "▲" : e.tag === "low" ? "▼" : "↕"}</button></div>`;
       })
       .join("") || '<div class="panel-body note">No firers to redetail.</div>'
-  }</div></section>`;
+  }</div>${held ? "" : reachedPanel(c, stage, q)}</section>`;
 }
-// Updates results and the redetailing list without replacing score inputs.
-function refreshStage(stage) {
-  const c = s(),
-    waiting = awaiting(c, stage);
-  document.querySelectorAll("tr[data-row]").forEach((tr) => {
-    const p = c.participants.find((x) => x.id === tr.dataset.row);
-    if (!p) return;
-    tr.querySelector(".results").innerHTML = resultsCell(c, p, stage);
-    tr.classList.toggle("awaiting", waiting.has(p.id));
-    if (!waiting.has(p.id)) tr.querySelector(".pending")?.remove();
-  });
-  const q = queue(c, stage);
-  selected = new Set(
-    [...selected].filter((key) =>
-      q.some((e) => e.key === key && !e.errors.length),
-    ),
-  );
-  const panel = $(".queue");
-  if (panel) panel.outerHTML = queuePanel(c, stage, q);
+// Firers who already met the stage threshold, with a way to send them again.
+function reachedPanel(c, stage, q) {
+  const listed = new Set(q.map((e) => e.key)),
+    done = entities(c, stage).filter(
+      (e) =>
+        !listed.has(e.key) &&
+        e.members.some((p) => best(c, p, stage) !== null) &&
+        !c.dispatches.some(
+          (d) => d.key === e.key && d.stage === stage && d.status === "awaiting",
+        ),
+    );
+  if (!done.length) return "";
+  return `<details class="reached"${showReached ? " open" : ""}><summary>${done.length} at or above the threshold</summary>${done
+    .map((e) => {
+      const name = e.detail ? e.detail.name : e.members[0].name,
+        max = e.members[0].profile.components.find((x) => x.id === stage).max;
+      return `<div class="reached-row"><span class="count">✓</span><div><strong>${esc(name)}</strong><p class="note">Best ${ratio(Math.max(...e.members.map((p) => best(c, p, stage) ?? 0)), max)}</p></div><button type="button" data-requeue="${esc(e.key)}" aria-label="Redetail ${esc(name)}">Redetail</button></div>`;
+    })
+    .join("")}</details>`;
 }
 function updateRedetailButton(stage) {
   const c = s(),
@@ -619,7 +641,12 @@ function saveHit(input) {
     input.classList.remove("invalid");
     errors.textContent = "";
     save();
-    later(() => refreshStage(stage));
+    // Re-render so the firer moves to past scores, keeping the typing focus.
+    later(() => {
+      const focused = document.activeElement?.dataset?.hits;
+      render();
+      if (focused) $(`[data-hits="${focused}"]`)?.focus();
+    });
     toast(`${p.name}: ${a.score} saved.`, () => undoAttempt(c, a.id));
   } catch (e) {
     input.classList.add("invalid");
@@ -716,7 +743,7 @@ async function shuffle(list, keys = []) {
         if (dy)
           r.animate(
             [{ transform: `translateY(${dy}px)` }, { transform: "none" }],
-            { duration: 90, easing: "ease-out" },
+            { duration: 70, easing: "ease-out" },
           );
       }
     };
@@ -726,12 +753,12 @@ async function shuffle(list, keys = []) {
     await pause(220);
     leaving.forEach((r) => r.remove());
   }
-  for (let round = 0; round < 4; round++) {
+  for (let round = 0; round < 2; round++) {
     flip(() => staying.sort(() => Math.random() - 0.5).forEach((r) => list.append(r)));
-    await pause(95);
+    await pause(70);
   }
   flip(() => order.forEach((r) => list.append(r)));
-  await pause(110);
+  await pause(80);
   list.classList.remove("shuffling");
 }
 async function reshuffle() {
@@ -808,19 +835,19 @@ function presetBody(program) {
     custom = rows.some(
       (c) => pr.targets[`${pr.weapon}:${c.id}:${pr.objective}`] !== undefined,
     );
-  return `${program === "APS" ? `<div class="seg" style="margin-bottom:14px"><button data-aps="standard" class="${apsView === "standard" ? "on" : ""}">APS</button><button data-aps="ns" class="${apsView === "ns" ? "on" : ""}">APS (NS)</button></div>` : ""}<div class="field inline rifle-type"><span>Rifle type</span>${list.length > 1 ? `<select data-default-weapon="${key}" aria-label="${esc(label)} rifle type">${option(list, pr.weapon)}</select>` : `<strong>${esc(pr.weapon)}</strong>`}</div><p class="required">Pass ${ratio(profile.pass, profile.total)} · Marksman ${ratio(profile.marksman, profile.total)}</p>${rule ? `<p class="limit">${rule.min ? `${rule.min}–${rule.max} firers per detail. Up to ${rule.nonSAR} non-SAR21 weapons per detail. Stages A and C: detail hits ÷ firers, rounded down.` : `Up to ${rule.max} firers at a time.`}</p>` : ""}<label class="field inline"><span>Automatic</span><select data-objective="${key}" aria-label="${esc(label)} Automatic priority"><option value="marksman" ${pr.objective === "marksman" ? "selected" : ""}>Marksman first</option><option value="pass" ${pr.objective === "pass" ? "selected" : ""}>Pass first</option></select></label><div class="threshold-head"><span class="muted">Auto-detailing thresholds</span>${info(thresholdInfo(program, pr.objective))}<button type="button" class="inline-link" data-reset-thresholds="${key}" ${custom ? "" : "disabled"}>Reset</button></div>${rows
+  return `${program === "APS" ? `<div class="seg" style="margin-bottom:14px"><button data-aps="standard" class="${apsView === "standard" ? "on" : ""}">APS</button><button data-aps="ns" class="${apsView === "ns" ? "on" : ""}">APS (NS)</button></div>` : ""}<div class="field inline rifle-type"><span>Rifle type</span>${list.length > 1 ? `<select data-default-weapon="${key}" aria-label="${esc(label)} rifle type">${option(list, pr.weapon)}</select>` : `<strong>${esc(pr.weapon)}</strong>`}</div><p class="required">Pass ${ratio(profile.pass, profile.total)} · Marksman ${ratio(profile.marksman, profile.total)}</p>${rule ? `<p class="limit">${rule.min ? `${rule.min}–${rule.max} firers per detail. Up to ${rule.nonSAR} non-SAR21 weapons per detail. Stages A and C: detail hits ÷ firers, rounded down.` : `Up to ${rule.max} firers at a time.`}</p>` : ""}<label class="field inline"><span>Automatic</span><select data-objective="${key}" aria-label="${esc(label)} Automatic priority"><option value="marksman" ${pr.objective === "marksman" ? "selected" : ""}>Marksman first</option><option value="pass" ${pr.objective === "pass" ? "selected" : ""}>Pass first</option></select></label><div class="threshold-head"><span class="muted">Auto-detailing thresholds</span>${info(thresholdInfo(program, pr.objective))}<button type="button" class="reset" data-reset-thresholds="${key}" ${custom ? "" : "disabled"}>Reset thresholds</button></div>${rows
     .map((c) => {
       const max = profile.components.find((x) => x.id === c.id).max;
       return `<div class="target-row"><label for="target-${program}-${c.id}">${esc(c.label)}</label><input id="target-${program}-${c.id}" data-threshold="${key}|${c.id}" type="number" min="0" max="${max}" step="1" inputmode="numeric" value="${target(shoot, p, c.id)}" aria-label="${esc(label)} ${esc(c.label)} threshold"><span class="muted">/${max}</span></div>`;
     })
     .join("")}`;
 }
-function dialog(title, body, label, submit, closeLabel = "Close") {
+function dialog(title, body, label, submit, closeLabel = "Close", onClose) {
   const d = $("#dialog"),
     buttons = Array.isArray(label) ? label : label ? [{ label }] : [];
   d.innerHTML = `<form id="dialog-form"><h2 id="dialog-title">${esc(title)}</h2>${body}<div class="error" role="alert"></div><div class="dialog-actions"><button type="button" id="close-dialog">${esc(closeLabel)}</button>${buttons.map((b, i) => `<button type="submit" ${b.value ? `value="${esc(b.value)}"` : ""} class="${i === buttons.length - 1 ? "primary" : ""}">${esc(b.label)}</button>`).join("")}</div></form>`;
   if (!d.open) d.showModal();
-  $("#close-dialog").onclick = () => d.close();
+  $("#close-dialog").onclick = () => (onClose ? onClose() : d.close());
   $("#dialog-form").onsubmit = (ev) => {
     ev.preventDefault();
     try {
@@ -1050,6 +1077,8 @@ function historyDialog(p) {
               render();
               historyDialog(p);
             },
+            "Back",
+            () => historyDialog(p),
           );
         }),
     );
@@ -1079,6 +1108,8 @@ function editScoreDialog(p, a) {
       render();
       historyDialog(p);
     },
+    "Back",
+    () => historyDialog(p),
   );
 }
 // Editing a detail's score: each firer's hits, their rifles, or the detail total.
@@ -1110,6 +1141,8 @@ function editDetailDialog(p, detailAttemptId) {
       render();
       historyDialog(p);
     },
+    "Back",
+    () => historyDialog(p),
   );
 }
 function download(name, content, type = "application/json") {
@@ -1366,6 +1399,13 @@ $("#main").addEventListener("click", (e) => {
       render();
       return;
     }
+    if (b.dataset.requeue) {
+      queueKey(c, b.dataset.requeue, stage);
+      showReached = true;
+      save();
+      render();
+      return;
+    }
     if (b.dataset.remove) {
       removeParticipant(c, b.dataset.remove);
       save();
@@ -1547,6 +1587,8 @@ $("#main").addEventListener("click", (e) => {
     toast(err.message);
   }
 });
+if (globalThis.APP_VERSION)
+  $("#app-version").textContent = `v${globalThis.APP_VERSION}`;
 window.addEventListener("storage", (e) => {
   if (e.key === KEY)
     warning("Changed in another tab. Export any unsaved work, then reload.");

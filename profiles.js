@@ -80,7 +80,7 @@ export const PROFILES = [
     39,
     "S3",
   ),
-  ...rules("ATP_M", "standard", ["SAR21 SS", "HK416"], [24, 8, 16], 32, 39, "S3"),
+  ...rules("ATP_M", "standard", ["SAR21 SS/HK416"], [24, 8, 16], 32, 39, "S3"),
   ...rules("ATP_M", "standard", ["LMG"], [70, 8, 48], 32, 63, "S10"),
   ...rules(
     "ATP_SP",

@@ -87,7 +87,7 @@ async function addNames(page, names) {
           "SAR21:A:marksman"
         ] === 14,
     );
-    await click(page, "Reset");
+    await click(page, "Reset thresholds");
     assert.equal(await threshold.inputValue(), "13");
     await page.screenshot({
       path: `tests/${name}-settings.png`,
@@ -110,6 +110,13 @@ async function addNames(page, names) {
     });
     await renamed.fill("Chris Wong");
     await renamed.press("Tab");
+    // Scoring tabs stay shut until the participants are confirmed.
+    assert.ok(
+      await page
+        .locator("#tabs")
+        .getByRole("button", { name: "Stage A · Day", exact: true })
+        .isDisabled(),
+    );
     await click(page, "Confirm participants");
     assert.ok(
       (await page.locator("#tabs .on").innerText()).includes("Stage A · Day"),
@@ -164,7 +171,8 @@ async function addNames(page, names) {
       [...document.querySelectorAll("tr")].some(
         (tr) =>
           tr.innerText.includes("Alex Tan") &&
-          tr.querySelector(".prev")?.textContent === "8 13",
+          tr.querySelector(".prev")?.textContent === "8" &&
+          tr.querySelector(".results b")?.textContent === "13",
       ),
     );
     await page.locator("#toast").getByRole("button", { name: "Undo" }).click();
@@ -375,6 +383,7 @@ async function addNames(page, names) {
       ),
     );
     await click(page, "Cancel");
+    await click(page, "Confirm participants");
 
     // Shoots page: export, import and delete.
     await tab(page, "Shoots");

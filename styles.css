@@ -133,6 +133,12 @@ h1 .logo {
   margin-left: auto;
   white-space: nowrap;
 }
+.version {
+  font-size: 10px;
+  color: var(--muted);
+  margin-left: -14px;
+  white-space: nowrap;
+}
 .links {
   display: flex;
   gap: 6px;
@@ -185,8 +191,27 @@ h1 .logo {
 .threshold-head .info {
   margin: 0;
 }
-.threshold-head .inline-link {
+.threshold-head .reset {
   margin-left: auto;
+}
+.reset {
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 12px;
+  padding: 7px 11px;
+}
+.reset:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: none;
+}
+.reset:disabled {
+  color: var(--muted);
+  border-color: var(--line);
+  background: var(--panel2);
+  opacity: 0.45;
 }
 .info.warn {
   display: inline-flex;
@@ -510,6 +535,42 @@ td {
 }
 .queue-held .note {
   margin: 0 0 8px;
+}
+.reached {
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+}
+.reached summary {
+  padding: 10px 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.reached-row {
+  display: grid;
+  grid-template-columns: 19px 1fr auto;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 12px;
+  border-top: 1px solid var(--line);
+  opacity: 0.8;
+}
+.reached-row strong {
+  font-size: 12px;
+}
+.reached-row .note {
+  font-size: 10px;
+  margin: 2px 0 0;
+}
+.reached-row .count {
+  color: var(--ok);
+}
+.reached-row button {
+  font-size: 11px;
+  padding: 5px 8px;
+  min-height: 28px;
+}
+.past-scores .detail-head h3 {
+  color: var(--muted);
 }
 .queue-list.shuffling::before {
   content: "";
@@ -915,7 +976,7 @@ details.reference summary {
 .results .prev {
   font-size: 10px;
   color: var(--muted);
-  margin-right: 6px;
+  margin-left: 6px;
   word-spacing: 2px;
 }
 .results b {

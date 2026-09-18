@@ -132,17 +132,17 @@ test("Only plain SAR21 variants share an option; a shoot is set on a base rifle"
   assert.deepEqual(weaponsFor("BTP"), ["SAR21"]);
   assert.deepEqual(weaponsFor("ATP_SP"), ["SAR21/SAR21 MMS/M203", "M16"]);
   assert.deepEqual(weaponsFor("APS"), ["SAR21", "M16"]);
+  // SAR21 SS and HK416 share a requirement in ATP (M), so they share an option.
   assert.deepEqual(weaponsFor("ATP_M"), [
     "SAR21/SAR21 MMS/M203",
-    "SAR21 SS",
-    "HK416",
+    "SAR21 SS/HK416",
     "LMG",
   ]);
   assert.deepEqual(weaponsFor("CS_M"), ["SAR21/M203", "SAR21 SS", "LMG"]);
   assert.deepEqual(weaponsFor("CS_SP"), ["SAR21", "M16", "LMG"]);
   assert.equal(weaponGroup("CS_M", "standard", "M203"), "SAR21/M203");
   // SAR21 SS keeps its own requirement in ATP (M), so it is never lumped in.
-  assert.equal(profileFor("ATP_M", "standard", "SAR21 SS").pass, 32);
+  assert.equal(profileFor("ATP_M", "standard", "SAR21 SS/HK416").pass, 32);
   assert.equal(profileFor("ATP_M", "standard", "SAR21/SAR21 MMS/M203").pass, 24);
   // M16 and LMG are given out per firer, after the details are set.
   assert.deepEqual(baseWeapons("CS_M"), ["SAR21/M203", "SAR21 SS"]);
@@ -766,8 +766,8 @@ test("Saved data from the previous version moves to grouped rifles and shoot lis
     s = getShoot(store),
     p = s.participants[0];
   assert.equal(store.shoots.length, 1);
-  assert.equal(p.weapon, "HK416");
+  assert.equal(p.weapon, "SAR21 SS/HK416");
   assert.equal(p.detailId, null);
   assert.equal(best(s, p, "A"), 20);
-  assert.equal(store.presets.ATP_M.targets["HK416:A:marksman"], 20);
+  assert.equal(store.presets.ATP_M.targets["SAR21 SS/HK416:A:marksman"], 20);
 });
