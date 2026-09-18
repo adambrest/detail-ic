@@ -982,6 +982,24 @@ dialog .error {
   color: var(--muted);
   margin: 3px 0;
 }
+/* Build detail: the second detail planned for the rest of the weak firer's detail. */
+.rest-plan {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  margin: 4px 0 8px;
+  background: var(--panel2);
+}
+.rest-plan .chk {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.rest-plan .note {
+  margin: 6px 0 0;
+}
 /* Rifle threshold sections inside a shoot type. */
 .rifle-sets-head {
   font-size: 12px;

@@ -60,6 +60,7 @@ import {
   insights,
   weakFirers,
   buildAround,
+  planRest,
   firerHits,
   detailPlan,
   parseRoster,
@@ -1108,7 +1109,7 @@ function manualDetailDialog(stage, around = null) {
     weakName = around && c.participants.find((p) => p.id === around).name;
   dialog(
     around ? `Detail around ${weakName} · ${label}` : `Manual detail · ${label}`,
-    `${around ? `<p class="note">One weak firer with the strongest shooters available: those who still need ${esc(label)} first, since the reshoot helps them too, then firers who have cleared it.${plan.short ? " There are not enough strong shooters for a full detail, so the next best fill it." : ""} Change anyone before creating it.</p>` : ""}<p class="note">Choose who fires together. The detail appears in ${esc(label)} so you can enter its scores. A one-off is dropped once its scores are in; a kept detail can be redetailed.</p><div class="manual-list">${groups.map(([name, people]) => `<div class="manual-group"><h3>${esc(name)}</h3>${people.map(row).join("")}</div>`).join("")}</div><p class="note manual-summary">No firers chosen.</p>`,
+    `${around ? `<p class="note">One weak firer with the strongest shooters available: those who still need ${esc(label)} first, since the reshoot helps them too, then firers who have cleared it.${plan.short ? " There are not enough strong shooters for a full detail, so the next best fill it." : ""} Change anyone before creating it.</p>` : ""}<p class="note">Choose who fires together. The detail appears in ${esc(label)} so you can enter its scores. A one-off is dropped once its scores are in; a kept detail can be redetailed.</p><div class="manual-list">${groups.map(([name, people]) => `<div class="manual-group"><h3>${esc(name)}</h3>${people.map(row).join("")}</div>`).join("")}</div><p class="note manual-summary">No firers chosen.</p>${around ? `<div class="rest-plan" hidden><label class="chk"><input type="checkbox" name="rest" checked> <span class="rest-title"></span></label><p class="note rest-text"></p></div>` : ""}`,
     [
       { label: "One-off detail", value: "once" },
       { label: "Keep as a detail", value: "keep" },
@@ -1118,15 +1119,25 @@ function manualDetailDialog(stage, around = null) {
           participantId: id,
           weapon: c.participants.find((p) => p.id === id).weapon,
         })),
-        d = createTempDetail(c, stage, entries, { oneOff: action === "once" });
+        oneOff = action === "once",
+        d = createTempDetail(c, stage, entries, { oneOff }),
+        made = [d];
+      // The rest of the weak firer's detail, if the operator kept it ticked.
+      const rest =
+        around && f.get("rest")
+          ? planRest(c, stage, around, f.getAll("pick"))
+          : null;
+      if (rest && !rest.short)
+        made.push(createTempDetail(c, stage, rest.entries, { oneOff }));
       save();
       $("#dialog").close();
       showScored = false;
       render();
       $(`[data-detail="${d.id}"]`)?.scrollIntoView({ block: "center" });
-      toast(`${d.name} ready. Enter its ${stageLabel(c, stage)} scores.`, () => {
-        dropTemporaryDetail(c, d.id);
-      });
+      toast(
+        `${made.map((x) => x.name).join(" and ")} ready. Enter ${made.length > 1 ? "their" : "its"} ${stageLabel(c, stage)} scores.`,
+        () => made.forEach((x) => dropTemporaryDetail(c, x.id)),
+      );
     },
   );
   const form = $("#dialog-form"),
@@ -1169,6 +1180,27 @@ function manualDetailDialog(stage, around = null) {
       form.querySelector(".manual-summary").textContent = entries.length
         ? `${entries.length} firers chosen.${expected !== null ? ` Expected average from their best hits: ${expected}/${max}.` : ""}`
         : "No firers chosen.";
+      // Who is left of the weak firer's detail, and the detail they get.
+      const box = form.querySelector(".rest-plan");
+      if (box) {
+        const rest = planRest(
+          c,
+          stage,
+          around,
+          entries.map((e) => e.participantId),
+        );
+        box.hidden = !rest;
+        if (rest) {
+          const names = (list) => list.map((p) => p.name).join(", "),
+            own = rest.people.filter((p) => !rest.fillIns.includes(p));
+          form.querySelector(".rest-title").textContent =
+            `Also make a detail for the rest of ${rest.from.name}`;
+          form.querySelector(".rest-text").textContent = rest.short
+            ? `${names(own)} still need ${label}, but there are not enough good shooters to make a detail with them. Make one by hand.`
+            : `${names(own)} fire without ${weakName}.${rest.fillIns.length ? ` ${names(rest.fillIns)} ${rest.fillIns.length === 1 ? "joins" : "join"} to make ${rest.people.length}.` : ""}${rest.expected !== null ? ` Expected average: ${rest.expected}/${max}.` : ""}`;
+          box.querySelector("[name=rest]").disabled = rest.short;
+        }
+      }
       form.querySelector(".error").textContent = entries.length
         ? problems.join("\n")
         : "";

@@ -49,6 +49,7 @@ import {
   firingQueue,
   weakFirers,
   buildAround,
+  planRest,
   insights,
   standing,
   setSkipped,
@@ -850,6 +851,74 @@ test("A weak firer gets a detail of strong shooters, those still needing it firs
   assert.equal(plan.short, false);
   // It is a valid manual detail.
   createTempDetail(s, "A", plan.entries);
+});
+test("The rest of a weak firer's detail gets a detail of its own", () => {
+  // Five decent shooters and one bad one in Detail 1; Detail 2 has cleared.
+  const store = newStore(),
+    s = createShoot(store, "CS_SP", "standard", "R");
+  const people = addParticipants(
+    s,
+    Array.from({ length: 12 }, (_, i) => `P${i + 1} ${i < 6 ? 1 : 2}`),
+    "SAR21",
+  );
+  const [d1, d2] = sortedDetails(s);
+  detailScore(s, d1, "A", null, { individuals: [11, 11, 11, 11, 11, 2] });
+  detailScore(s, d2, "A", null, { individuals: [15, 15, 15, 15, 15, 15] });
+  const plan = buildAround(s, "A", people[5].id);
+  // The bad shooter goes with the five who cleared.
+  assert.deepEqual(
+    plan.people.map((x) => x.p.name),
+    ["P6", "P7", "P8", "P9", "P10", "P11"],
+  );
+  // The five decent shooters are enough to fire on their own.
+  const rest = planRest(
+    s,
+    "A",
+    people[5].id,
+    plan.entries.map((e) => e.participantId),
+  );
+  assert.deepEqual(
+    rest.people.map((p) => p.name),
+    ["P1", "P2", "P3", "P4", "P5"],
+  );
+  assert.deepEqual(rest.fillIns, []);
+  assert.equal(rest.expected, 11);
+  createTempDetail(s, "A", plan.entries);
+  createTempDetail(s, "A", rest.entries);
+});
+test("Too few left over: good shooters top them up", () => {
+  // One detail of six: five decent, one bad, and nobody else strong.
+  const store = newStore(),
+    s = createShoot(store, "CS_SP", "standard", "T");
+  const people = addParticipants(
+    s,
+    Array.from({ length: 6 }, (_, i) => `P${i + 1} 1`),
+    "SAR21",
+  );
+  const [d1] = sortedDetails(s);
+  detailScore(s, d1, "A", null, { individuals: [12, 11, 11, 10, 10, 2] });
+  const plan = buildAround(s, "A", people[5].id);
+  // No strong shooters: the bad one goes with the best three to make four.
+  assert.deepEqual(
+    plan.people.map((x) => x.p.name),
+    ["P6", "P1", "P2", "P3"],
+  );
+  const rest = planRest(
+    s,
+    "A",
+    people[5].id,
+    plan.entries.map((e) => e.participantId),
+  );
+  // P4 and P5 are left; the best of the others fire again to make four.
+  assert.deepEqual(
+    rest.people.map((p) => p.name),
+    ["P4", "P5", "P1", "P2"],
+  );
+  assert.deepEqual(
+    rest.fillIns.map((p) => p.name),
+    ["P1", "P2"],
+  );
+  assert.equal(rest.short, false);
 });
 test("Individual stages queue firers by detail, then redetails", () => {
   const { s, people } = setup("BTP", "standard", 3);

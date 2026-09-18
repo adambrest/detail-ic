@@ -1607,6 +1607,84 @@ export function buildAround(s, stage, weakId) {
     short: chosen.length < rule.min,
   };
 }
+// Once a weak firer is moved out, the rest of their detail should not be left
+// without one. Those who still need the stage fire together; if they are too
+// few, good shooters top them up: ones who still need Marksman first, then ones
+// who have passed or cleared it, preferring people not already in the weak
+// firer's detail. `picked` is who is already in that detail.
+export function planRest(s, stage, weakId, picked) {
+  const rule = DETAIL_RULES[s.program],
+    weak = s.participants.find((p) => p.id === weakId),
+    home = weak && s.details.find((d) => d.id === weak.detailId);
+  if (!home) return null;
+  const max = (p) => p.profile.components.find((c) => c.id === stage).max,
+    pace = (p) => Math.ceil((p.profile.marksman * max(p)) / p.profile.total),
+    weakSet = new Set(weakFirers(s, stage).map((x) => x.p.id)),
+    queued = new Set(
+      firingQueue(s, stage).flatMap((e) => e.members.map((p) => p.id)),
+    ),
+    cleared = (p) => {
+      const v = best(s, p, stage),
+        g = goal(s, p, stage);
+      return nothingToGain(s, p, stage) || !g || (v !== null && v >= target(s, p, stage, g.objective));
+    },
+    hits = (p) => firerHits(s, p, stage) ?? best(s, p, stage),
+    rest = members(s, home.id).filter(
+      (p) =>
+        !picked.includes(p.id) &&
+        !weakSet.has(p.id) &&
+        !queued.has(p.id) &&
+        best(s, p, stage) !== null &&
+        !cleared(p),
+    );
+  if (!rest.length) return null;
+  const chosen = [],
+    fillIns = [];
+  let nonSAR = 0;
+  const add = (p, fill) => {
+    if (chosen.length >= rule.max || chosen.includes(p)) return;
+    if (NON_SAR.has(p.weapon)) {
+      if (nonSAR >= rule.nonSAR) return;
+      nonSAR++;
+    }
+    chosen.push(p);
+    if (fill) fillIns.push(p);
+  };
+  for (const p of rest.toSorted((a, b) => (hits(b) ?? 0) - (hits(a) ?? 0)))
+    add(p, false);
+  if (chosen.length < rule.min) {
+    const pool = s.participants
+      .filter(
+        (p) =>
+          !chosen.includes(p) &&
+          !weakSet.has(p.id) &&
+          !queued.has(p.id) &&
+          hits(p) !== null,
+      )
+      .toSorted(
+        (a, b) =>
+          (hits(b) >= pace(b)) - (hits(a) >= pace(a)) ||
+          picked.includes(a.id) - picked.includes(b.id) ||
+          cleared(a) - cleared(b) ||
+          hits(b) - hits(a),
+      );
+    for (const p of pool) {
+      if (chosen.length >= rule.min) break;
+      add(p, true);
+    }
+  }
+  const known = chosen.map(hits);
+  return {
+    from: home,
+    entries: chosen.map((p) => ({ participantId: p.id, weapon: p.weapon })),
+    people: chosen,
+    fillIns,
+    expected: known.every((v) => v !== null)
+      ? Math.floor(known.reduce((a, b) => a + b, 0) / known.length)
+      : null,
+    short: chosen.length < rule.min,
+  };
+}
 // A skipped entry has not fired, so it takes no scores until unskipped.
 export function isSkipped(s, stage, key) {
   const e = entities(s, stage).find((x) => x.key === key);
