@@ -47,6 +47,8 @@ import {
   nextAttempt,
   detailAttempts,
   firingQueue,
+  insights,
+  standing,
   setSkipped,
   attemptNumbers,
   detailAttemptNumbers,
@@ -678,6 +680,82 @@ test("A skipped detail takes no scores until unskipped", () => {
   assert.throws(() => saveDetail(s, draft), /skipped/);
   setSkipped(s, "A", `detail:${d1.id}`, false);
   assert.equal(saveDetail(s, draft).score, 10);
+});
+test("Stage B is chased to 7/8 in ATP and Combat Shoot, whatever the rifle", () => {
+  const atp = setup("ATP_M", "standard", 2);
+  updateParticipant(atp.s, atp.people[1].id, {
+    name: atp.people[1].name,
+    weapon: "LMG",
+  });
+  for (const p of atp.people) assert.equal(target(atp.s, p, "B"), 7);
+  const cs = setup("CS_SP", "standard", 4);
+  assert.equal(target(cs.s, cs.p, "B"), 7);
+  // Settings can still change it, per rifle.
+  atp.s.settings.targets["LMG:B:marksman"] = 6;
+  assert.equal(target(atp.s, atp.people[1], "B"), 6);
+  assert.equal(target(atp.s, atp.people[0], "B"), 7);
+});
+test("Thresholds share what is still needed as each stage comes in", () => {
+  const { s, people } = setup("ATP_M", "standard", 2);
+  // Marksman 39/48. Stage B first.
+  recordIndividual(s, people[0], "B", "8");
+  recordIndividual(s, people[1], "B", "4");
+  // Still needed, shared between A (24) and C (16) by their maximums.
+  assert.equal(target(s, people[0], "A"), Math.ceil((31 * 24) / 40)); // 19
+  assert.equal(target(s, people[1], "A"), Math.ceil((35 * 24) / 40)); // 21
+  recordIndividual(s, people[0], "A", "20");
+  // Only C left: exactly what is missing.
+  assert.equal(target(s, people[0], "C"), 11);
+});
+test("Insights flag settled outcomes, the last stage, poor shooters and details", () => {
+  const { s, people } = setup("ATP_M", "standard", 3);
+  // Person 1: 8 + 24 in, needs 7 in C. Person 2 cannot pass. Person 3 cannot make marksman.
+  recordIndividual(s, people[0], "B", "8");
+  recordIndividual(s, people[0], "A", "24");
+  recordIndividual(s, people[1], "B", "0");
+  recordIndividual(s, people[1], "A", "2");
+  recordIndividual(s, people[2], "B", "5");
+  recordIndividual(s, people[2], "A", "12");
+  assert.equal(standing(s, people[1]).pass, "missed");
+  const all = Object.fromEntries(insights(s).map((n) => [n.title, n.items]));
+  assert.deepEqual(all["Pass needs a reshoot"], [
+    "Person 2: at best 18/48 on current scores",
+  ]);
+  assert.deepEqual(all["Marksman needs a reshoot"], [
+    "Person 3: at best 33/48 on current scores",
+  ]);
+  assert.deepEqual(all["One stage left"], [
+    "Person 1: needs 7/16 in Stage C for Marksman, 0 to pass",
+  ]);
+  const a = Object.fromEntries(insights(s, "A").map((n) => [n.title, n.items]));
+  // Pass pace for A is 24 × 24/48 = 12.
+  assert.deepEqual(a["Poor shooters"], ["Person 2: 2/24 (pass pace 12)"]);
+});
+test("Detail insights name the weakest shooter, or say hits are missing", () => {
+  const store = newStore(),
+    s = createShoot(store, "CS_M", "standard", "I");
+  addParticipants(
+    s,
+    Array.from({ length: 12 }, (_, i) => `P${i + 1} ${i < 6 ? 1 : 2}`),
+    "SAR21/M203",
+  );
+  const [d1, d2] = sortedDetails(s);
+  detailScore(s, d1, "A", null, { individuals: [12, 11, 10, 9, 8, 1] });
+  detailScore(s, d2, "A", 30);
+  const a = Object.fromEntries(insights(s, "A").map((n) => [n.title, n.items]));
+  // Pass pace for CS (M) Stage A is 24 × 20/48 = 10.
+  assert.deepEqual(a["Poor shooters"], [
+    "P6: 1/20 (pass pace 10)",
+    "P5: 8/20 (pass pace 10)",
+    "P4: 9/20 (pass pace 10)",
+  ]);
+  assert.deepEqual(a["Details below pass pace"], [
+    "Detail 1: averages 8 (pass pace 10). Weakest: P6 with 1",
+    "Detail 2: averages 5 (pass pace 10)",
+  ]);
+  assert.deepEqual(a["Totals only, no individual hits"], [
+    "Detail 2: poor-shooter checks are off for it",
+  ]);
 });
 test("Individual stages queue firers by detail, then redetails", () => {
   const { s, people } = setup("BTP", "standard", 3);

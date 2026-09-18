@@ -68,14 +68,16 @@ async function addNames(page, names) {
     assert.ok(!(await page.locator("#main").innerText()).includes("Version"));
     await page.locator("[data-expand=BTP]").click();
     assert.equal(
-      await page.getByRole("combobox", { name: "BTP rifle type" }).count(),
+      await page.getByRole("combobox", { name: "BTP default rifle" }).count(),
       0,
     );
+    // Thresholds sit in a section per rifle, closed until opened.
+    await page.locator('[data-expand="BTP|standard|SAR21"]').click();
     const btp = await page.locator(".preset.open").innerText();
     assert.ok(btp.includes("Pass 16/32 · Marksman 26/32"));
-    assert.ok(btp.includes("Auto-detailing thresholds"));
+    assert.ok(btp.includes("Starting thresholds"));
     const threshold = page.getByRole("spinbutton", {
-      name: "BTP Stage A · Day threshold",
+      name: "BTP SAR21 Stage A · Day threshold",
     });
     assert.equal(await threshold.inputValue(), "13");
     await threshold.fill("14");
@@ -87,8 +89,21 @@ async function addNames(page, names) {
           "SAR21:A:marksman"
         ] === 14,
     );
-    await click(page, "Reset thresholds");
+    await click(page, "Reset");
     assert.equal(await threshold.inputValue(), "13");
+    // ATP (M): LMG has its own section and standard; Stage B stays at 7/8.
+    await page.locator("[data-expand=ATP_M]").click();
+    await page.locator('[data-expand="ATP_M|standard|LMG"]').click();
+    const lmg = await page
+      .locator(".rifle-set.open", { hasText: "LMG" })
+      .innerText();
+    assert.ok(lmg.includes("Pass 32/126 · Marksman 63/126"), lmg);
+    assert.equal(
+      await page
+        .getByRole("spinbutton", { name: "ATP (M) LMG Stage B threshold" })
+        .inputValue(),
+      "7",
+    );
     await page.screenshot({
       path: `tests/${name}-settings.png`,
       fullPage: true,
@@ -333,6 +348,13 @@ async function addNames(page, names) {
       .getByRole("spinbutton", { name: "Detail 1 total hits" })
       .fill("43");
     await click(page, "Confirm scores for Detail 1");
+    // A total with no hits is allowed, after saying what it costs.
+    assert.ok(
+      (await page.locator("#dialog").innerText()).includes(
+        "poor-shooter warnings are off",
+      ),
+    );
+    await click(page, "Confirm total only");
     await waitFor(
       page,
       () => document.querySelectorAll(".score-panel").length === 1,
@@ -371,6 +393,7 @@ async function addNames(page, names) {
       .getByRole("spinbutton", { name: "Temp detail 1 total hits" })
       .fill("60");
     await click(page, "Confirm scores for Temp detail 1");
+    await click(page, "Confirm total only");
     await waitFor(page, () =>
       JSON.parse(localStorage.getItem("detail-ic-v2")).shoots[1].attempts.some(
         (a) => a.score === 12,
@@ -475,7 +498,9 @@ async function addNames(page, names) {
       ),
       false,
     );
-    assert.ok(await inViewport(page, page.locator("#redetail")));
+    // On a phone the score table comes first, then Redetailing.
+    const top = async (sel) => (await page.locator(sel).first().boundingBox()).y;
+    assert.ok((await top(".score-panel")) < (await top(".queue")));
     await tab(page, "Final scores");
     assert.ok(
       (await page.locator("tbody tr").first().innerText()).includes("12/20"),

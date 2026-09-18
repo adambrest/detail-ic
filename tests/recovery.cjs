@@ -120,9 +120,10 @@ const previousVersion = {
   );
   await tab(page, "Settings");
   const threshold = page.getByRole("spinbutton", {
-    name: "BTP Stage A · Day threshold",
+    name: "BTP SAR21 Stage A · Day threshold",
   });
   await page.locator("[data-expand=BTP]").click();
+  await page.locator('[data-expand="BTP|standard|SAR21"]').click();
   await threshold.fill("15");
   await threshold.press("Tab");
   assert.ok(

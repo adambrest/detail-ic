@@ -57,6 +57,7 @@ import {
   firingQueue,
   setSkipped,
   nothingToGain,
+  insights,
   detailPlan,
   parseRoster,
   MISSING,
@@ -104,6 +105,7 @@ let store,
   addMode = null,
   addNote = "",
   showReached = false,
+  closedSummaries = new Set(),
   pasteDetail = 1,
   apsView = "standard",
   busy = false,
@@ -419,7 +421,7 @@ function renderStage(stage) {
       `<span class="spacer"></span>${searchBox()}${isCS(c) ? '<button data-action="manual-detail">Manual detail</button>' : ""}`,
     ) +
     issuesPanel(c) +
-    `<div class="grid"><div class="score-col">${detailedStage(c, stage) ? detailPanels(c, stage) : individualPanel(c, stage)}</div>${queuePanel(c, stage, q)}</div>`;
+    `<div class="grid"><div class="score-col">${detailedStage(c, stage) ? detailPanels(c, stage) : individualPanel(c, stage)}</div><div class="side-col">${summaryPanel(c, stage)}${queuePanel(c, stage, q)}</div></div>`;
 }
 // Roster problems that will block scoring, with one link to fix them.
 function issuesPanel(c) {
@@ -560,7 +562,7 @@ function detailPanels(c, stage) {
           })
           .join(
             "",
-          )}</tbody></table></div>${shared ? `<div class="aggregate"><label>Or detail total <input type="number" min="0" max="${people.length * cmax}" step="1" data-aggregate="${d.id}" value="${esc(draft.aggregate)}" aria-label="${esc(d.name)} total hits" placeholder="—" ${e?.skipped ? "disabled" : ""}></label><span class="muted">/${people.length * cmax}</span></div>` : ""}<div class="errors draft-errors">${esc(draftErrors(c, draft).join("\n"))}</div><div class="score-footer"><span class="draft-summary">${esc(e?.skipped ? "Skipped: it has not fired. Unskip to enter scores." : draftSummary(c, draft))}</span><button class="primary" data-confirm="${d.id}" aria-label="Confirm scores for ${esc(d.name)}" ${e?.skipped ? "disabled" : ""}>Confirm scores</button></div></section>`;
+          )}</tbody></table></div>${shared ? `<div class="aggregate"><label>Detail total <input type="number" min="0" max="${people.length * cmax}" step="1" data-aggregate="${d.id}" value="${esc(draft.aggregate)}" aria-label="${esc(d.name)} total hits" placeholder="—" ${e?.skipped ? "disabled" : ""}></label><span class="muted">/${people.length * cmax} · fills in from the hits</span></div>` : ""}<div class="errors draft-errors">${esc(draftErrors(c, draft).join("\n"))}</div><div class="score-footer"><span class="draft-summary">${esc(e?.skipped ? "Skipped: it has not fired. Unskip to enter scores." : draftSummary(c, draft))}</span><button class="primary" data-confirm="${d.id}" aria-label="Confirm scores for ${esc(d.name)}" ${e?.skipped ? "disabled" : ""}>Confirm scores</button></div></section>`;
       })
       .join("") +
     (!shown.length
@@ -606,6 +608,24 @@ function queuePanel(c, stage, q) {
       })
       .join("") || '<div class="panel-body note">No firers to redetail.</div>'
   }</div>${reachedPanel(c, stage, q)}</section>`;
+}
+// What the operator should know before choosing who fires next.
+function summaryPanel(c, stage = null) {
+  const notes = insights(c, stage),
+    id = `${c.id}:${stage ?? "final"}`;
+  if (!notes.length) return "";
+  const count = notes.reduce((n, x) => n + x.items.length, 0);
+  return `<details class="panel summary" data-summary="${esc(id)}" ${closedSummaries.has(id) ? "" : "open"}><summary><h3>Summary</h3><span class="count">${count} ${count === 1 ? "note" : "notes"}</span></summary>${notes
+    .map(
+      (n) =>
+        `<div class="insight insight-${n.level}"><strong>${esc(n.title)}</strong><ul>${n.items
+          .slice(0, 8)
+          .map((x) => `<li>${esc(x)}</li>`)
+          .join(
+            "",
+          )}${n.items.length > 8 ? `<li class="muted">and ${n.items.length - 8} more</li>` : ""}</ul></div>`,
+    )
+    .join("")}</details>`;
 }
 // Firers who already met the stage threshold, with a way to send them again.
 function reachedPanel(c, stage, q) {
@@ -718,10 +738,32 @@ function confirmScores(stage) {
     () => saved.forEach((a) => undoAttempt(c, a.id)),
   );
 }
-function confirmDetail(detailId, stage) {
+function confirmDetail(detailId, stage, totalOnly = false) {
   const c = s(),
     draft = getDraft(c, detailId, stage),
     panel = $(`[data-detail="${detailId}"]`);
+  if (
+    !totalOnly &&
+    draft.aggregate !== "" &&
+    draft.rows.every((r) => r.hits === "")
+  ) {
+    const name = c.details.find((d) => d.id === detailId).name;
+    dialog(
+      "Only the detail total",
+      `<p>${esc(name)} has a total but no hits for each firer.</p><p class="note">Without individual hits, poor-shooter warnings are off for this detail, and you cannot see who pulled the average down. Enter each firer's hits and the total fills itself in.</p>`,
+      "Confirm total only",
+      () => {
+        $("#dialog").close();
+        confirmDetail(detailId, stage, true);
+      },
+      "Enter hits",
+      () => {
+        $("#dialog").close();
+        panel.querySelector("[data-cs-hits]")?.focus();
+      },
+    );
+    return;
+  }
   try {
     const a = saveDetail(c, draft),
       name = c.details.find((d) => d.id === detailId).name;
@@ -882,6 +924,7 @@ function renderFinal() {
     shootHead(
       '<span class="spacer"></span><button data-action="csv">Export scores</button>',
     ) +
+    summaryPanel(c) +
     `<div class="summary-line">${["Marksman", "Pass", "Fail", "Incomplete"].map((label) => `<span><strong>${rr.filter((r) => r.status === label).length}</strong> ${label}</span>`).join("")}</div>` +
     (!c.participants.length
       ? empty("No scores yet")
@@ -909,8 +952,10 @@ function renderSettings() {
       )}</div>`;
 }
 function thresholdInfo() {
-  return "Redetailing keeps listing a firer for a stage until their best score reaches its threshold, they reach Marksman, or they max the stage. Defaults spread the Marksman score across the stages, rounded up. Once the other stages are scored, the threshold becomes whatever is still needed.";
+  return "Redetailing lists a firer for a stage until their best score reaches its threshold, they reach Marksman, or they max the stage. These are the starting thresholds. Once any other stage is scored, a firer's threshold becomes their share of what they still need. Stage B of ATP and Combat Shoot stays at 7/8.";
 }
+// A shoot type's settings: the rifle new participants start on, then one
+// collapsible threshold section per rifle, since each has its own standard.
 function presetBody(program) {
   const variant = program === "APS" ? apsView : "standard",
     key = `${program}|${variant}`,
@@ -918,7 +963,6 @@ function presetBody(program) {
     pr = preset(store, program, variant),
     list = weaponsFor(program, variant),
     rule = DETAIL_RULES[program],
-    profile = profileFor(program, variant, pr.weapon),
     shoot = {
       program,
       variant,
@@ -928,18 +972,29 @@ function presetBody(program) {
         objective: pr.objective,
         targets: pr.targets,
       },
-    },
-    p = { weapon: pr.weapon, profile },
-    rows = targetStages(shoot),
-    custom = rows.some(
-      (c) => pr.targets[`${pr.weapon}:${c.id}:${pr.objective}`] !== undefined,
-    );
-  return `${program === "APS" ? `<div class="seg" style="margin-bottom:14px"><button data-aps="standard" class="${apsView === "standard" ? "on" : ""}">APS</button><button data-aps="ns" class="${apsView === "ns" ? "on" : ""}">APS (NS)</button></div>` : ""}<div class="field inline rifle-type"><span>Rifle type</span>${list.length > 1 ? `<select data-default-weapon="${key}" aria-label="${esc(label)} rifle type">${option(list, pr.weapon)}</select>` : `<strong>${esc(pr.weapon)}</strong>`}</div><p class="required">Pass ${ratio(profile.pass, profile.total)} · Marksman ${ratio(profile.marksman, profile.total)}</p>${rule ? `<p class="limit">${rule.min ? `${rule.min}–${rule.max} firers per detail. Up to ${rule.nonSAR} non-SAR21 weapons per detail. Stages A and C: detail hits ÷ firers, rounded down.` : `Up to ${rule.max} firers at a time.`}</p>` : ""}<div class="threshold-head"><span class="muted">Auto-detailing thresholds</span>${info(thresholdInfo())}<button type="button" class="reset" data-reset-thresholds="${key}" ${custom ? "" : "disabled"}>Reset thresholds</button></div>${rows
-    .map((c) => {
-      const max = profile.components.find((x) => x.id === c.id).max;
-      return `<div class="target-row"><label for="target-${program}-${c.id}">${esc(c.label)}</label><input id="target-${program}-${c.id}" data-threshold="${key}|${c.id}" type="number" min="0" max="${max}" step="1" inputmode="numeric" value="${target(shoot, p, c.id)}" aria-label="${esc(label)} ${esc(c.label)} threshold"><span class="muted">/${max}</span></div>`;
-    })
-    .join("")}`;
+    };
+  const rifle = (weapon) => {
+    const profile = profileFor(program, variant, weapon),
+      p = { weapon, profile },
+      open = openPresets.has(`${key}|${weapon}`),
+      custom = targetStages(shoot).some(
+        (c) => pr.targets[`${weapon}:${c.id}:${pr.objective}`] !== undefined,
+      );
+    return `<section class="rifle-set ${open ? "open" : ""}"><button class="expand" data-expand="${esc(`${key}|${weapon}`)}" aria-expanded="${open}">${esc(weapon)} <span class="muted">Pass ${ratio(profile.pass, profile.total)} · Marksman ${ratio(profile.marksman, profile.total)}</span></button>${
+      open
+        ? `<div class="rifle-body"><div class="threshold-head"><span class="muted">Starting thresholds</span>${info(thresholdInfo())}<button type="button" class="reset" data-reset-thresholds="${esc(`${key}|${weapon}`)}" ${custom ? "" : "disabled"}>Reset</button></div>${targetStages(
+            shoot,
+          )
+            .map((c) => {
+              const max = profile.components.find((x) => x.id === c.id).max,
+                id = `target-${program}-${weapon}-${c.id}`.replace(/\W+/g, "-");
+              return `<div class="target-row"><label for="${id}">${esc(c.label)}</label><input id="${id}" data-threshold="${esc(`${key}|${weapon}|${c.id}`)}" type="number" min="0" max="${max}" step="1" inputmode="numeric" value="${target(shoot, p, c.id)}" aria-label="${esc(`${label} ${weapon} ${c.label}`)} threshold"><span class="muted">/${max}</span></div>`;
+            })
+            .join("")}</div>`
+        : ""
+    }</section>`;
+  };
+  return `${program === "APS" ? `<div class="seg" style="margin-bottom:14px"><button data-aps="standard" class="${apsView === "standard" ? "on" : ""}">APS</button><button data-aps="ns" class="${apsView === "ns" ? "on" : ""}">APS (NS)</button></div>` : ""}<div class="field inline rifle-type"><span>New participants start on</span>${list.length > 1 ? `<select data-default-weapon="${key}" aria-label="${esc(label)} default rifle">${option(list, pr.weapon)}</select>` : `<strong>${esc(pr.weapon)}</strong>`}</div>${rule ? `<p class="limit">${rule.min ? `${rule.min}–${rule.max} firers per detail. Up to ${rule.nonSAR} non-SAR21 weapons per detail. Stages A and C: detail hits ÷ firers, rounded down.` : `Up to ${rule.max} firers at a time.`}</p>` : ""}<p class="muted rifle-sets-head">Thresholds by rifle</p>${list.map(rifle).join("")}`;
 }
 function dialog(title, body, label, submit, closeLabel = "Close", onClose) {
   const d = $("#dialog"),
@@ -1425,16 +1480,38 @@ $("#main").addEventListener("input", (e) => {
   if (t.matches("[data-cs-hits],[data-aggregate]")) {
     const panel = t.closest("[data-detail]"),
       draft = getDraft(c, panel.dataset.detail, tab.split(":")[1]);
-    if (t.dataset.csHits)
+    if (t.dataset.csHits) {
       draft.rows.find((r) => r.participantId === t.dataset.csHits).hits =
         t.value;
-    else draft.aggregate = t.value;
+      // The total follows the hits until someone types their own.
+      if (draft.autoTotal !== false) {
+        const all = draft.rows.every((r) => /^\d+$/.test(r.hits));
+        draft.aggregate = all
+          ? String(draft.rows.reduce((n, r) => n + Number(r.hits), 0))
+          : "";
+        const box = panel.querySelector("[data-aggregate]");
+        if (box) box.value = draft.aggregate;
+      }
+    } else {
+      draft.aggregate = t.value;
+      draft.autoTotal = t.value === "" ? undefined : false;
+    }
     draft.updatedAt = now();
     refreshDraft(panel, c, draft);
     const skip = panel.querySelector(".detail-head [data-skip]");
     if (skip) skip.disabled = hasInput(draft);
   }
 });
+$("#main").addEventListener(
+  "toggle",
+  (e) => {
+    const id = e.target.dataset?.summary;
+    if (!id) return;
+    if (e.target.open) closedSummaries.delete(id);
+    else closedSummaries.add(id);
+  },
+  true,
+);
 $("#main").addEventListener("keydown", (e) => {
   const t = e.target;
   // Tab goes from score box to score box, past rifles, Skip and menus.
@@ -1534,11 +1611,11 @@ $("#main").addEventListener("change", (e) => {
       later(render);
     } else if (t.dataset.hits) holdHit(t, stage);
     else if (t.dataset.threshold) {
-      const [program, variant, id] = t.dataset.threshold.split("|"),
+      const [program, variant, weapon, id] = t.dataset.threshold.split("|"),
         pr = preset(store, program, variant),
         parsed = parseHits(t.value, Number(t.max));
       if (parsed.error) throw Error(`Threshold: ${parsed.error}`);
-      pr.targets[`${pr.weapon}:${id}:${pr.objective}`] = parsed.value;
+      pr.targets[`${weapon}:${id}:${pr.objective}`] = parsed.value;
       applyPresets(store);
       save();
       render();
@@ -1656,10 +1733,10 @@ $("#main").addEventListener("click", (e) => {
       return;
     }
     if (b.dataset.resetThresholds) {
-      const [program, variant] = b.dataset.resetThresholds.split("|"),
+      const [program, variant, weapon] = b.dataset.resetThresholds.split("|"),
         pr = preset(store, program, variant);
       for (const key of Object.keys(pr.targets))
-        if (key.startsWith(`${pr.weapon}:`) && key.endsWith(`:${pr.objective}`))
+        if (key.startsWith(`${weapon}:`) && key.endsWith(`:${pr.objective}`))
           delete pr.targets[key];
       applyPresets(store);
       save();

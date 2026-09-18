@@ -558,7 +558,7 @@ function scoreRows(s, stage, input, aggregateInput, errors) {
       const sum = rows.reduce((n, r) => n + r.parsed.value, 0);
       if (shared && hasAggregate && aggregate !== null && sum !== aggregate)
         errors.push(
-          `Total mismatch: individual hits ${sum}, detail total ${aggregate} (difference ${Math.abs(sum - aggregate)}).`,
+          `Totals do not tally: the hits add up to ${sum}, the detail total is ${aggregate} (difference ${Math.abs(sum - aggregate)}).`,
         );
       if (!hasAggregate) aggregate = sum;
     }
@@ -970,22 +970,173 @@ export function undoAttempt(s, id) {
   for (const d of s.dispatches)
     if (closed?.includes(d.id) && d.status === "scored") d.status = "awaiting";
 }
+// Stage B of ATP and Combat Shoot is 8 rounds and easy, so everyone chases 7/8.
+export const EASY_B = 7;
+export const easyB = (s, stage) =>
+  stage === "B" && (isCS(s) || s.program.startsWith("ATP_"));
+// The score a firer should reach in a stage. It is recalculated from the scores
+// already in: whatever is still needed for the objective is shared between this
+// stage and the stages not yet shot, by their maximums. Before any other stage
+// is scored, the threshold set in Settings for the firer's rifle applies.
 export function target(s, p, stage, objective = s.settings.objective) {
   const c = p.profile.components.find((c) => c.id === stage),
-    others = p.profile.components
-      .filter((x) => x.id !== stage)
-      .map((x) => best(s, p, x.id));
-  // With every other stage scored, the threshold is simply what is still needed.
-  if (others.every((v) => v !== null))
-    return Math.min(
-      c.max,
-      Math.max(0, p.profile[objective] - others.reduce((a, b) => a + b, 0)),
-    );
-  const weapon = isCS(s) ? baseWeapons(s.program, s.variant)[0] : p.weapon;
-  return (
-    s.settings.targets[`${weapon}:${stage}:${objective}`] ??
-    Math.ceil((p.profile[objective] * c.max) / p.profile.total)
+    set = s.settings.targets[`${p.weapon}:${stage}:${objective}`];
+  if (easyB(s, stage)) return Math.min(c.max, set ?? EASY_B);
+  const others = p.profile.components.filter((x) => x.id !== stage),
+    scored = others.filter((x) => best(s, p, x.id) !== null),
+    open = others.filter((x) => best(s, p, x.id) === null);
+  if (!scored.length)
+    return set ?? Math.ceil((p.profile[objective] * c.max) / p.profile.total);
+  const need =
+      p.profile[objective] -
+      scored.reduce((n, x) => n + best(s, p, x.id), 0),
+    share = open.length
+      ? Math.ceil((need * c.max) / (c.max + open.reduce((n, x) => n + x.max, 0)))
+      : need;
+  return Math.min(c.max, Math.max(0, share));
+}
+// Where a firer stands: what is in, what is still open, and what they can
+// still reach with a perfect score on every open stage.
+export function standing(s, p) {
+  const r = result(s, p),
+    open = p.profile.components.filter((c) => best(s, p, c.id) === null),
+    known = p.profile.components.reduce((n, c) => n + (best(s, p, c.id) ?? 0), 0),
+    potential = known + open.reduce((n, c) => n + c.max, 0),
+    reach = (level) =>
+      r.total !== null
+        ? r.total >= p.profile[level]
+          ? "made"
+          : "missed"
+        : potential >= p.profile[level]
+          ? "possible"
+          : "missed";
+  return {
+    result: r,
+    open,
+    known,
+    potential,
+    marksman: reach("marksman"),
+    pass: reach("pass"),
+    need: {
+      marksman: Math.max(0, p.profile.marksman - known),
+      pass: Math.max(0, p.profile.pass - known),
+    },
+  };
+}
+// The score that keeps a firer on course to pass, spread across the stages.
+export function passPace(p, stage) {
+  const c = p.profile.components.find((x) => x.id === stage);
+  return Math.ceil((p.profile.pass * c.max) / p.profile.total);
+}
+// Warnings to help the operator decide who to send, who to move and when to
+// stop chasing: outcomes already settled, what is needed on the last stage,
+// poor shooters from their own hits, and details dragging below pass pace.
+export function insights(s, stage = null) {
+  const people = s.participants.map((p) => ({ p, st: standing(s, p) })),
+    notes = [];
+  const add = (level, title, items) =>
+    items.length && notes.push({ level, title, items });
+  // Stages already shot can still be reshot, so these are calls to act, not
+  // verdicts: without a better score somewhere, the level is out of reach.
+  add(
+    "bad",
+    "Pass needs a reshoot",
+    people
+      .filter(({ st }) => st.pass === "missed")
+      .map(
+        ({ p, st }) =>
+          `${p.name}: at best ${st.potential}/${p.profile.total} on current scores`,
+      ),
   );
+  add(
+    "warn",
+    "Marksman needs a reshoot",
+    people
+      .filter(({ st }) => st.marksman === "missed" && st.pass !== "missed")
+      .map(
+        ({ p, st }) =>
+          `${p.name}: at best ${st.potential}/${p.profile.total} on current scores`,
+      ),
+  );
+  add(
+    "info",
+    "One stage left",
+    people
+      .filter(
+        ({ st }) =>
+          st.open.length === 1 &&
+          st.marksman === "possible" &&
+          (!stage || st.open[0].id === stage),
+      )
+      .map(
+        ({ p, st }) =>
+          `${p.name}: needs ${st.need.marksman}/${st.open[0].max} in ${st.open[0].label} for Marksman${st.pass === "possible" ? `, ${st.need.pass} to pass` : ""}`,
+      ),
+  );
+  if (stage) {
+    const detailed = detailedStage(s, stage),
+      hits = (p) => {
+        // A firer's own hits: best individual score, or best raw hits in a detail.
+        const list = s.attempts.filter(
+          (a) =>
+            a.participantId === p.id &&
+            a.stage === stage &&
+            a.status === "valid" &&
+            eligible(s, p, a),
+        );
+        const raw = list
+          .map((a) => (detailed ? a.rawHits : a.score))
+          .filter((v) => v !== null && v !== undefined);
+        return raw.length ? Math.max(...raw) : null;
+      };
+    add(
+      "warn",
+      "Poor shooters",
+      s.participants
+        .map((p) => ({ p, v: hits(p), pace: passPace(p, stage) }))
+        .filter(({ v, pace }) => v !== null && v < pace)
+        .toSorted((a, b) => a.v - b.v)
+        .map(
+          ({ p, v, pace }) =>
+            `${p.name}: ${v}/${p.profile.components.find((c) => c.id === stage).max} (pass pace ${pace})`,
+        ),
+    );
+    if (detailed) {
+      const records = (d) =>
+        s.shared.filter(
+          (a) => a.detailId === d.id && a.stage === stage && a.status === "valid",
+        );
+      add(
+        "warn",
+        "Details below pass pace",
+        stageDetails(s, stage)
+          .map((d) => {
+            const list = records(d);
+            if (!list.length) return null;
+            const top = list.reduce((a, b) => (b.score > a.score ? b : a)),
+              pace = passPace(members(s, d.id)[0] ?? s.participants[0], stage);
+            if (top.score >= pace) return null;
+            const known = top.roster.filter((m) => m.rawHits !== null);
+            const weakest = known.length
+              ? known.reduce((a, b) => (b.rawHits < a.rawHits ? b : a))
+              : null;
+            return `${d.name}: averages ${top.score} (pass pace ${pace})${weakest ? `. Weakest: ${weakest.name} with ${weakest.rawHits}` : ""}`;
+          })
+          .filter(Boolean),
+      );
+      add(
+        "info",
+        "Totals only, no individual hits",
+        stageDetails(s, stage)
+          .filter((d) => {
+            const list = records(d);
+            return list.length && list.every((a) => a.inputMode === "aggregate");
+          })
+          .map((d) => `${d.name}: poor-shooter checks are off for it`),
+      );
+    }
+  }
+  return notes;
 }
 export function goal(s, p, stage) {
   const r = result(s, p);

@@ -954,6 +954,87 @@ dialog .error {
   color: var(--muted);
   margin: 3px 0;
 }
+/* Rifle threshold sections inside a shoot type. */
+.rifle-sets-head {
+  font-size: 12px;
+  margin: 14px 0 6px;
+}
+.rifle-set {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 6px;
+}
+.rifle-set .expand {
+  border: 0;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  padding: 9px 10px;
+  min-height: 28px;
+  font-size: 12px;
+}
+.rifle-set .expand::before {
+  content: "›";
+  margin-right: 8px;
+  color: var(--muted);
+  display: inline-block;
+}
+.rifle-set.open .expand::before {
+  transform: rotate(90deg);
+}
+.rifle-set .expand .muted {
+  font-weight: 400;
+  margin-left: 6px;
+}
+.rifle-body {
+  border-top: 1px solid var(--line);
+  padding: 10px;
+}
+/* The stage summary: settled outcomes and warnings for the operator. */
+.side-col {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+.summary > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 11px 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.summary > summary::-webkit-details-marker {
+  display: none;
+}
+.summary > summary h3 {
+  margin: 0;
+}
+.insight {
+  border-top: 1px solid var(--line);
+  padding: 9px 12px;
+  font-size: 12px;
+}
+.insight strong {
+  display: block;
+  margin-bottom: 4px;
+}
+.insight ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.insight li {
+  margin: 2px 0;
+}
+.insight-bad strong {
+  color: var(--danger);
+}
+.insight-warn strong {
+  color: var(--warn);
+}
+.insight-info strong {
+  color: var(--accent);
+}
 .summary-line {
   font-size: 12px;
   color: var(--muted);
@@ -1237,7 +1318,6 @@ select.assign {
   }
   .grid .queue {
     max-width: none;
-    order: -1;
     position: static;
     max-height: none;
   }
