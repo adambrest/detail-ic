@@ -93,40 +93,69 @@ textarea {
   min-height: 160px;
   resize: vertical;
 }
+/* The top bar matches Military Coordinate Converter exactly: same padding,
+   title, version pill, tabs and top-right links. */
 header {
+  flex-wrap: wrap;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--line);
   display: flex;
   align-items: center;
-  gap: 22px;
-  border-bottom: 1px solid var(--line);
-  padding: 10px 18px;
-  min-height: 56px;
+  gap: 12px;
+  flex: 0 0 auto;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.35;
 }
-h1 {
+header h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 0 1 auto;
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 16px;
-  letter-spacing: -0.3px;
-  margin: 0;
-  white-space: nowrap;
+  line-height: 1.35;
 }
-h1 .logo {
+header h1 .logo {
   width: 32px;
   height: 32px;
+  flex: 0 0 auto;
 }
 #tabs {
   display: flex;
-  gap: 3px;
-  overflow: auto;
+  gap: 2px;
+  margin-left: 6px;
+  flex: 0 1 auto;
+  /* With a shoot open there are up to eight tabs; they wrap rather than hide. */
+  flex-wrap: wrap;
 }
 #tabs button {
-  border: 0;
+  border: none;
+  background: none;
   color: var(--muted);
+  /* The converter's tabs keep the browser's own button font. */
+  font-family: system-ui;
+  font-weight: 600;
+  font-size: 13px;
+  line-height: normal;
+  padding: 5px 11px;
+  border-radius: 8px;
+  min-height: 0;
+  cursor: pointer;
   white-space: nowrap;
+}
+#tabs button:hover {
+  color: var(--text);
 }
 #tabs button.on {
   background: var(--panel2);
   color: var(--text);
+}
+#tabs button[data-tab="settings"] {
+  font-size: 12px;
 }
 #status {
   font-size: 10px;
@@ -136,7 +165,6 @@ h1 .logo {
 }
 .version {
   flex: 0 0 auto;
-  margin-left: -14px;
   color: var(--muted);
   background: var(--panel2);
   border: 1px solid var(--line);
@@ -147,26 +175,25 @@ h1 .logo {
   letter-spacing: 0.2px;
   white-space: nowrap;
 }
-/* GitHub and Feedback sit at the top right; an Update pill, when shown, takes
-   over the push and the links follow it. */
-.links {
-  display: flex;
-  gap: 6px;
-  margin-left: auto;
+.version:empty {
+  display: none;
 }
-.update-msg:not([hidden]) ~ .links {
-  margin-left: 0;
+.topright {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .update-msg {
-  border: 0;
-  border-radius: 999px;
+  border: none;
   background: var(--warn);
   color: #fff;
   font-size: 11px;
   font-weight: 700;
   padding: 4px 10px;
-  min-height: 24px;
-  margin-left: auto;
+  border-radius: 999px;
+  min-height: 0;
+  cursor: pointer;
   white-space: nowrap;
 }
 .update-msg:hover {
@@ -175,16 +202,17 @@ h1 .logo {
 .update-msg[hidden] {
   display: none;
 }
-.link {
+.feedback {
   color: var(--muted);
   font-size: 12px;
+  line-height: 1.35;
   text-decoration: none;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 7px 9px;
+  padding: 8px;
   white-space: nowrap;
 }
-.link:hover {
+.feedback:hover {
   background: var(--panel2);
   color: var(--text);
 }
@@ -1296,25 +1324,15 @@ select.assign {
   .grid {
     grid-template-columns: 1fr;
   }
-  header {
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-  /* The version pill tucks against the title; the desktop gap is wider. */
-  .version {
-    margin-left: -4px;
-  }
+  /* A shoot has up to eight tabs: they take their own row under the title, so
+     GitHub and Feedback stay on the title row and the bar stays two rows. */
   #tabs {
     order: 3;
     width: 100%;
-    flex-wrap: wrap;
+    margin-left: 0;
   }
   #status {
     font-size: 10px;
-  }
-  .link {
-    padding: 5px 7px;
-    font-size: 11px;
   }
   .grid .queue {
     max-width: none;
@@ -1332,9 +1350,6 @@ select.assign {
   }
 }
 @media (max-width: 550px) {
-  header {
-    padding: 10px 12px;
-  }
   main {
     padding: 14px 12px 30px;
   }
@@ -1405,10 +1420,6 @@ select.assign {
   .detail-head button {
     font-size: 11px;
     padding: 6px 8px;
-  }
-  #tabs button {
-    padding: 8px 10px;
-    font-size: 12px;
   }
   .queue-footer .note {
     font-size: 10px;
