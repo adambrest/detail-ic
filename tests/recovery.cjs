@@ -148,7 +148,7 @@ const previousVersion = {
     await older
       .getByRole("combobox", { name: "Rifle for Earlier Firer" })
       .inputValue(),
-    "SAR21 SS/HK416",
+    "HK416",
   );
   assert.equal(
     await older.evaluate(

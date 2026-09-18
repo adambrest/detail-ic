@@ -1,4 +1,4 @@
-export const VERSION = "2026-09-18.1";
+export const VERSION = "2026-09-18.2";
 export const PROGRAMS = {
   BTP: "BTP",
   ATP_M: "ATP (M)",
@@ -19,9 +19,9 @@ export const TYPES = [
 ];
 export const typeLabel = (program, variant = "standard") =>
   (PROGRAMS[program] || program) + (variant === "ns" ? " (NS)" : "");
-// Rifles with identical scoring share one option. Combat Shoot keeps
-// non-SAR21 weapons separate because of the per-detail limit.
-export const NON_SAR = new Set(["LMG", "M16/LMG"]);
+// Only plain SAR21 variants share an option; anything that can carry its own
+// requirement (SAR21 SS, HK416, M16) stays separate.
+export const NON_SAR = new Set(["M16", "LMG"]);
 // Combat Shoot detail sizes; ATP (SP) limits how many fire at a time.
 export const DETAIL_RULES = {
   CS_SP: { min: 4, max: 6, nonSAR: 2 },
@@ -80,12 +80,12 @@ export const PROFILES = [
     39,
     "S3",
   ),
-  ...rules("ATP_M", "standard", ["SAR21 SS/HK416"], [24, 8, 16], 32, 39, "S3"),
+  ...rules("ATP_M", "standard", ["SAR21 SS", "HK416"], [24, 8, 16], 32, 39, "S3"),
   ...rules("ATP_M", "standard", ["LMG"], [70, 8, 48], 32, 63, "S10"),
   ...rules(
     "ATP_SP",
     "standard",
-    ["SAR21/SAR21 MMS/M16/M203"],
+    ["SAR21/SAR21 MMS/M203", "M16"],
     [16, 8, 12],
     18,
     29,
@@ -94,7 +94,7 @@ export const PROFILES = [
   ...rules(
     "CS_M",
     "standard",
-    ["SAR21/SAR21 SS/M203", "LMG"],
+    ["SAR21/M203", "SAR21 SS", "LMG"],
     [20, 8, 20],
     24,
     39,
@@ -108,7 +108,7 @@ export const PROFILES = [
   ...rules(
     "CS_SP",
     "standard",
-    ["SAR21", "M16/LMG"],
+    ["SAR21", "M16", "LMG"],
     [15, 8, 15],
     19,
     31,
@@ -119,7 +119,7 @@ export const PROFILES = [
         "Floor each detail average before selecting the best earned stage score.",
     },
   ),
-  ...rules("APS", "standard", ["SAR21/M16"], [6, 6, 6, 6], 12, 20, "S6", {
+  ...rules("APS", "standard", ["SAR21", "M16"], [6, 6, 6, 6], 12, 20, "S6", {
     components: [2, 3, 4, 5].map((n) => ({
       id: String(n),
       label: `Practice ${n}`,
@@ -156,6 +156,12 @@ export const REFERENCE_ONLY = [
     eligibility: "excluded_by_user",
   },
 ];
+// Rifles a whole shoot can be set to. Combat Shoot assigns M16 and LMG per firer,
+// after the details are settled.
+export function baseWeapons(program, variant = "standard") {
+  const all = weaponsFor(program, variant);
+  return program.startsWith("CS_") ? all.filter((w) => !NON_SAR.has(w)) : all;
+}
 export function weaponsFor(program, variant = "standard") {
   return PROFILES.filter(
     (p) => p.program === program && p.variant === variant,

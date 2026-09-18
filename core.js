@@ -6,11 +6,14 @@ import {
   isCS,
   profileFor,
   weaponsFor,
+  baseWeapons,
   weaponGroup,
   typeLabel,
 } from "./profiles.js";
 export const uid = () => crypto.randomUUID();
 export const now = () => new Date().toISOString();
+// Stages A and C are fired as a detail; everything else is individual.
+export const detailedStage = (s, stage) => isCS(s) && ["A", "C"].includes(stage);
 export const typeKey = (program, variant = "standard") =>
   program === "APS" ? `APS:${variant}` : program;
 export function newStore() {
@@ -24,13 +27,13 @@ export function newStore() {
 }
 export function preset(store, program, variant = "standard") {
   return (store.presets[typeKey(program, variant)] ??= {
-    weapon: weaponsFor(program, variant)[0],
+    weapon: baseWeapons(program, variant)[0],
     objective: "marksman",
     targets: {},
   });
 }
 export function newShoot(program, variant = "standard", name = "") {
-  const weapon = weaponsFor(program, variant)[0];
+  const weapon = baseWeapons(program, variant)[0];
   if (!PROGRAMS[program] || !weapon) throw Error("Unknown shoot type.");
   return {
     id: uid(),
@@ -46,6 +49,7 @@ export function newShoot(program, variant = "standard", name = "") {
     dispatches: [],
     manualQueue: [],
     priorities: {},
+    locked: false,
     audit: [],
     settings: {
       weapon,
@@ -85,6 +89,14 @@ export function enableShoot(store, program, on) {
   if (on) store.enabled.push(program);
 }
 export const hasScores = (s) => s.attempts.length > 0;
+// Locking says the roster and details are settled, so scoring can start.
+export function setRosterLock(s, on) {
+  if (on && !s.participants.length) throw Error("Add participants first.");
+  if (on && detailIssues(s).length)
+    throw Error(detailIssues(s).join("\n"));
+  s.locked = !!on;
+  audit(s, on ? "Participants confirmed" : "Participants unlocked");
+}
 // Empties the roster of a shoot that has not been scored yet.
 export function clearParticipants(s) {
   if (hasScores(s))
@@ -173,6 +185,34 @@ export function rosterWeapon(s, detailId, p) {
   return s.details.find((d) => d.id === detailId)?.weapons?.[p.id] ?? p.weapon;
 }
 export const detailNumber = (d) => Number(d.name.match(/\d+$/)?.[0]) || 0;
+// A temporary detail replaces a firer's usual one for a single stage.
+export function createTempDetail(s, stage, entries, { oneOff = false } = {}) {
+  if (!detailedStage(s, stage))
+    throw Error("Temporary details are for Combat Shoot Stages A and C.");
+  const rows = entries.map((e) => ({
+    person: s.participants.find((p) => p.id === e.participantId),
+    weapon: e.weapon,
+  }));
+  if (!rows.length || rows.some((r) => !r.person))
+    throw Error("Choose the firers in this detail.");
+  const errors = compositionErrors(
+    s,
+    rows.map((r) => ({ weapon: r.weapon })),
+  );
+  if (errors.length) throw Error(errors.join(" "));
+  const d = {
+    id: uid(),
+    name: `Temp detail ${s.details.filter((x) => x.temporary).length + 1}`,
+    temporary: true,
+    stage,
+    oneOff,
+    memberIds: rows.map((r) => r.person.id),
+    weapons: Object.fromEntries(rows.map((r) => [r.person.id, r.weapon])),
+  };
+  s.details.push(d);
+  audit(s, "Temporary detail added", { detail: structuredClone(d), stage });
+  return d;
+}
 export function sortedDetails(s) {
   return s.details.toSorted(
     (a, b) =>
@@ -180,9 +220,9 @@ export function sortedDetails(s) {
   );
 }
 // Temporary details holding firers who belong to this detail.
-export function borrowedBy(s, detailId) {
+export function borrowedBy(s, detailId, stage) {
   return s.details
-    .filter((d) => d.temporary)
+    .filter((d) => d.temporary && !d.retired && (!stage || d.stage === stage))
     .map((d) => ({
       detail: d,
       people: members(s, d.id).filter((p) => p.detailId === detailId),
@@ -234,23 +274,31 @@ export function assignDetail(s, id, number) {
   audit(s, "Detail assigned", { participantId: id, detail: d?.name ?? null });
 }
 // Fills details in number order, so groups of `size` come out in roster order.
-export function autoDetail(s, size) {
+// Splits everyone into as few details as possible, each within the allowed size.
+export function detailPlan(count, { min = 1, max = count || 1 } = {}) {
+  if (count < 1) return [];
+  let groups = Math.max(1, Math.ceil(count / max));
+  while (groups * min > count && groups > 1) groups--;
+  const base = Math.floor(count / groups),
+    extra = count % groups;
+  return Array.from({ length: groups }, (_, i) => base + (i < extra ? 1 : 0));
+}
+export function autoDetail(s) {
   if (!isCS(s)) throw Error("Details are only used by Combat Shoot.");
-  if (!Number.isInteger(size) || size < 1 || size > 20)
-    throw Error("Choose a detail size from 1 to 20.");
   const waiting = s.participants.filter((p) => !p.detailId);
   if (!waiting.length) throw Error("Everyone already has a detail.");
+  const sizes = detailPlan(s.participants.length, DETAIL_RULES[s.program]);
   const inNumber = (n) => {
     const d = s.details.find((x) => !x.temporary && detailNumber(x) === n);
     return d ? members(s, d.id).length : 0;
   };
   let n = 1;
   for (const p of waiting) {
-    while (inNumber(n) >= size) n++;
+    while (inNumber(n) >= (sizes[n - 1] ?? sizes.at(-1))) n++;
     assignDetail(s, p.id, n);
   }
-  audit(s, "Auto-detailed", { size, count: waiting.length });
-  return waiting.length;
+  audit(s, "Auto-detailed", { sizes, count: waiting.length });
+  return sizes;
 }
 // Problems that stop a detailed shoot from being scored.
 export function detailIssues(s) {
@@ -289,9 +337,8 @@ export function compositionErrors(s, people, { checkMinimum = true } = {}) {
     } catch (e) {
       errors.push(e.message);
     }
-  const nonSAR = people.filter((p) => NON_SAR.has(p.weapon)).length,
-    mixed = new Set(people.map((p) => p.weapon)).size > 1;
-  if (rule.nonSAR && mixed && nonSAR > rule.nonSAR)
+  const nonSAR = people.filter((p) => NON_SAR.has(p.weapon)).length;
+  if (rule.nonSAR && nonSAR > rule.nonSAR)
     errors.push(
       `Too many non-SAR21 weapons: ${nonSAR}/${rule.nonSAR} maximum in total.`,
     );
@@ -629,39 +676,56 @@ export function saveDetail(s, draft) {
   const v = validateDraft(s, draft);
   if (v.errors.length) throw Error(v.errors.join("\n"));
   const a = recordDetailAttempt(s, draft.stage, draft.detailId, v);
+  const detail = s.details.find((d) => d.id === draft.detailId);
+  if (detail?.oneOff) detail.retired = true;
   audit(s, "Scores finalized", { detailAttemptId: a.id });
   delete s.drafts[draftKey(draft.detailId, draft.stage)];
   return a;
 }
-// Scores a manual detail once, or keeps it as a temporary detail for redetailing.
-export function recordManualDetail(
-  s,
-  stage,
-  entries,
-  aggregate = "",
-  { keep = false } = {},
-) {
-  if (!isCS(s)) throw Error("Manual details are for Combat Shoot.");
-  const v = validateManual(s, stage, entries, aggregate);
+// Replaces a recorded individual score, keeping the original in the history.
+export function editIndividual(s, attemptId, hits, weapon) {
+  const a = s.attempts.find((x) => x.id === attemptId && x.status === "valid");
+  if (!a) throw Error("Score not found.");
+  if (a.detailAttemptId)
+    throw Error("Edit the detail's scores to change this one.");
+  const p = s.participants.find((x) => x.id === a.participantId);
+  voidAttempt(s, attemptId, "Replaced by an edit");
+  const fresh = recordIndividual(
+    s,
+    p,
+    a.stage,
+    hits,
+    weapon ?? a.weapon,
+    "Edited",
+  );
+  fresh.revisionOf = attemptId;
+  fresh.recordedAt = a.recordedAt;
+  a.revisedBy = fresh.id;
+  audit(s, "Score edited", { attemptId, replacementId: fresh.id });
+  return fresh;
+}
+// Replaces a recorded detail score: hits, the detail total, or a firer's rifle.
+export function editDetailAttempt(s, detailAttemptId, entries, aggregate = "") {
+  const old = s.shared.find(
+    (d) => d.id === detailAttemptId && d.status === "valid",
+  );
+  if (!old) throw Error("Detail score not found.");
+  const v = validateManual(s, old.stage, entries, aggregate);
   if (v.errors.length) throw Error(v.errors.join("\n"));
-  let detailId = null;
-  if (keep) {
-    const d = {
-      id: uid(),
-      name: `Temporary detail ${s.details.filter((d) => d.temporary).length + 1}`,
-      temporary: true,
-      memberIds: entries.map((e) => e.participantId),
-      weapons: Object.fromEntries(
-        entries.map((e) => [e.participantId, e.weapon]),
-      ),
-    };
-    s.details.push(d);
-    detailId = d.id;
-    audit(s, "Temporary detail added", { detail: structuredClone(d) });
-  }
-  const a = recordDetailAttempt(s, stage, detailId, v, { manual: true });
-  audit(s, "Manual detail scored", { detailAttemptId: a.id, keep });
-  return a;
+  const first = s.attempts.find((x) => x.detailAttemptId === detailAttemptId);
+  if (first) voidAttempt(s, first.id, "Replaced by an edit");
+  const fresh = recordDetailAttempt(s, old.stage, old.detailId, v, {
+    manual: old.manual,
+    revisionOf: detailAttemptId,
+    recordedAt: old.recordedAt,
+  });
+  for (const x of s.attempts)
+    if (x.detailAttemptId === detailAttemptId) x.revisedBy = fresh.id;
+  audit(s, "Detail score edited", {
+    detailAttemptId,
+    replacementId: fresh.id,
+  });
+  return fresh;
 }
 // Removes a temporary detail that no longer has any counted scores.
 export function dropTemporaryDetail(s, id) {
@@ -686,13 +750,14 @@ export function recordIndividual(
   weapon = p.weapon,
   reason = "",
 ) {
-  if (isCS(s)) throw Error("Enter Combat Shoot scores for the whole detail.");
+  if (detailedStage(s, stage))
+    throw Error("Enter Combat Shoot Stage A and C scores for the whole detail.");
   const profile = profileFor(s.program, s.variant, weapon);
   const component = profile.components.find((c) => c.id === stage);
   if (!component) throw Error("Unknown stage.");
   const parsed = parseHits(hits, component.max);
   if (parsed.error) throw Error(parsed.error);
-  if (weapon !== p.weapon)
+  if (weapon !== p.weapon && !isCS(s))
     throw Error(
       `Use ${p.weapon} for this record. Change the participant's rifle to start a separate record.`,
     );
@@ -821,7 +886,7 @@ export function target(s, p, stage, objective = s.settings.objective) {
     const a = best(s, p, "A");
     return a === null ? null : Math.max(0, p.profile[objective] - a);
   }
-  const weapon = isCS(s) ? weaponsFor(s.program, s.variant)[0] : p.weapon;
+  const weapon = isCS(s) ? baseWeapons(s.program, s.variant)[0] : p.weapon;
   return (
     s.settings.targets[`${weapon}:${stage}:${objective}`] ??
     Math.ceil((p.profile[objective] * c.max) / p.profile.total)
@@ -847,20 +912,27 @@ export function goal(s, p, stage) {
   }
   return null;
 }
-export function entities(s) {
-  return isCS(s)
-    ? sortedDetails(s)
-        .filter((d) => members(s, d.id).length)
-        .map((d) => ({
-          key: `detail:${d.id}`,
-          detail: d,
-          members: members(s, d.id),
-        }))
+export function entities(s, stage) {
+  return detailedStage(s, stage)
+    ? stageDetails(s, stage).map((d) => ({
+        key: `detail:${d.id}`,
+        detail: d,
+        members: members(s, d.id),
+      }))
     : s.participants.map((p) => ({
         key: `person:${p.id}`,
         detail: null,
         members: [p],
       }));
+}
+// Details that score this stage: the permanent ones, plus this stage's temporary details.
+export function stageDetails(s, stage) {
+  return sortedDetails(s).filter(
+    (d) =>
+      !d.retired &&
+      (!d.temporary || d.stage === stage) &&
+      members(s, d.id).length,
+  );
 }
 export function stageMembers(s, detailId) {
   return members(s, detailId).map((p) => ({
@@ -892,7 +964,7 @@ export function setPriority(s, key, tag) {
   audit(s, "Priority changed", { key, tag: tag || null });
 }
 export function queue(s, stage) {
-  const rows = entities(s)
+  const rows = entities(s, stage)
     .filter(
       (e) =>
         !s.dispatches.some(
@@ -903,20 +975,21 @@ export function queue(s, stage) {
     .filter(
       (e) =>
         s.manualQueue.some((q) => q.stage === stage && q.key === e.key) ||
-        e.members.some((p) => {
-          const v = best(s, p, stage),
-            g = goal(s, p, stage);
-          return (
-            v === null ||
-            (g &&
+        (e.members.some((p) => best(s, p, stage) !== null) &&
+          e.members.some((p) => {
+            const v = best(s, p, stage),
+              g = goal(s, p, stage);
+            return (
+              v !== null &&
+              g &&
               v < p.profile.components.find((c) => c.id === stage).max &&
-              v < (target(s, p, stage, g.objective) ?? 0))
-          );
-        }),
+              v < (target(s, p, stage, g.objective) ?? 0)
+            );
+          })),
     );
   for (const e of rows) {
     e.errors = e.detail ? stageCompositionErrors(s, e.detail.id, stage) : [];
-    e.first = e.members.some((p) => best(s, p, stage) === null);
+    e.first = e.members.every((p) => best(s, p, stage) === null);
     e.best = Math.min(...e.members.map((p) => best(s, p, stage) ?? 0));
     e.tag = s.priorities[e.key] || null;
     e.priority = e.members
@@ -968,7 +1041,7 @@ export function queue(s, stage) {
   );
 }
 export function dispatch(s, stage, keys) {
-  const selected = entities(s).filter((e) => keys.includes(e.key));
+  const selected = entities(s, stage).filter((e) => keys.includes(e.key));
   if (!selected.length) throw Error("Select firers to redetail.");
   const cap = !isCS(s) && DETAIL_RULES[s.program]?.max;
   if (cap && selected.length > cap)

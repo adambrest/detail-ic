@@ -189,11 +189,18 @@ h1 .logo {
   margin-left: auto;
 }
 .info.warn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: #b45309;
   border-color: #fcd34d;
   background: #fffbeb;
-  margin-left: 6px;
-  font-size: 9px;
+  margin: 0 0 0 6px;
+  width: 18px;
+  min-height: 18px;
+  font-size: 10px;
+  line-height: 1;
+  vertical-align: middle;
 }
 .info.warn .tooltip {
   right: auto;
@@ -201,6 +208,33 @@ h1 .logo {
 }
 .temporary {
   border-style: dashed;
+}
+.confirmed {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 11px 12px;
+  margin-bottom: 14px;
+  border-color: var(--accent);
+  background: #f5f9ff;
+  font-size: 12px;
+}
+.scored-toggle {
+  margin: 0 0 14px;
+}
+.stage-note {
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  background: #f8fafc;
+}
+.history-row.void {
+  opacity: 0.6;
+}
+.history-row .actions {
+  align-items: flex-start;
 }
 td.rifle {
   font-size: 11px;

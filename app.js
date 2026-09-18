@@ -5,6 +5,7 @@ import {
   isCS,
   typeLabel,
   weaponsFor,
+  baseWeapons,
   profileFor,
   stages,
   targetStages,
@@ -20,10 +21,12 @@ import {
   getShoot,
   enableShoot,
   hasScores,
+  setRosterLock,
+  detailedStage,
+  stageDetails,
   deleteShoot,
   changeShootType,
   audit,
-  addDetail,
   members,
   sortedDetails,
   detailNumber,
@@ -38,13 +41,15 @@ import {
   fillWeapons,
   removeParticipant,
   clearParticipants,
+  compositionErrors,
   getDraft,
   resetDraft,
   validateDraft,
-  validateManual,
   saveDetail,
-  recordManualDetail,
+  createTempDetail,
   dropTemporaryDetail,
+  editIndividual,
+  editDetailAttempt,
   recordIndividual,
   parseHits,
   scoreHistory,
@@ -89,7 +94,6 @@ let store,
   addMode = null,
   addNote = "",
   pasteDetail = 1,
-  groupSize = null,
   apsView = "standard",
   offlineReady = false,
   busy = false,
@@ -224,8 +228,8 @@ function shootHead(extra = "", editable = false) {
     : `<span class="badge">${esc(typeLabel(c.program, c.variant))}</span>`;
   return `<div class="toolbar"><strong class="shoot-name">${esc(c.name)}</strong>${type}${extra}</div>`;
 }
-function borrowedNote(c, d) {
-  const list = borrowedBy(c, d.id);
+function borrowedNote(c, d, stage) {
+  const list = borrowedBy(c, d.id, stage);
   if (!list.length) return "";
   const text = `${list.map((x) => `${x.detail.name} took ${x.people.map((p) => p.name).join(", ")}`).join(". ")} from this detail.`;
   return `<button class="info warn" type="button" aria-label="${esc(text)}">⚠<span class="tooltip">${esc(text)}</span></button>`;
@@ -311,9 +315,11 @@ function renderParticipants() {
   const c = s(),
     cs = isCS(c),
     multi = weapons(c).length > 1,
+    base = baseWeapons(c.program, c.variant),
+    locked = c.locked,
     rifle =
-      multi
-        ? `<label class="muted" for="fill-weapon">Rifle</label><select id="fill-weapon" aria-label="Rifle for fill all">${option(weapons(c), c.settings.weapon)}</select><button data-action="fill-all">Fill all</button>`
+      base.length > 1 && !locked
+        ? `<label class="muted" for="fill-weapon">Rifle</label><select id="fill-weapon" aria-label="Rifle for fill all">${option(base, c.settings.weapon)}</select><button data-action="fill-all">Fill all</button>`
         : "",
     matches = (p) => search && filtered(p),
     highest = Math.max(
@@ -321,21 +327,22 @@ function renderParticipants() {
       ...c.details.filter((d) => !d.temporary).map(detailNumber),
     );
   const picker = (p) => {
-    const locked =
+    const fixed =
+        locked ||
         c.attempts.some((a) => a.participantId === p.id) ||
         c.dispatches.some(
           (d) => d.status === "awaiting" && d.roster.some((m) => m.id === p.id),
         ),
       detail = c.details.find((d) => d.id === p.detailId),
       n = detail && !detail.temporary ? detailNumber(detail) : 0;
-    return `<td><select class="assign" data-assign="${p.id}" aria-label="Detail for ${esc(p.name)}" ${locked ? "disabled" : ""}><option value="" ${n ? "" : "selected"}>—</option>${Array.from(
+    return `<td><select class="assign" data-assign="${p.id}" aria-label="Detail for ${esc(p.name)}" ${fixed ? "disabled" : ""}><option value="" ${n ? "" : "selected"}>—</option>${Array.from(
       { length: Math.max(highest, n) },
       (_, i) =>
         `<option value="${i + 1}" ${i + 1 === n ? "selected" : ""}>Detail ${i + 1}</option>`,
     ).join("")}<option value="new">New detail</option></select></td>`;
   };
   const row = (p) =>
-    `<tr class="${matches(p) ? "match" : ""}"><td class="name"><input class="name-input" type="text" data-name="${p.id}" value="${esc(p.name)}" aria-label="Name for ${esc(p.name)}"></td>${multi ? `<td><select class="row-weapon" data-rifle="${p.id}" aria-label="Rifle for ${esc(p.name)}">${option(weapons(c), p.weapon)}</select></td>` : ""}${cs ? picker(p) : ""}<td class="more-cell"><button class="icon-button danger" data-remove="${p.id}" aria-label="Remove ${esc(p.name)}">✕</button></td></tr>`;
+    `<tr class="${matches(p) ? "match" : ""}"><td class="name"><input class="name-input" type="text" data-name="${p.id}" value="${esc(p.name)}" aria-label="Name for ${esc(p.name)}" ${locked ? "disabled" : ""}></td>${multi ? `<td><select class="row-weapon" data-rifle="${p.id}" aria-label="Rifle for ${esc(p.name)}">${option(weapons(c), p.weapon)}</select></td>` : ""}${cs ? picker(p) : ""}<td class="more-cell">${locked ? "" : `<button class="icon-button danger" data-remove="${p.id}" aria-label="Remove ${esc(p.name)}">✕</button>`}</td></tr>`;
   const table = (people) =>
     `<div class="table-wrap"><table><thead><tr><th>Full name</th>${multi ? "<th>Rifle</th>" : ""}${cs ? "<th>Detail</th>" : ""}<th></th></tr></thead><tbody>${people.map(row).join("")}</tbody></table></div>`;
   let body = "";
@@ -349,7 +356,6 @@ function renderParticipants() {
   else if (cs) {
     const issues = detailIssues(c),
       unassigned = members(c, null),
-      size = groupSize ?? DETAIL_RULES[c.program].max,
       groups = [
         ...(unassigned.length ? [[null, unassigned]] : []),
         ...sortedDetails(c)
@@ -364,19 +370,23 @@ function renderParticipants() {
         .map(([d, people]) =>
           d?.temporary
             ? `<section class="panel temporary"><div class="detail-head"><h3>${esc(d.name)}</h3><span class="count">${people.length} firers</span></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th></tr></thead><tbody>${people.map((p) => `<tr class="${matches(p) ? "match" : ""}"><td class="name">${esc(p.name)}</td><td>${esc(rosterWeapon(c, d.id, p))}</td></tr>`).join("")}</tbody></table></div></section>`
-            : `<section class="panel ${d ? "" : "unassigned"}"><div class="detail-head"><h3>${d ? esc(d.name) : "Needs a detail"}</h3>${d ? borrowedNote(c, d) : ""}<span class="count">${people.length} firers</span>${d ? "" : `<div class="actions"><label class="muted" for="group-size">Groups of</label><input id="group-size" type="number" min="1" max="${DETAIL_RULES[c.program].max}" step="1" value="${size}" aria-label="Detail size"><button class="primary" data-action="auto-detail">Auto-detail</button></div>`}</div>${table(people)}</section>`,
+            : `<section class="panel ${d ? "" : "unassigned"}"><div class="detail-head"><h3>${d ? esc(d.name) : "Needs a detail"}</h3>${d ? borrowedNote(c, d) : ""}<span class="count">${people.length} firers</span>${d || locked ? "" : '<div class="actions"><button class="primary" data-action="auto-detail">Auto-detail</button></div>'}</div>${table(people)}</section>`,
         )
         .join("");
   } else
     body = `<section class="panel">${table(c.participants.filter(filtered))}</section>`;
+  const ready = c.participants.length && !detailIssues(c).length;
   $("#main").innerHTML =
     shootHead(`<span class="spacer"></span>${rifle}`, true) +
     (hasScores(c)
       ? '<p class="note lock-note">Scores are recorded, so the shoot type is locked. <button class="inline-link" data-action="shoots">Start a new shoot</button> to use a different type.</p>'
       : "") +
-    addPanel(c) +
+    (locked
+      ? `<div class="panel confirmed"><span>Participants confirmed. Rifles can still change; everything else is locked.</span><div class="actions"><button data-action="unlock">Edit participants</button><button class="primary" data-action="to-stage">Go to ${esc(stages(c)[0].label)}</button></div></div>`
+      : "") +
+    (locked ? "" : addPanel(c)) +
     (c.participants.length
-      ? `<div class="toolbar">${searchBox()}<span class="count">${c.participants.length} participants</span><span class="spacer"></span><button class="danger" data-action="clear-participants">Clear participants</button></div>`
+      ? `<div class="toolbar">${searchBox()}<span class="count">${c.participants.length} participants</span><span class="spacer"></span>${locked ? "" : `<button class="danger" data-action="clear-participants">Clear participants</button>${ready ? '<button class="primary" data-action="confirm-participants">Confirm participants</button>' : ""}`}</div>`
       : "") +
     body;
   if (addMode === "detail" || addMode === "list") $("#add-names")?.focus();
@@ -406,7 +416,7 @@ function renderStage(stage) {
       `<span class="spacer"></span>${searchBox()}${isCS(c) ? '<button data-action="manual-detail">Manual detail</button>' : ""}`,
     ) +
     issuesPanel(c) +
-    `<div class="grid"><div class="score-col">${isCS(c) ? detailPanels(c, stage) : individualPanel(c, stage)}</div>${queuePanel(c, stage, q)}</div>`;
+    `<div class="grid"><div class="score-col">${detailedStage(c, stage) ? detailPanels(c, stage) : individualPanel(c, stage)}</div>${queuePanel(c, stage, q)}</div>`;
 }
 // Roster problems that will block scoring, with one link to fix them.
 function issuesPanel(c) {
@@ -422,20 +432,29 @@ function individualPanel(c, stage) {
       '<p><button data-action="participants">Participants</button></p>',
     );
   const waiting = awaiting(c, stage),
+    cs = isCS(c),
     multi = weapons(c).length > 1,
+    detailOf = (p) => {
+      const d = c.details.find((x) => x.id === p.detailId);
+      return d && !d.temporary ? detailNumber(d) : 99;
+    },
     rank = (p) => (waiting.has(p.id) ? waiting.get(p.id) : 1e9),
-    people = c.participants.filter(filtered).toSorted((a, b) => rank(a) - rank(b));
-  return `<section class="panel score-panel" data-individual><div class="detail-head"><h3>${esc(stageLabel(c, stage))}</h3><span class="count">${c.participants.length} firers</span></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${people
+    people = c.participants
+      .filter(filtered)
+      .toSorted((a, b) => rank(a) - rank(b) || detailOf(a) - detailOf(b));
+  return `<section class="panel score-panel" data-individual><div class="detail-head"><h3>${esc(stageLabel(c, stage))}</h3><span class="count">${c.participants.length} firers</span></div>${cs ? '<p class="note stage-note">Fired individually, in any order. Details do not apply to this stage.</p>' : ""}<div class="table-wrap"><table><thead><tr><th>Full name</th>${cs ? "<th>Rifle</th>" : ""}<th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${people
     .map((p) => {
       const max = p.profile.components.find((x) => x.id === stage).max;
-      return `<tr data-row="${p.id}" class="${waiting.has(p.id) ? "awaiting" : ""}"><td class="name">${esc(p.name)}${multi ? `<div class="sub">${esc(p.weapon)}</div>` : ""}${waiting.has(p.id) ? '<div class="pending">Awaiting scores</div>' : ""}</td><td><div class="score-input"><input type="number" min="0" max="${max}" step="1" inputmode="numeric" enterkeyhint="next" data-hits="${p.id}" aria-label="${esc(p.name)} hits" placeholder="—"><span class="muted">/${max}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+      return `<tr data-row="${p.id}" class="${waiting.has(p.id) ? "awaiting" : ""}"><td class="name">${esc(p.name)}${multi && !cs ? `<div class="sub">${esc(p.weapon)}</div>` : ""}${waiting.has(p.id) ? '<div class="pending">Awaiting scores</div>' : ""}</td>${cs ? `<td><select class="row-weapon" data-stage-rifle="${p.id}" aria-label="${esc(p.name)} rifle for ${esc(stageLabel(c, stage))}">${option(weapons(c), stageRifle(c, p, stage))}</select></td>` : ""}<td><div class="score-input"><input type="number" min="0" max="${max}" step="1" inputmode="numeric" enterkeyhint="next" data-hits="${p.id}" aria-label="${esc(p.name)} hits" placeholder="—"><span class="muted">/${max}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
     })
     .join(
       "",
     )}</tbody></table></div><div class="errors draft-errors" role="alert"></div><div class="score-footer"><span class="draft-summary">Scores save when you press Enter or leave the box.</span></div></section>`;
 }
-const COMPOSITION =
-  /^(Too few firers|Too many firers|Too many non-SAR21|Detail has no participants)/;
+// Combat Shoot Stage B can be fired on a different rifle, remembered per firer.
+function stageRifle(c, p, stage) {
+  return c.stageRifles?.[`${p.id}:${stage}`] ?? p.weapon;
+}
 function draftErrors(c, draft) {
   const hasInput =
     draft.rows.some((r) => r.hits !== "") || draft.aggregate !== "";
@@ -473,14 +492,18 @@ function detailPanels(c, stage) {
     label = stageLabel(c, stage),
     shared = ["A", "C"].includes(stage),
     cmax = stages(c).find((x) => x.id === stage).max,
-    all = sortedDetails(c).filter((d) => members(c, d.id).length),
+    all = stageDetails(c, stage),
     open = all.filter((d) => needsScores(c, d, stage)),
     scored = all.length - open.length,
+    toggle =
+      scored && !search
+        ? `<p class="note scored-toggle"><button class="inline-link" data-action="toggle-scored">${showScored ? "Hide scored details" : `Show ${scored} scored ${scored === 1 ? "detail" : "details"}`}</button></p>`
+        : "",
     shown = search
       ? all.filter((d) => members(c, d.id).some(filtered))
       : showScored
-        ? all
-        : open,
+        ? [...open, null, ...all.filter((d) => !open.includes(d))]
+        : [...open, null],
     unassigned = members(c, null).length;
   if (!all.length)
     return empty(
@@ -493,9 +516,10 @@ function detailPanels(c, stage) {
       : "") +
     shown
       .map((d) => {
+        if (!d) return toggle;
         const people = members(c, d.id),
           draft = getDraft(c, d.id, stage);
-        return `<section class="panel score-panel ${d.temporary ? "temporary" : ""}" data-detail="${d.id}"><div class="detail-head"><h3>${esc(d.name)}</h3>${borrowedNote(c, d)}<span class="count">${people.length} firers</span><div class="actions"><button class="icon-button" data-reset="${d.id}" title="Clear entries" aria-label="Clear entries for ${esc(d.name)}">↺</button></div></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th><th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${people
+        return `<section class="panel score-panel ${d.temporary ? "temporary" : ""}" data-detail="${d.id}"><div class="detail-head"><h3>${esc(d.name)}</h3>${borrowedNote(c, d, stage)}<span class="count">${people.length} firers</span><div class="actions"><button class="icon-button" data-reset="${d.id}" title="Clear entries" aria-label="Clear entries for ${esc(d.name)}">↺</button></div></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th><th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${people
           .map((p) => {
             const row = draft.rows.find((r) => r.participantId === p.id);
             return `<tr data-row="${p.id}" class="${[waiting.has(p.id) && "awaiting", search && filtered(p) && "match"].filter(Boolean).join(" ")}"><td class="name">${esc(p.name)}${waiting.has(p.id) ? '<div class="pending">Awaiting scores</div>' : ""}</td><td class="rifle">${esc(rosterWeapon(c, d.id, p))}</td><td><div class="score-input"><input type="number" min="0" max="${cmax}" step="1" inputmode="numeric" enterkeyhint="next" data-cs-hits="${p.id}" value="${esc(row?.hits || "")}" aria-label="${esc(p.name)} hits" placeholder="—"><span class="muted">/${cmax}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
@@ -507,9 +531,6 @@ function detailPanels(c, stage) {
       .join("") +
     (!shown.length
       ? `<div class="empty"><h2>All details scored</h2><p>Redetail firers to enter more ${esc(label)} scores.</p></div>`
-      : "") +
-    (scored && !search
-      ? `<p class="note"><button class="inline-link" data-action="toggle-scored">${showScored ? "Hide scored details" : `Show ${scored} scored ${scored === 1 ? "detail" : "details"}`}</button></p>`
       : "")
   );
 }
@@ -547,7 +568,7 @@ function queuePanel(c, stage, q) {
       .map((e, i) => {
         const name = cs ? e.detail.name : e.members[0].name,
           max = e.priority.p.profile.components.find((x) => x.id === stage).max;
-        return `<div class="queue-row" data-key="${esc(e.key)}"><input type="checkbox" data-queue="${esc(e.key)}" ${selected.has(e.key) ? "checked" : ""} ${e.errors.length ? "disabled" : ""} aria-label="Select ${esc(name)}"><span class="count">${i + 1}</span><div><strong>${esc(name)}</strong>${cs ? borrowedNote(c, e.detail) : ""}<p class="note">${e.errors.length ? "Fix this detail in Participants" : e.first ? "First attempt" : `Best ${ratio(best(c, e.priority.p, stage), max)}`}</p></div><button type="button" class="prio ${e.tag || ""}" data-priority="${esc(e.key)}" aria-label="${esc(name)} priority: ${e.tag || "normal"}" title="${e.tag === "high" ? "High priority" : e.tag === "low" ? "Low priority" : "Set priority"}">${e.tag === "high" ? "▲" : e.tag === "low" ? "▼" : "↕"}</button></div>`;
+        return `<div class="queue-row" data-key="${esc(e.key)}"><input type="checkbox" data-queue="${esc(e.key)}" ${selected.has(e.key) ? "checked" : ""} ${e.errors.length ? "disabled" : ""} aria-label="Select ${esc(name)}"><span class="count">${i + 1}</span><div><strong>${esc(name)}</strong>${e.detail ? borrowedNote(c, e.detail, stage) : ""}<p class="note">${e.errors.length ? "Fix this detail in Participants" : e.first ? "First attempt" : `Best ${ratio(best(c, e.priority.p, stage), max)}`}</p></div><button type="button" class="prio ${e.tag || ""}" data-priority="${esc(e.key)}" aria-label="${esc(name)} priority: ${e.tag || "normal"}" title="${e.tag === "high" ? "High priority" : e.tag === "low" ? "Low priority" : "Set priority"}">${e.tag === "high" ? "▲" : e.tag === "low" ? "▼" : "↕"}</button></div>`;
       })
       .join("") || '<div class="panel-body note">No firers to redetail.</div>'
   }</div></section>`;
@@ -587,7 +608,13 @@ function saveHit(input) {
     errors = input.closest(".score-panel").querySelector(".draft-errors");
   if (!p || input.value === "") return;
   try {
-    const a = recordIndividual(c, p, stage, input.value);
+    const a = recordIndividual(
+      c,
+      p,
+      stage,
+      input.value,
+      isCS(c) ? stageRifle(c, p, stage) : p.weapon,
+    );
     input.value = "";
     input.classList.remove("invalid");
     errors.textContent = "";
@@ -793,44 +820,35 @@ function dialog(title, body, label, submit, closeLabel = "Close") {
 function manualDetailDialog(stage) {
   const c = s(),
     label = stageLabel(c, stage),
-    shared = ["A", "C"].includes(stage),
-    cmax = stages(c).find((x) => x.id === stage).max,
     groups = [
-      ...sortedDetails(c)
-        .filter((d) => !d.temporary && members(c, d.id).length)
+      ...stageDetails(c, stage)
+        .filter((d) => !d.temporary)
         .map((d) => [d.name, members(c, d.id)]),
       ...(members(c, null).length ? [["Needs a detail", members(c, null)]] : []),
     ];
   const row = (p) =>
-    `<div class="manual-row"><label class="manual-pick"><input type="checkbox" name="pick" value="${p.id}" aria-label="Include ${esc(p.name)}"><span>${esc(p.name)}</span></label><select name="weapon-${p.id}" aria-label="${esc(p.name)} rifle" disabled>${option(weapons(c), p.weapon)}</select><input type="number" name="hits-${p.id}" min="0" max="${cmax}" step="1" inputmode="numeric" placeholder="—" aria-label="${esc(p.name)} hits" disabled></div>`;
+    `<div class="manual-row"><label class="manual-pick"><input type="checkbox" name="pick" value="${p.id}" aria-label="Include ${esc(p.name)}"><span>${esc(p.name)}</span></label><select name="weapon-${p.id}" aria-label="${esc(p.name)} rifle" disabled>${option(weapons(c), p.weapon)}</select></div>`;
   dialog(
     `Manual detail · ${label}`,
-    `<p class="note">Choose who fired together, their rifles and hits. Save once for a one-off, or as a new detail to keep redetailing it.</p><div class="manual-list">${groups.map(([name, people]) => `<div class="manual-group"><h3>${esc(name)}</h3>${people.map(row).join("")}</div>`).join("")}</div>${shared ? `<label class="field inline manual-total"><span>Or detail total</span><input type="number" name="aggregate" min="0" step="1" inputmode="numeric" placeholder="—" aria-label="Manual detail total hits"></label>` : ""}<p class="note manual-summary">No firers chosen.</p>`,
+    `<p class="note">Choose who fires together and on what. The detail appears in ${esc(label)} so you can enter its scores. A one-off is dropped once its scores are in; a kept detail can be redetailed.</p><div class="manual-list">${groups.map(([name, people]) => `<div class="manual-group"><h3>${esc(name)}</h3>${people.map(row).join("")}</div>`).join("")}</div><p class="note manual-summary">No firers chosen.</p>`,
     [
-      { label: "Save once", value: "once" },
-      { label: "Save as new detail", value: "keep" },
+      { label: "One-off detail", value: "once" },
+      { label: "Keep as a detail", value: "keep" },
     ],
     (f, action) => {
       const entries = f.getAll("pick").map((id) => ({
           participantId: id,
           weapon: f.get(`weapon-${id}`),
-          hits: f.get(`hits-${id}`) ?? "",
         })),
-        a = recordManualDetail(c, stage, entries, f.get("aggregate") ?? "", {
-          keep: action === "keep",
-        });
+        d = createTempDetail(c, stage, entries, { oneOff: action === "once" });
       save();
       $("#dialog").close();
+      showScored = false;
       render();
-      toast(
-        a.detailId
-          ? `${c.details.find((d) => d.id === a.detailId).name} saved.`
-          : "Manual detail saved.",
-        () => {
-          undoAttempt(c, c.attempts.find((x) => x.detailAttemptId === a.id).id);
-          if (a.detailId) dropTemporaryDetail(c, a.detailId);
-        },
-      );
+      $(`[data-detail="${d.id}"]`)?.scrollIntoView({ block: "center" });
+      toast(`${d.name} ready. Enter its ${stageLabel(c, stage)} scores.`, () => {
+        dropTemporaryDetail(c, d.id);
+      });
     },
   );
   const form = $("#dialog-form"),
@@ -839,96 +857,45 @@ function manualDetailDialog(stage) {
       for (const box of form.querySelectorAll("[name=pick]")) {
         const line = box.closest(".manual-row");
         line.classList.toggle("on", box.checked);
-        line
-          .querySelectorAll("select,input[type=number]")
-          .forEach((el) => (el.disabled = !box.checked));
+        line.querySelector("select").disabled = !box.checked;
         if (box.checked)
           entries.push({
             participantId: box.value,
             weapon: form.elements[`weapon-${box.value}`].value,
-            hits: form.elements[`hits-${box.value}`].value,
           });
       }
-      const v = validateManual(
+      const problems = compositionErrors(
         c,
-        stage,
-        entries,
-        form.elements.aggregate?.value ?? "",
+        entries.map((e) => ({ weapon: e.weapon })),
       );
       form.querySelector(".manual-summary").textContent = entries.length
-        ? `${entries.length} firers${v.score !== null ? ` · average ${v.aggregate}/${v.divisor} → ${v.score}/${cmax}` : ""}.`
+        ? `${entries.length} firers chosen.`
         : "No firers chosen.";
       form.querySelector(".error").textContent = entries.length
-        ? v.errors.filter((e) => !e.endsWith("Missing hits.")).join("\n")
+        ? problems.join("\n")
         : "";
     };
   form.addEventListener("input", update);
   form.addEventListener("change", update);
 }
-function detailOptions(c, chosen) {
-  return `<option value="" ${!chosen ? "selected" : ""}>No detail</option>${sortedDetails(
-    c,
-  )
-    .map(
-      (d) =>
-        `<option value="${d.id}" ${d.id === chosen ? "selected" : ""}>${esc(d.name)}</option>`,
-    )
-    .join("")}<option value="new">New detail</option>`;
-}
+// The ⋯ menu on a stage tab: enter a score, see history, or queue a reshoot.
 function personDialog(id) {
   const c = s(),
-    cs = isCS(c),
-    multi = weapons(c).length > 1,
-    p = c.participants.find((p) => p.id === id);
+    p = c.participants.find((x) => x.id === id),
+    stage = tab.startsWith("stage:") ? tab.split(":")[1] : null,
+    canEnter = stage && !detailedStage(c, stage);
   dialog(
     p.name,
-    `<label class="field"><span>Full name</span><input name="name" value="${esc(p.name)}" required></label>${multi || cs ? `<div class="form-grid">${multi ? `<label class="field"><span>Rifle</span><select name="weapon">${option(weapons(c), p.weapon)}</select></label>` : ""}${cs ? `<label class="field"><span>Detail</span><select name="detail">${detailOptions(c, p.detailId)}</select></label>` : ""}</div>` : ""}<label class="field"><span>Correction reason · required when changing recorded data</span><input name="reason"></label>${cs ? "" : `<div class="actions">${p.profile.components.map((x) => `<button type="button" data-manual="${x.id}">Enter ${esc(x.label)}</button>`).join("")}</div>`}<div class="actions" style="margin-top:8px"><button type="button" id="history">History</button>${p.profile.excluded?.length ? '<button type="button" id="sighting">Sighting</button>' : ""}<button type="button" id="reshoot">Queue reshoot</button><button type="button" class="danger" id="remove">Remove</button></div>`,
-    "Save",
-    (f) => {
-      let detail = null,
-        created = null;
-      if (cs) {
-        detail = f.get("detail") || null;
-        if (detail === "new") {
-          created = addDetail(c);
-          detail = created.id;
-        }
-      }
-      try {
-        updateParticipant(
-          c,
-          id,
-          {
-            name: f.get("name"),
-            weapon: f.get("weapon") || p.weapon,
-            detailId: detail,
-          },
-          f.get("reason"),
-        );
-      } catch (e) {
-        if (created) c.details = c.details.filter((d) => d.id !== created.id);
-        throw e;
-      }
-      save();
-      $("#dialog").close();
-      render();
-    },
+    `<p class="note">${esc(p.weapon)}${isCS(c) ? "" : ` · ${esc(stages(c).map((x) => `${x.label} ${ratio(best(c, p, x.id), x.max)}`).join(" · "))}`}</p><div class="actions">${canEnter ? `<button type="button" class="primary" data-manual="${stage}">Enter ${esc(stageLabel(c, stage))}</button>` : ""}<button type="button" id="history">History</button>${p.profile.excluded?.length ? '<button type="button" id="sighting">Sighting</button>' : ""}<button type="button" id="reshoot">Queue reshoot</button></div>`,
+    null,
+    null,
+    "Close",
   );
   $("#history").onclick = () => historyDialog(p);
-  $("#remove").onclick = () => {
-    try {
-      removeParticipant(c, id);
-      save();
-      $("#dialog").close();
-      render();
-    } catch (e) {
-      $("#dialog .error").textContent = e.message;
-    }
-  };
   $("#reshoot").onclick = () =>
     dialog(
       "Queue reshoot",
-      `<label class="field"><span>Stage</span><select name="stage">${p.profile.components.map((x) => `<option value="${x.id}">${esc(x.label)}</option>`).join("")}</select></label>`,
+      `<label class="field"><span>Stage</span><select name="stage">${p.profile.components.map((x) => `<option value="${x.id}" ${x.id === stage ? "selected" : ""}>${esc(x.label)}</option>`).join("")}</select></label>`,
       "Queue",
       (f) => {
         manualQueue(c, p, f.get("stage"));
@@ -941,12 +908,7 @@ function personDialog(id) {
   if ($("#sighting")) $("#sighting").onclick = () => sightingDialog(p);
   $("#dialog")
     .querySelectorAll("[data-manual]")
-    .forEach(
-      (b) =>
-        (b.onclick = () => {
-          manualDialog(p, b.dataset.manual);
-        }),
-    );
+    .forEach((b) => (b.onclick = () => manualDialog(p, b.dataset.manual)));
 }
 function manualDialog(p, stage) {
   const c = s(),
@@ -992,11 +954,22 @@ function sightingDialog(p) {
     },
   );
 }
+function attemptRows(c, p) {
+  const seen = new Map();
+  return c.attempts
+    .filter((a) => a.participantId === p.id)
+    .map((a) => {
+      const count = (seen.get(a.stage) ?? 0) + 1;
+      seen.set(a.stage, count);
+      const shared = c.shared.find((d) => d.id === a.detailAttemptId),
+        detail = c.details.find((d) => d.id === shared?.detailId);
+      return { attempt: a, number: count, shared, detail };
+    })
+    .toReversed();
+}
 function historyDialog(p) {
   const c = s(),
-    attempts = c.attempts
-      .filter((a) => a.participantId === p.id)
-      .toReversed(),
+    rows = attemptRows(c, p),
     pendingList = c.dispatches.filter(
       (d) => d.status === "awaiting" && d.roster.some((m) => m.id === p.id),
     );
@@ -1005,14 +978,21 @@ function historyDialog(p) {
     pendingList
       .map(
         (d) =>
-          `<div class="history-row"><div>Stage ${esc(d.stage)} · Awaiting scores</div><button type="button" data-cancel="${d.id}">Cancel</button></div>`,
+          `<div class="history-row"><div>${esc(stageLabel(c, d.stage))} · Awaiting scores</div><button type="button" data-cancel="${d.id}">Cancel</button></div>`,
       )
       .join("") +
-      attempts
-        .map((a) => {
-          const shared = c.shared.find((d) => d.id === a.detailAttemptId),
-            max = a.profile.components.find((x) => x.id === a.stage).max;
-          return `<div class="history-row"><div><b>Stage ${esc(a.stage)} · ${ratio(a.score, max)}</b> ${a.status === "void" ? badge("Voided") : ""}<p>${esc(a.weapon)} · ${new Date(a.recordedAt).toLocaleString("en-US")}${shared && isCS(c) && ["A", "C"].includes(a.stage) ? `<br>${shared.manual ? "Manual detail. " : ""}${shared.aggregateHits}/${shared.divisor} → ${a.score}. ${shared.inputMode === "aggregate" ? "Detail total only." : "Individual hits checked."}` : ""}${a.correction ? `<br>${esc(a.correction.reason)}` : ""}</p></div>${a.status === "valid" ? `<button type="button" data-correct="${a.id}">Correct</button>` : ""}</div>`;
+      rows
+        .map(({ attempt: a, number, shared, detail }) => {
+          const max = a.profile.components.find((x) => x.id === a.stage).max,
+            source = shared
+              ? `${detail ? `${detail.name} · ` : ""}${shared.inputMode === "aggregate" ? `detail total ${shared.aggregateHits}/${shared.divisor} firers` : `hits ${shared.roster.map((m) => m.rawHits ?? "—").join(", ")} · total ${shared.aggregateHits}/${shared.divisor} firers`}`
+              : `Individual · ${esc(a.weapon)}`,
+            roster = shared
+              ? shared.roster
+                  .map((m) => `${esc(m.name)} (${esc(m.weapon)})`)
+                  .join(", ")
+              : "";
+          return `<div class="history-row ${a.status === "void" ? "void" : ""}"><div><b>${esc(stageLabel(c, a.stage))} · attempt ${number} · ${ratio(a.score, max)}</b> ${a.status === "void" ? badge(a.revisedBy ? "Edited" : "Voided") : ""}<p>${esc(source)}${roster ? `<br>With: ${roster}` : ""}<br>${new Date(a.recordedAt).toLocaleString("en-US")}${a.correction ? `<br>${esc(a.correction.reason)}` : ""}</p></div>${a.status === "valid" ? `<div class="actions"><button type="button" data-edit="${a.id}">Edit</button><button type="button" data-correct="${a.id}">Void</button></div>` : ""}</div>`;
         })
         .join("") +
       (c.sightings || [])
@@ -1022,24 +1002,34 @@ function historyDialog(p) {
             `<div class="history-row"><div>${esc(a.practice)} · ${a.hits}<p>Not counted in scores</p></div></div>`,
         )
         .join("") +
-      (!attempts.length && !pendingList.length
+      (!rows.length && !pendingList.length
         ? '<p class="note">No scored attempts.</p>'
         : ""),
     null,
   );
   $("#dialog")
+    .querySelectorAll("[data-edit]")
+    .forEach(
+      (b) =>
+        (b.onclick = () => {
+          const a = c.attempts.find((x) => x.id === b.dataset.edit);
+          if (a.detailAttemptId) editDetailDialog(p, a.detailAttemptId);
+          else editScoreDialog(p, a);
+        }),
+    );
+  $("#dialog")
     .querySelectorAll("[data-correct]")
     .forEach(
       (b) =>
         (b.onclick = () => {
-          const a = c.attempts.find((a) => a.id === b.dataset.correct),
+          const a = c.attempts.find((x) => x.id === b.dataset.correct),
             affected = a.detailAttemptId
               ? c.attempts.filter((x) => x.detailAttemptId === a.detailAttemptId)
                   .length
               : 1;
           dialog(
-            "Correct score",
-            `${affected > 1 ? `<p class="note">This detail score affects ${affected} firers.</p>` : ""}<label class="field"><span>Correction reason</span><input name="reason" required autofocus></label>`,
+            "Void score",
+            `${affected > 1 ? `<p class="note">This detail score affects ${affected} firers.</p>` : ""}<label class="field"><span>Reason</span><input name="reason" required autofocus></label>`,
             "Void score",
             (f) => {
               voidAttempt(c, a.id, f.get("reason"));
@@ -1061,6 +1051,53 @@ function historyDialog(p) {
           historyDialog(p);
         }),
     );
+}
+// Editing an individual score, including the rifle where a stage allows a change.
+function editScoreDialog(p, a) {
+  const c = s(),
+    max = a.profile.components.find((x) => x.id === a.stage).max;
+  dialog(
+    `Edit ${p.name} · ${stageLabel(c, a.stage)}`,
+    `<label class="field"><span>Hits /${max}</span><input name="hits" type="number" min="0" max="${max}" step="1" value="${a.score}" required autofocus></label>${isCS(c) ? `<label class="field"><span>Rifle</span><select name="weapon">${option(weapons(c), a.weapon)}</select></label>` : ""}`,
+    "Save score",
+    (f) => {
+      editIndividual(c, a.id, f.get("hits"), f.get("weapon") || a.weapon);
+      save();
+      render();
+      historyDialog(p);
+    },
+  );
+}
+// Editing a detail's score: each firer's hits, their rifles, or the detail total.
+function editDetailDialog(p, detailAttemptId) {
+  const c = s(),
+    shared = c.shared.find((d) => d.id === detailAttemptId),
+    detail = c.details.find((d) => d.id === shared.detailId),
+    max = shared.roster[0].profile.components.find((x) => x.id === shared.stage)
+      .max;
+  dialog(
+    `Edit ${detail ? detail.name : "detail"} · ${stageLabel(c, shared.stage)}`,
+    `<div class="manual-list">${shared.roster
+      .map(
+        (m) =>
+          `<div class="manual-row on"><span class="manual-pick">${esc(m.name)}</span><select name="weapon-${m.id}" aria-label="${esc(m.name)} rifle">${option(weapons(c), m.weapon)}</select><input type="number" name="hits-${m.id}" min="0" max="${max}" step="1" value="${m.rawHits ?? ""}" placeholder="—" aria-label="${esc(m.name)} hits"></div>`,
+      )
+      .join(
+        "",
+      )}</div><label class="field inline"><span>Or detail total</span><input type="number" name="aggregate" min="0" step="1" value="${shared.inputMode === "aggregate" ? shared.aggregateHits : ""}" placeholder="—" aria-label="Detail total hits"></label>`,
+    "Save scores",
+    (f) => {
+      const entries = shared.roster.map((m) => ({
+        participantId: m.id,
+        weapon: f.get(`weapon-${m.id}`),
+        hits: f.get(`hits-${m.id}`) ?? "",
+      }));
+      editDetailAttempt(c, detailAttemptId, entries, f.get("aggregate") ?? "");
+      save();
+      render();
+      historyDialog(p);
+    },
+  );
 }
 function download(name, content, type = "application/json") {
   const link = document.createElement("a"),
@@ -1191,8 +1228,11 @@ $("#main").addEventListener("change", (e) => {
       );
       save();
       later(render);
-    } else if (t.id === "group-size") groupSize = Number(t.value);
-    else if (t.dataset.assign) {
+    } else if (t.dataset.stageRifle) {
+      c.stageRifles ??= {};
+      c.stageRifles[`${t.dataset.stageRifle}:${stage}`] = t.value;
+      save();
+    } else if (t.dataset.assign) {
       assignDetail(
         c,
         t.dataset.assign,
@@ -1328,7 +1368,9 @@ $("#main").addEventListener("click", (e) => {
       return;
     }
     if (b.dataset.person) {
-      personDialog(b.dataset.person);
+      const person = c.participants.find((x) => x.id === b.dataset.person);
+      if (tab === "final") historyDialog(person);
+      else personDialog(b.dataset.person);
       return;
     }
     if (b.dataset.resetThresholds) {
@@ -1424,14 +1466,30 @@ $("#main").addEventListener("click", (e) => {
         );
         break;
       case "auto-detail": {
-        const size = Number($("#group-size").value);
-        groupSize = size;
-        const n = autoDetail(c, size);
+        const sizes = autoDetail(c);
         save();
         render();
-        toast(`${n} participants put into groups of ${size}.`);
+        toast(
+          `${sizes.length} ${sizes.length === 1 ? "detail" : "details"} of ${sizes.join(", ")}.`,
+        );
         break;
       }
+      case "confirm-participants":
+        setRosterLock(c, true);
+        save();
+        tab = `stage:${stages(c)[0].id}`;
+        render();
+        toast("Participants confirmed.");
+        break;
+      case "unlock":
+        setRosterLock(c, false);
+        save();
+        render();
+        break;
+      case "to-stage":
+        tab = `stage:${stages(c)[0].id}`;
+        render();
+        break;
       case "fill-all":
         fillWeapons(c, $("#fill-weapon").value);
         save();
