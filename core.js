@@ -1177,8 +1177,12 @@ export function dispatch(s, stage, keys) {
 // The firing order for a stage, as firers sit waiting on the ground: everyone
 // still to take a first attempt, in detail order, then each redetail in the
 // order it was sent. Priority never reorders it; scoring an entry takes it off,
-// so the rest move up.
+// so the rest move up. A skipped entry rejoins at the back.
 export function firingQueue(s, stage) {
+  const skipped = (key) => {
+    const at = s.skips?.[`${stage}:${key}`];
+    return at ? Date.parse(at) : -Infinity;
+  };
   const all = entities(s, stage),
     sent = s.dispatches.filter(
       (d) => d.stage === stage && d.status === "awaiting",
@@ -1202,22 +1206,41 @@ export function firingQueue(s, stage) {
         ...e,
         dispatch: null,
         // A detail made on the spot joins when it is made.
-        joined:
+        joined: Math.max(
           e.detail?.temporary && e.detail.createdAt
             ? Date.parse(e.detail.createdAt)
             : -Infinity,
+          skipped(e.key),
+        ),
         order: i,
       }))
       .sort((a, b) => a.joined - b.joined || seat(a) - seat(b) || a.order - b.order),
     again = sent
       .map((d) => {
         const e = all.find((x) => x.key === d.key);
-        return e && { ...e, dispatch: d, joined: Date.parse(d.at) };
+        return (
+          e && {
+            ...e,
+            dispatch: d,
+            joined: Math.max(Date.parse(d.at), skipped(e.key)),
+          }
+        );
       })
       .filter(Boolean);
   return [...first, ...again]
     .sort((a, b) => (a.joined === b.joined ? 0 : a.joined - b.joined))
     .map((e) => ({ ...e, attempt: nextAttempt(s, e.members, stage) }));
+}
+// Sends an entry to the back of the firing order, e.g. when a firer falls out.
+// It keeps its place in the scores; only when it fires changes.
+export function skipQueue(s, stage, key) {
+  if (!firingQueue(s, stage).some((e) => e.key === key))
+    throw Error("That entry is not waiting to fire.");
+  s.skips ??= {};
+  const previous = s.skips[`${stage}:${key}`] ?? null;
+  s.skips[`${stage}:${key}`] = now();
+  audit(s, "Skipped in the firing order", { stage, key });
+  return previous;
 }
 export function cancelDispatch(s, id) {
   const d = s.dispatches.find((d) => d.id === id && d.status === "awaiting");

@@ -24,7 +24,7 @@ BTP, ATP and APS scores save as you enter them. Combat Shoot is scored by detail
 
 Each firer keeps the rifle set in Participants for the whole shoot. Every row shows which attempt it is, starting at Attempt 1.
 
-The firing queue shows who fires next: everyone still to take a first attempt, in detail order, then redetails in the order they were sent. Tick firers in Redetailing and choose Redetail to add them to the back of the queue; they move up as the entries ahead are scored. Tap ↕ to mark a firer high ▲ or low ▼ priority. Priority sorts the Redetailing list only, never the firing queue.
+Each stage tab lists who still has to fire, in firing order: everyone's first attempt in detail order, then redetails in the order they were sent. Enter scores straight into it; scored entries drop off and the rest move up. If someone falls out, Skip sends that entry to the back. Tick firers in Redetailing and choose Redetail to add them to the back of the queue. Tap ↕ to mark a firer high ▲ or low ▼ priority. Priority sorts the Redetailing list only, never the firing queue.
 
 ## Reproduction
 

@@ -55,6 +55,7 @@ import {
   nextAttempt,
   detailAttempts,
   firingQueue,
+  skipQueue,
   MISSING,
   attemptNumbers,
   detailAttemptNumbers,
@@ -413,7 +414,7 @@ function renderStage(stage) {
       `<span class="spacer"></span>${searchBox()}${isCS(c) ? '<button data-action="manual-detail">Manual detail</button>' : ""}`,
     ) +
     issuesPanel(c) +
-    `<div class="grid"><div class="score-col">${detailedStage(c, stage) ? detailPanels(c, stage) : individualPanel(c, stage)}</div><div class="side-col">${firingPanel(c, stage)}${queuePanel(c, stage, q)}</div></div>`;
+    `<div class="grid"><div class="score-col">${detailedStage(c, stage) ? detailPanels(c, stage) : individualPanel(c, stage)}</div>${queuePanel(c, stage, q)}</div>`;
 }
 // Roster problems that will block scoring, with one link to fix them.
 function issuesPanel(c) {
@@ -438,23 +439,24 @@ function individualPanel(c, stage) {
       const d = c.details.find((x) => x.id === p.detailId);
       return d && !d.temporary ? detailNumber(d) : 99;
     },
-    toShoot = firingQueue(c, stage)
-      .map((e) => e.members[0])
-      .filter(filtered),
+    order = firingQueue(c, stage),
+    seat = new Map(order.map((e, i) => [e.members[0].id, i])),
+    toShoot = order.map((e) => e.members[0]).filter(filtered),
     done = c.participants
       .filter((p) => filtered(p) && !toShoot.includes(p))
       .toSorted((a, b) => detailOf(a) - detailOf(b)),
     entered = toShoot.filter((p) => entryValue(c, stage, p) !== "").length;
   const row = (p) => {
     const max = p.profile.components.find((x) => x.id === stage).max;
-    return `<tr data-row="${p.id}" class="${waiting.has(p.id) ? "awaiting" : ""}"><td class="name">${esc(p.name)}${multi ? `<div class="sub">${esc(p.weapon)}</div>` : ""}<div class="attempt ${waiting.has(p.id) ? "on" : ""}">Attempt ${nextAttempt(c, p, stage)}${waiting.has(p.id) ? " · redetailed" : ""}</div></td><td><div class="score-input"><input type="number" min="0" max="${max}" step="1" inputmode="numeric" enterkeyhint="next" data-hits="${p.id}" value="${esc(entryValue(c, stage, p))}" aria-label="${esc(p.name)} hits" placeholder="—"><span class="muted">/${max}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+    const n = seat.get(p.id);
+    return `<tr data-row="${p.id}" class="${[waiting.has(p.id) && "awaiting", n === 0 && "next"].filter(Boolean).join(" ")}"><td class="seat">${n + 1}</td><td class="name">${esc(p.name)}${multi ? `<div class="sub">${esc(p.weapon)}</div>` : ""}<div class="attempt ${waiting.has(p.id) ? "on" : ""}">Attempt ${nextAttempt(c, p, stage)}${waiting.has(p.id) ? " · redetailed" : ""}</div></td><td><div class="score-input"><input type="number" min="0" max="${max}" step="1" inputmode="numeric" enterkeyhint="next" data-hits="${p.id}" value="${esc(entryValue(c, stage, p))}" aria-label="${esc(p.name)} hits" placeholder="—"><span class="muted">/${max}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell">${order.length > 1 ? skipButton(`person:${p.id}`, p.name) : ""}<button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
   };
   const scoredRow = (p) =>
     `<tr data-row="${p.id}"><td class="name">${esc(p.name)}</td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
   return (
-    `<section class="panel score-panel" data-individual><div class="detail-head"><h3>${esc(stageLabel(c, stage))}</h3><span class="count">${toShoot.length} to shoot</span></div>${cs ? '<p class="note stage-note">Fired individually, in any order. Details do not apply to this stage.</p>' : ""}${
+    `<section class="panel score-panel" data-individual><div class="detail-head"><h3>${esc(stageLabel(c, stage))}</h3><span class="count">${toShoot.length} in the queue</span></div><p class="note stage-note">${queueNote}${cs ? " Fired individually. Details do not apply to this stage." : ""}</p>${
       toShoot.length
-        ? `<div class="table-wrap"><table><thead><tr><th>Full name</th><th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${toShoot.map(row).join("")}</tbody></table></div>`
+        ? `<div class="table-wrap"><table><thead><tr><th>#</th><th>Full name</th><th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${toShoot.map(row).join("")}</tbody></table></div>`
         : `<div class="panel-body note">Everyone has a ${esc(stageLabel(c, stage))} score. Redetail firers to enter more.</div>`
     }<div class="errors draft-errors" role="alert"></div>${
       toShoot.length
@@ -502,6 +504,12 @@ function needsScores(c, d, stage) {
     (draft && (draft.aggregate !== "" || draft.rows.some((r) => r.hits !== "")))
   );
 }
+// How the order on a stage tab is made, said once above it.
+const queueNote =
+  "In firing order: first attempts first, then redetails as they are sent. Scored entries drop off; Skip sends one to the back.";
+function skipButton(key, name) {
+  return `<button type="button" class="skip" data-skip="${esc(key)}" title="Skip: send to the back of the queue" aria-label="Skip ${esc(name)}">Skip</button>`;
+}
 function detailPanels(c, stage) {
   const waiting = awaiting(c, stage),
     label = stageLabel(c, stage),
@@ -529,6 +537,7 @@ function detailPanels(c, stage) {
       '<p><button data-action="participants">Participants</button></p>',
     );
   return (
+    `<p class="note queue-note">${queueNote}</p>` +
     (unassigned
       ? `<p class="note">${unassigned} ${unassigned === 1 ? "participant needs" : "participants need"} a detail. <button class="inline-link" data-action="participants">Assign details</button></p>`
       : "") +
@@ -538,7 +547,8 @@ function detailPanels(c, stage) {
         const people = members(c, d.id),
           draft = getDraft(c, d.id, stage),
           attempt = nextAttempt(c, people, stage);
-        return `<section class="panel score-panel ${d.temporary ? "temporary" : ""}" data-detail="${d.id}"><div class="detail-head"><h3>${esc(d.name)}</h3>${badge(`Attempt ${attempt}`)}${borrowedNote(c, d, stage)}<span class="count">${people.length} firers</span><div class="actions"><button data-detail-history="${d.id}" aria-label="History for ${esc(d.name)}">History</button><button class="icon-button" data-reset="${d.id}" title="Clear entries" aria-label="Clear entries for ${esc(d.name)}">↺</button></div></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th><th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${people
+        const n = seat.get(d.id);
+        return `<section class="panel score-panel ${[d.temporary && "temporary", n === 0 && "next"].filter(Boolean).join(" ")}" data-detail="${d.id}"><div class="detail-head">${n === undefined ? "" : `<span class="seat">${n + 1}</span>`}<h3>${esc(d.name)}</h3>${n === 0 ? '<span class="badge blue">Next</span>' : ""}${badge(`Attempt ${attempt}`)}${borrowedNote(c, d, stage)}<span class="count">${people.length} firers</span><div class="actions">${n !== undefined && seat.size > 1 ? skipButton(`detail:${d.id}`, d.name) : ""}<button data-detail-history="${d.id}" aria-label="History for ${esc(d.name)}">History</button><button class="icon-button" data-reset="${d.id}" title="Clear entries" aria-label="Clear entries for ${esc(d.name)}">↺</button></div></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th><th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${people
           .map((p) => {
             const row = draft.rows.find((r) => r.participantId === p.id),
               mine = nextAttempt(c, p, stage);
@@ -589,22 +599,6 @@ function queuePanel(c, stage, q) {
       })
       .join("") || '<div class="panel-body note">No firers to redetail.</div>'
   }</div>${reachedPanel(c, stage, q)}</section>`;
-}
-// Who fires next, in the order they sit on the ground. Redetails join the back
-// and move up as the entries ahead of them are scored.
-function firingPanel(c, stage) {
-  const list = firingQueue(c, stage),
-    firers = list.reduce((n, e) => n + e.members.length, 0);
-  return `<section class="panel firing"><div class="queue-head"><div class="queue-title"><h3>Firing queue</h3><span class="count">${firers} ${firers === 1 ? "firer" : "firers"}</span></div></div>${
-    list.length
-      ? `<ol class="firing-list">${list
-          .map((e, i) => {
-            const name = e.detail ? e.detail.name : e.members[0].name;
-            return `<li class="firing-row ${e.dispatch ? "again" : ""}"><span class="count">${i + 1}</span><div><strong>${esc(name)}</strong><p class="note">Attempt ${e.attempt}${e.dispatch ? " · redetailed" : ""}</p></div>${e.dispatch ? `<button type="button" class="icon-button" data-uncue="${e.dispatch.id}" title="Take out of the queue" aria-label="Take ${esc(name)} out of the firing queue">✕</button>` : ""}</li>`;
-          })
-          .join("")}</ol>`
-      : `<div class="panel-body note">Nobody waiting. Redetail firers to add them here.</div>`
-  }</section>`;
 }
 // Firers who already met the stage threshold, with a way to send them again.
 function reachedPanel(c, stage, q) {
@@ -729,7 +723,7 @@ function redetail(stage) {
   if (shot * 2 >= total) return runRedetail(stage, keys);
   dialog(
     "Most firers have not shot yet",
-    `<p>Only ${shot} of ${total} firers have a ${esc(stageLabel(c, stage))} score.</p><p class="note">Redetailed firers join the back of the firing queue${ahead ? `, behind the ${ahead} ${ahead === 1 ? "firer" : "firers"} already waiting` : ""}.</p>`,
+    `<p>Only ${shot} of ${total} firers have a ${esc(stageLabel(c, stage))} score.</p><p class="note">Redetailed firers join the back of the queue${ahead ? `, behind the ${ahead} ${ahead === 1 ? "firer" : "firers"} already waiting` : ""}.</p>`,
     "Redetail",
     () => {
       $("#dialog").close();
@@ -767,7 +761,7 @@ async function runRedetail(stage, keys) {
     at =
       seats.length > 1 ? `${seats[0]}–${seats.at(-1)}` : String(seats[0] ?? "");
   toast(
-    `${ids.size} ${ids.size === 1 ? "firer" : "firers"} redetailed, ${seats.length > 1 ? "places" : "place"} ${at} in the firing queue.`,
+    `${ids.size} ${ids.size === 1 ? "firer" : "firers"} redetailed, ${seats.length > 1 ? "places" : "place"} ${at} in the queue.`,
   );
 }
 // Brief shuffle of the list, ending in the order it should be.
@@ -1553,13 +1547,17 @@ $("#main").addEventListener("click", (e) => {
       toast("Thresholds reset.");
       return;
     }
-    if (b.dataset.uncue) {
-      const d = c.dispatches.find((x) => x.id === b.dataset.uncue);
-      cancelDispatch(c, d.id);
+    if (b.dataset.skip) {
+      const key = b.dataset.skip,
+        slot = `${stage}:${key}`,
+        before = skipQueue(c, stage, key),
+        e = entities(c, stage).find((x) => x.key === key),
+        name = e.detail ? e.detail.name : e.members[0].name;
       save();
       render();
-      toast("Taken out of the firing queue.", () => {
-        d.status = "awaiting";
+      toast(`${name} moved to the back of the queue.`, () => {
+        if (before) c.skips[slot] = before;
+        else delete c.skips[slot];
       });
       return;
     }

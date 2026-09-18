@@ -125,8 +125,11 @@ async function addNames(page, names) {
     // Nothing in Redetailing before any score is confirmed.
     assert.equal(await page.locator(".queue-row").count(), 0);
     assert.ok(await page.locator("#redetail").isDisabled());
-    // The firing queue starts as the roster, in order.
-    assert.equal(await page.locator(".firing-row").count(), 3);
+    // The stage tab is the firing order, starting as the roster.
+    assert.equal(await page.locator("[data-individual] td.seat").count(), 3);
+    assert.ok(
+      (await page.locator("tr.next").innerText()).includes("Alex Tan"),
+    );
     await enterHits(page, "Alex Tan", "8");
     await click(page, "Confirm scores");
     // Redetailing opens straight away; the firing queue shows who is next.
@@ -134,7 +137,9 @@ async function addNames(page, names) {
       page,
       () => document.querySelectorAll(".queue-row").length === 1,
     );
-    const firing = await page.locator(".firing-list").innerText();
+    const firing = await page
+      .locator("[data-individual] tbody")
+      .innerText();
     assert.ok(/Benjamin Lee[\s\S]*Chris Wong/.test(firing), firing);
     assert.ok(!firing.includes("Alex Tan"), firing);
     await enterHits(page, "Benjamin Lee", "11");
@@ -250,7 +255,9 @@ async function addNames(page, names) {
       page,
       () => document.querySelectorAll("tr.awaiting").length === 1,
     );
-    const order = await page.locator(".firing-row").allInnerTexts();
+    const order = await page
+      .locator("[data-individual] tr[data-row]")
+      .allInnerTexts();
     assert.ok(order[0].includes("Alex Tan"), order.join("|"));
     assert.ok(order.at(-1).includes("Benjamin Lee"), order.join("|"));
     assert.ok(order.at(-1).includes("Attempt 2 · redetailed"), order.join("|"));

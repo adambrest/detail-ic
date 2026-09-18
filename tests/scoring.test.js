@@ -47,6 +47,7 @@ import {
   nextAttempt,
   detailAttempts,
   firingQueue,
+  skipQueue,
   attemptNumbers,
   detailAttemptNumbers,
   result,
@@ -604,6 +605,23 @@ test("The firing queue keeps first attempts in order, then redetails as sent", (
   detailScore(s, d1, "A", 28);
   assert.deepEqual(names(), ["Detail 3#2"]);
   assert.equal(firingQueue(s, "A")[0].dispatch.status, "awaiting");
+});
+test("Skipping sends an entry to the back of the firing order", async () => {
+  const { s, people } = setup("BTP", "standard", 3);
+  const order = () => firingQueue(s, "A").map((e) => e.members[0].name);
+  recordIndividual(s, people[2], "A", "4");
+  dispatch(s, "A", [`person:${people[2].id}`]);
+  assert.deepEqual(order(), ["Person 1", "Person 2", "Person 3"]);
+  await new Promise((done) => setTimeout(done, 5));
+  // Person 1 falls out: everyone else moves up, redetail included.
+  skipQueue(s, "A", `person:${people[0].id}`);
+  assert.deepEqual(order(), ["Person 2", "Person 3", "Person 1"]);
+  recordIndividual(s, people[0], "A", "9");
+  assert.deepEqual(order(), ["Person 2", "Person 3"]);
+  assert.throws(
+    () => skipQueue(s, "A", `person:${people[0].id}`),
+    /not waiting/,
+  );
 });
 test("Individual stages queue firers by detail, then redetails", () => {
   const { s, people } = setup("BTP", "standard", 3);
