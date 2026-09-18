@@ -13,7 +13,7 @@ const { startServer } = require("./server.cjs");
   const version = await page.evaluate(() => globalThis.APP_VERSION);
   assert.match(version, /^\d+\.\d+\.\d+$/);
   assert.ok(await page.locator("#update").isHidden());
-  assert.ok(await page.locator("#status").isVisible());
+  assert.equal(await page.locator("#app-version").innerText(), `v${version}`);
 
   // A newer version installs in the background and waits to be applied.
   server.overrides["/version.js"] = 'globalThis.APP_VERSION = "9.9.9";';
@@ -22,7 +22,6 @@ const { startServer } = require("./server.cjs");
     await reg.update();
   });
   await page.locator("#update").waitFor({ state: "visible", timeout: 10000 });
-  assert.ok(await page.locator("#status").isHidden());
   assert.equal(await page.evaluate(() => globalThis.APP_VERSION), version);
 
   // Applying it reloads the page on the new version and drops the old cache.

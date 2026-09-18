@@ -6,6 +6,7 @@
   --muted: #64748b;
   --accent: #2563eb;
   --danger: #b91c1c;
+  --warn: #d97706;
   --ok: #15803d;
 }
 * {
@@ -134,9 +135,16 @@ h1 .logo {
   white-space: nowrap;
 }
 .version {
-  font-size: 10px;
-  color: var(--muted);
+  flex: 0 0 auto;
   margin-left: -14px;
+  color: var(--muted);
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 6px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
   white-space: nowrap;
 }
 .links {
@@ -146,17 +154,17 @@ h1 .logo {
 .update-msg {
   border: 0;
   border-radius: 999px;
-  background: #b45309;
+  background: var(--warn);
   color: #fff;
   font-size: 11px;
   font-weight: 700;
-  padding: 6px 11px;
-  min-height: 26px;
+  padding: 4px 10px;
+  min-height: 24px;
   margin-left: auto;
   white-space: nowrap;
 }
 .update-msg:hover {
-  background: #92400e;
+  background: #b45309;
 }
 .update-msg[hidden] {
   display: none;
@@ -569,8 +577,18 @@ td {
   padding: 5px 8px;
   min-height: 28px;
 }
-.past-scores .detail-head h3 {
+.past-scores {
+  padding: 0;
+}
+.past-scores > summary {
+  padding: 11px 12px;
+  font-size: 12px;
+  font-weight: 650;
   color: var(--muted);
+  cursor: pointer;
+}
+.past-scores[open] > summary {
+  border-bottom: 1px solid var(--line);
 }
 .queue-list.shuffling::before {
   content: "";

@@ -122,9 +122,13 @@ async function addNames(page, names) {
       (await page.locator("#tabs .on").innerText()).includes("Stage A · Day"),
     );
 
-    // Redetailing is held back until everyone has a first score.
+    // Nothing in Redetailing before any score is confirmed.
     assert.equal(await page.locator(".queue-row").count(), 0);
+    assert.equal(await page.locator(".queue-held").count(), 0);
+    assert.ok(await page.locator("#redetail").isDisabled());
     await enterHits(page, "Alex Tan", "8");
+    assert.equal(await page.locator(".queue-held").count(), 0);
+    await click(page, "Confirm scores");
     assert.ok(
       (await page.locator(".queue-held").innerText()).includes(
         "2 firers have no Stage A · Day score yet",
@@ -134,24 +138,26 @@ async function addNames(page, names) {
     assert.ok(await page.locator("#redetail").isDisabled());
     await enterHits(page, "Benjamin Lee", "11");
     await enterHits(page, "Chris Wong", "14");
+    await click(page, "Confirm scores");
     await waitFor(
       page,
       () => document.querySelectorAll(".queue-row").length === 2,
     );
+    // Lowest score first by default.
     assert.ok(
       (await page.locator(".queue-row").first().innerText()).includes(
-        "Benjamin Lee",
+        "Alex Tan",
       ),
     );
     assert.equal(await page.locator(".queue .info").count(), 1);
     assert.ok(await inViewport(page, page.locator("#redetail")));
     await page
-      .getByRole("button", { name: "Alex Tan priority: normal" })
+      .getByRole("button", { name: "Benjamin Lee priority: normal" })
       .click();
-    assert.ok(
-      (await page.locator(".queue-row").first().innerText()).includes(
-        "Alex Tan",
-      ),
+    await waitFor(page, () =>
+      document
+        .querySelector(".queue-row")
+        ?.innerText.includes("Benjamin Lee"),
     );
     await page.screenshot({
       path: `tests/${name}-desktop.png`,
@@ -166,7 +172,10 @@ async function addNames(page, names) {
 
     // Results show every attempt, and Undo puts a score back.
     await enterHits(page, "Alex Tan", "13");
-    const alex = page.locator("tr", { hasText: "Alex Tan" });
+    await click(page, "Confirm scores");
+    // Scored firers move into the collapsed past scores list.
+    await page.locator(".past-scores > summary").first().click();
+    const alex = page.locator(".past-scores tr", { hasText: "Alex Tan" });
     await waitFor(page, () =>
       [...document.querySelectorAll("tr")].some(
         (tr) =>
@@ -176,11 +185,19 @@ async function addNames(page, names) {
       ),
     );
     await page.locator("#toast").getByRole("button", { name: "Undo" }).click();
-    assert.equal(await alex.locator(".results b").innerText(), "8");
+    assert.equal(
+      await page
+        .locator("tr", { hasText: "Alex Tan" })
+        .locator(".results b")
+        .innerText(),
+      "8",
+    );
     await enterHits(page, "Alex Tan", "13");
+    await click(page, "Confirm scores");
+    await page.locator(".past-scores > summary").first().click();
 
     // A recorded score can be edited from the history.
-    await page.getByRole("button", { name: "Options for Alex Tan" }).click();
+    await page.getByRole("button", { name: "Options for Alex Tan" }).first().click();
     await click(page, "History");
     assert.ok((await page.locator("#dialog").innerText()).includes("attempt 2"));
     await page
@@ -192,8 +209,9 @@ async function addNames(page, names) {
     await click(page, "Save score");
     assert.ok((await page.locator("#dialog").innerText()).includes("Edited"));
     await click(page, "Close");
+    await page.locator(".past-scores > summary").first().click();
     assert.equal(await alex.locator(".results b").innerText(), "15");
-    await page.getByRole("button", { name: "Options for Alex Tan" }).click();
+    await page.getByRole("button", { name: "Options for Alex Tan" }).first().click();
     await click(page, "History");
     await page
       .locator("#dialog")
@@ -208,6 +226,7 @@ async function addNames(page, names) {
     await tab(page, "Stage B · Night");
     await enterHits(page, "Alex Tan", "13");
     await enterHits(page, "Benjamin Lee", "5");
+    await click(page, "Confirm scores");
     await waitFor(page, () =>
       [...document.querySelectorAll(".queue-row")].some((r) =>
         r.innerText.includes("Benjamin Lee"),
@@ -339,14 +358,15 @@ async function addNames(page, names) {
       ),
     );
     // Changing the order reshuffles the list.
-    await page.locator("#order").selectOption("lowest");
+    await page.locator("#order").selectOption("highest");
     await waitFor(page, () => document.querySelectorAll(".queue-row").length > 0);
 
     // Stage B has no details at all, and can be fired on another rifle.
     await tab(page, "Stage B");
     assert.equal(await page.locator(".score-panel").count(), 1);
+    // Individual confirm, but no per-detail confirm.
     assert.equal(
-      await page.getByRole("button", { name: /Confirm scores/ }).count(),
+      await page.getByRole("button", { name: /Confirm scores for/ }).count(),
       0,
     );
     assert.ok(
@@ -358,6 +378,7 @@ async function addNames(page, names) {
       .getByRole("combobox", { name: "Dana Koh rifle for Stage B" })
       .selectOption("SAR21/M203");
     await enterHits(page, "Dana Koh", "6");
+    await click(page, "Confirm scores");
     await waitFor(page, () =>
       JSON.parse(localStorage.getItem("detail-ic-v2")).shoots[1].attempts.some(
         (a) => a.stage === "B" && a.weapon === "SAR21/M203",
@@ -419,9 +440,7 @@ async function addNames(page, names) {
     assert.ok(
       (await page.locator("tbody tr").first().innerText()).includes("12/20"),
     );
-    await waitFor(page, () =>
-      document.querySelector("#status").textContent.includes("Offline"),
-    );
+    assert.equal(await page.locator("#status").count(), 0);
     assert.deepEqual(errors, []);
     await browser.close();
     console.log(

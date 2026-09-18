@@ -98,7 +98,6 @@ let store,
   showReached = false,
   pasteDetail = 1,
   apsView = "standard",
-  offlineReady = false,
   busy = false,
   pointerDown = false,
   pending = null;
@@ -155,15 +154,6 @@ function option(values, value) {
 function badge(text) {
   return `<span class="badge ${text === "Marksman" ? "blue" : text === "Pass" ? "green" : text === "Fail" ? "red" : ""}">${esc(text)}</span>`;
 }
-function status() {
-  $("#status").textContent = navigator.onLine
-    ? offlineReady
-      ? "Offline ready"
-      : "Saved on device"
-    : offlineReady
-      ? "Offline · saved on device"
-      : "Offline";
-}
 function warning(message) {
   $("#storage-warning").textContent = message;
   $("#storage-warning").hidden = false;
@@ -180,7 +170,6 @@ function save() {
     localStorage.setItem(KEY, data);
     lastSaved = data;
     $("#storage-warning").hidden = true;
-    status();
     return true;
   } catch (e) {
     warning(e.message || "Storage is full. Export a backup.");
@@ -263,7 +252,6 @@ function render() {
   else if (tab === "participants") renderParticipants();
   else if (tab === "final") renderFinal();
   else renderStage(tab.split(":")[1]);
-  status();
 }
 function renderShoots() {
   const types = TYPES,
@@ -429,6 +417,9 @@ function issuesPanel(c) {
     ? `<div class="panel issues" role="status">${esc(issues.join("\n"))}\n<button class="inline-link" data-action="participants">Fix in Participants</button></div>`
     : "";
 }
+function entryValue(c, stage, p) {
+  return c.entries?.[`${stage}:${p.id}`] ?? "";
+}
 function individualPanel(c, stage) {
   if (!c.participants.length)
     return empty(
@@ -449,10 +440,11 @@ function individualPanel(c, stage) {
     toShoot = shown.filter(
       (p) => best(c, p, stage) === null || waiting.has(p.id),
     ),
-    done = shown.filter((p) => !toShoot.includes(p));
+    done = shown.filter((p) => !toShoot.includes(p)),
+    entered = toShoot.filter((p) => entryValue(c, stage, p) !== "").length;
   const row = (p) => {
     const max = p.profile.components.find((x) => x.id === stage).max;
-    return `<tr data-row="${p.id}" class="${waiting.has(p.id) ? "awaiting" : ""}"><td class="name">${esc(p.name)}${multi && !cs ? `<div class="sub">${esc(p.weapon)}</div>` : ""}${waiting.has(p.id) ? '<div class="pending">Awaiting scores</div>' : ""}</td>${cs ? `<td><select class="row-weapon" data-stage-rifle="${p.id}" aria-label="${esc(p.name)} rifle for ${esc(stageLabel(c, stage))}">${option(weapons(c), stageRifle(c, p, stage))}</select></td>` : ""}<td><div class="score-input"><input type="number" min="0" max="${max}" step="1" inputmode="numeric" enterkeyhint="next" data-hits="${p.id}" aria-label="${esc(p.name)} hits" placeholder="—"><span class="muted">/${max}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+    return `<tr data-row="${p.id}" class="${waiting.has(p.id) ? "awaiting" : ""}"><td class="name">${esc(p.name)}${multi && !cs ? `<div class="sub">${esc(p.weapon)}</div>` : ""}${waiting.has(p.id) ? '<div class="pending">Redetailed</div>' : ""}</td>${cs ? `<td><select class="row-weapon" data-stage-rifle="${p.id}" aria-label="${esc(p.name)} rifle for ${esc(stageLabel(c, stage))}">${option(weapons(c), stageRifle(c, p, stage))}</select></td>` : ""}<td><div class="score-input"><input type="number" min="0" max="${max}" step="1" inputmode="numeric" enterkeyhint="next" data-hits="${p.id}" value="${esc(entryValue(c, stage, p))}" aria-label="${esc(p.name)} hits" placeholder="—"><span class="muted">/${max}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
   };
   const scoredRow = (p) =>
     `<tr data-row="${p.id}"><td class="name">${esc(p.name)}</td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
@@ -461,9 +453,13 @@ function individualPanel(c, stage) {
       toShoot.length
         ? `<div class="table-wrap"><table><thead><tr><th>Full name</th>${cs ? "<th>Rifle</th>" : ""}<th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${toShoot.map(row).join("")}</tbody></table></div>`
         : `<div class="panel-body note">Everyone has a ${esc(stageLabel(c, stage))} score. Redetail firers to enter more.</div>`
-    }<div class="errors draft-errors" role="alert"></div><div class="score-footer"><span class="draft-summary">Scores save when you press Enter or leave the box.</span></div></section>` +
+    }<div class="errors draft-errors" role="alert"></div>${
+      toShoot.length
+        ? `<div class="score-footer"><span class="draft-summary">${entered} of ${toShoot.length} entered.</span><button class="primary" data-confirm-all="${stage}">Confirm scores</button></div>`
+        : ""
+    }</section>` +
     (done.length
-      ? `<section class="panel past-scores"><div class="detail-head"><h3>Past scores</h3><span class="count">${done.length} firers</span></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Results</th><th></th></tr></thead><tbody>${done.map(scoredRow).join("")}</tbody></table></div></section>`
+      ? `<details class="panel past-scores"><summary>Past scores · ${done.length} ${done.length === 1 ? "firer" : "firers"}</summary><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Results</th><th></th></tr></thead><tbody>${done.map(scoredRow).join("")}</tbody></table></div></details>`
       : "")
   );
 }
@@ -551,29 +547,26 @@ function detailPanels(c, stage) {
   );
 }
 function methodInfo(c) {
-  const goalName = c.settings.objective === "marksman" ? "Marksman" : "Pass";
-  return `${
+  return `Only firers below their auto-detailing threshold are listed; set thresholds in Settings. ${
     {
-      automatic: `Firers who haven't shot come first. Then firers below the auto-detailing threshold for ${goalName}, closest to it first. Set thresholds in Settings.`,
-      lowest: "Lowest best score first.",
       highest: "Highest best score first.",
-      first: "In the order firers last shot: whoever shot earliest goes again first.",
-    }[c.settings.order]
+      first: "Earliest shot first: whoever shot longest ago goes again first.",
+    }[c.settings.order] ?? "Lowest best score first."
   } ▲ High priority firers go first and ▼ low priority firers go last.`;
 }
 function queuePanel(c, stage, q) {
   const cs = isCS(c),
+    started = c.attempts.some((a) => a.stage === stage && a.status === "valid"),
     pending = notYetShot(c, stage),
-    held = pending.length && !forcedQueue.has(`${c.id}:${stage}`),
+    held = started && pending.length && !forcedQueue.has(`${c.id}:${stage}`),
     cap = !cs && DETAIL_RULES[c.program]?.max,
     count = q
       .filter((e) => selected.has(e.key))
       .reduce((n, e) => n + e.members.length, 0);
   return `<section class="panel queue"><div class="queue-head"><div class="queue-title"><h3>Redetailing</h3><span class="count">${q.reduce((n, e) => n + e.members.length, 0)} firers</span></div><div class="queue-method"><select id="order" aria-label="Redetailing order">${[
-    ["automatic", "Automatic"],
-    ["lowest", "Lowest first"],
-    ["highest", "Highest first"],
-    ["first", "Shoot first, shoot again first"],
+    ["lowest", "Lowest score first"],
+    ["highest", "Highest score first"],
+    ["first", "Earliest shot first"],
   ]
     .map(
       ([key, label]) =>
@@ -581,16 +574,16 @@ function queuePanel(c, stage, q) {
     )
     .join(
       "",
-    )}</select>${info(methodInfo(c))}</div><div class="queue-actions"><button data-action="select-all" ${held ? "disabled" : ""}>${cap ? `Select next ${cap}` : "Select all"}</button><button class="primary" id="redetail" data-action="redetail" ${count && !held ? "" : "disabled"}>Redetail${count ? ` (${count})` : ""}</button></div></div>${
+    )}</select>${info(methodInfo(c))}</div><div class="queue-actions"><button data-action="select-all" ${held || !started ? "disabled" : ""}>${cap ? `Select next ${cap}` : "Select all"}</button><button class="primary" id="redetail" data-action="redetail" ${count && !held && started ? "" : "disabled"}>Redetail${count ? ` (${count})` : ""}</button></div></div>${
     held
       ? `<div class="queue-held"><div class="errors">${pending.length} ${pending.length === 1 ? "firer has" : "firers have"} no ${esc(stageLabel(c, stage))} score yet: ${esc(pending.slice(0, 8).map((p) => p.name).join(", "))}${pending.length > 8 ? ` and ${pending.length - 8} more` : ""}.</div><div class="panel-body"><p class="note">Everyone shoots once before redetailing starts.</p><button data-action="force-queue">Redetail anyway</button></div></div>`
       : ""
-  }<div class="queue-list" ${held ? "hidden" : ""}>${
+  }${!started ? `<div class="panel-body note">No ${esc(stageLabel(c, stage))} scores yet.</div>` : ""}<div class="queue-list" ${held || !started ? "hidden" : ""}>${
     q
       .map((e, i) => {
         const name = cs ? e.detail.name : e.members[0].name,
           max = e.priority.p.profile.components.find((x) => x.id === stage).max;
-        return `<div class="queue-row" data-key="${esc(e.key)}"><input type="checkbox" data-queue="${esc(e.key)}" ${selected.has(e.key) ? "checked" : ""} ${e.errors.length ? "disabled" : ""} aria-label="Select ${esc(name)}"><span class="count">${i + 1}</span><div><strong>${esc(name)}</strong>${e.detail ? borrowedNote(c, e.detail, stage) : ""}<p class="note">${e.errors.length ? "Fix this detail in Participants" : e.first ? "First attempt" : `Best ${ratio(best(c, e.priority.p, stage), max)}`}</p></div><button type="button" class="prio ${e.tag || ""}" data-priority="${esc(e.key)}" aria-label="${esc(name)} priority: ${e.tag || "normal"}" title="${e.tag === "high" ? "High priority" : e.tag === "low" ? "Low priority" : "Set priority"}">${e.tag === "high" ? "▲" : e.tag === "low" ? "▼" : "↕"}</button></div>`;
+        return `<div class="queue-row" data-key="${esc(e.key)}"><input type="checkbox" data-queue="${esc(e.key)}" ${selected.has(e.key) ? "checked" : ""} ${e.errors.length ? "disabled" : ""} aria-label="Select ${esc(name)}"><span class="count">${i + 1}</span><div><strong>${esc(name)}</strong>${e.detail ? borrowedNote(c, e.detail, stage) : ""}${e.above ? badge("Above threshold") : ""}<p class="note">${e.errors.length ? "Fix this detail in Participants" : e.first ? "First attempt" : `Best ${ratio(best(c, e.priority.p, stage), max)}`}</p></div><button type="button" class="prio ${e.tag || ""}" data-priority="${esc(e.key)}" aria-label="${esc(name)} priority: ${e.tag || "normal"}" title="${e.tag === "high" ? "High priority" : e.tag === "low" ? "Low priority" : "Set priority"}">${e.tag === "high" ? "▲" : e.tag === "low" ? "▼" : "↕"}</button></div>`;
       })
       .join("") || '<div class="panel-body note">No firers to redetail.</div>'
   }</div>${held ? "" : reachedPanel(c, stage, q)}</section>`;
@@ -607,11 +600,17 @@ function reachedPanel(c, stage, q) {
         ),
     );
   if (!done.length) return "";
+  const score = (e) => Math.max(...e.members.map((p) => best(c, p, stage) ?? 0));
   return `<details class="reached"${showReached ? " open" : ""}><summary>${done.length} at or above the threshold</summary>${done
+    .toSorted((a, b) => score(a) - score(b))
     .map((e) => {
       const name = e.detail ? e.detail.name : e.members[0].name,
-        max = e.members[0].profile.components.find((x) => x.id === stage).max;
-      return `<div class="reached-row"><span class="count">✓</span><div><strong>${esc(name)}</strong><p class="note">Best ${ratio(Math.max(...e.members.map((p) => best(c, p, stage) ?? 0)), max)}</p></div><button type="button" data-requeue="${esc(e.key)}" aria-label="Redetail ${esc(name)}">Redetail</button></div>`;
+        max = e.members[0].profile.components.find((x) => x.id === stage).max,
+        finished = e.members.every(
+          (p) => best(c, p, stage) === max || result(c, p).status === "Marksman",
+        ),
+        locked = finished && !isCS(c);
+      return `<div class="reached-row"><span class="count">✓</span><div><strong>${esc(name)}</strong><p class="note">Best ${ratio(score(e), max)}${finished ? " · nothing to gain" : ""}</p></div><button type="button" data-requeue="${esc(e.key)}" aria-label="Redetail ${esc(name)}" ${locked ? "disabled" : ""}>Redetail</button></div>`;
     })
     .join("")}</details>`;
 }
@@ -623,35 +622,65 @@ function updateRedetailButton(stage) {
   $("#redetail").disabled = !count;
   $("#redetail").textContent = `Redetail${count ? ` (${count})` : ""}`;
 }
-function saveHit(input) {
+// Individual stages hold what is typed until the scores are confirmed.
+function holdHit(input, stage) {
+  const c = s();
+  c.entries ??= {};
+  if (input.value === "") delete c.entries[`${stage}:${input.dataset.hits}`];
+  else c.entries[`${stage}:${input.dataset.hits}`] = input.value;
+  save();
+  const panel = input.closest(".score-panel"),
+    total = panel.querySelectorAll("[data-hits]").length,
+    entered = [...panel.querySelectorAll("[data-hits]")].filter(
+      (x) => x.value !== "",
+    ).length;
+  panel.querySelector(".draft-summary").textContent =
+    `${entered} of ${total} entered.`;
+}
+function confirmScores(stage) {
   const c = s(),
-    stage = tab.split(":")[1],
-    p = c.participants.find((x) => x.id === input.dataset.hits),
-    errors = input.closest(".score-panel").querySelector(".draft-errors");
-  if (!p || input.value === "") return;
-  try {
-    const a = recordIndividual(
-      c,
-      p,
-      stage,
-      input.value,
-      isCS(c) ? stageRifle(c, p, stage) : p.weapon,
-    );
-    input.value = "";
-    input.classList.remove("invalid");
-    errors.textContent = "";
-    save();
-    // Re-render so the firer moves to past scores, keeping the typing focus.
-    later(() => {
-      const focused = document.activeElement?.dataset?.hits;
-      render();
-      if (focused) $(`[data-hits="${focused}"]`)?.focus();
-    });
-    toast(`${p.name}: ${a.score} saved.`, () => undoAttempt(c, a.id));
-  } catch (e) {
-    input.classList.add("invalid");
-    errors.textContent = `${p.name}: ${e.message}`;
+    panel = $(".score-panel"),
+    errors = [],
+    saved = [];
+  const pending = Object.entries(c.entries ?? {})
+    .filter(([key]) => key.startsWith(`${stage}:`))
+    .map(([key, hits]) => ({
+      p: c.participants.find((x) => x.id === key.slice(stage.length + 1)),
+      hits,
+    }))
+    .filter((x) => x.p);
+  if (!pending.length) {
+    panel.querySelector(".draft-errors").textContent =
+      "Enter at least one score.";
+    return;
   }
+  for (const { p, hits } of pending) {
+    const max = p.profile.components.find((x) => x.id === stage).max,
+      parsed = parseHits(hits, max);
+    if (parsed.error) errors.push(`${p.name}: ${parsed.error}`);
+  }
+  if (errors.length) {
+    panel.querySelector(".draft-errors").textContent = errors.join("\n");
+    return;
+  }
+  for (const { p, hits } of pending) {
+    saved.push(
+      recordIndividual(
+        c,
+        p,
+        stage,
+        hits,
+        isCS(c) ? stageRifle(c, p, stage) : p.weapon,
+      ),
+    );
+    delete c.entries[`${stage}:${p.id}`];
+  }
+  save();
+  render();
+  toast(
+    `${saved.length} ${saved.length === 1 ? "score" : "scores"} saved.`,
+    () => saved.forEach((a) => undoAttempt(c, a.id)),
+  );
 }
 function confirmDetail(detailId, stage) {
   const c = s(),
@@ -742,8 +771,12 @@ async function shuffle(list, keys = []) {
         const dy = top.get(r) - r.getBoundingClientRect().top;
         if (dy)
           r.animate(
-            [{ transform: `translateY(${dy}px)` }, { transform: "none" }],
-            { duration: 70, easing: "ease-out" },
+            [
+              { transform: `translateY(${dy}px) scale(1.04)`, offset: 0 },
+              { transform: `translateY(${dy * 0.25}px) scale(1.02)`, offset: 0.5 },
+              { transform: "none" },
+            ],
+            { duration: 150, easing: "cubic-bezier(.3,1.4,.4,1)" },
           );
       }
     };
@@ -753,13 +786,40 @@ async function shuffle(list, keys = []) {
     await pause(220);
     leaving.forEach((r) => r.remove());
   }
-  for (let round = 0; round < 2; round++) {
+  for (let round = 0; round < 3; round++) {
     flip(() => staying.sort(() => Math.random() - 0.5).forEach((r) => list.append(r)));
-    await pause(70);
+    await pause(140);
   }
   flip(() => order.forEach((r) => list.append(r)));
-  await pause(80);
+  await pause(180);
   list.classList.remove("shuffling");
+}
+// Rows slide from where they were to where they belong.
+function animateQueue(change) {
+  const list = $(".queue-list");
+  if (!list || reduceMotion()) {
+    change();
+    render();
+    return;
+  }
+  const before = new Map(
+    [...list.querySelectorAll(".queue-row")].map((r) => [
+      r.dataset.key,
+      r.getBoundingClientRect().top,
+    ]),
+  );
+  change();
+  render();
+  for (const row of document.querySelectorAll(".queue-row")) {
+    const from = before.get(row.dataset.key);
+    if (from === undefined) continue;
+    const dy = from - row.getBoundingClientRect().top;
+    if (dy)
+      row.animate(
+        [{ transform: `translateY(${dy}px)` }, { transform: "none" }],
+        { duration: 280, easing: "cubic-bezier(.2,.9,.2,1)" },
+      );
+  }
 }
 async function reshuffle() {
   const list = $(".queue-list");
@@ -1205,6 +1265,10 @@ $("#main").addEventListener("input", (e) => {
     $("#search").setSelectionRange(pos, pos);
     return;
   }
+  if (t.dataset.hits) {
+    holdHit(t, tab.split(":")[1]);
+    return;
+  }
   if (t.matches("[data-cs-hits],[data-aggregate]")) {
     const panel = t.closest("[data-detail]"),
       draft = getDraft(c, panel.dataset.detail, tab.split(":")[1]);
@@ -1290,7 +1354,7 @@ $("#main").addEventListener("change", (e) => {
       );
       save();
       later(render);
-    } else if (t.dataset.hits) saveHit(t);
+    } else if (t.dataset.hits) holdHit(t, stage);
     else if (t.dataset.threshold) {
       const [program, variant, id] = t.dataset.threshold.split("|"),
         pr = preset(store, program, variant),
@@ -1394,9 +1458,10 @@ $("#main").addEventListener("click", (e) => {
       const next = { undefined: "high", high: "low", low: null }[
         c.priorities[b.dataset.priority]
       ];
-      setPriority(c, b.dataset.priority, next);
-      save();
-      render();
+      animateQueue(() => {
+        setPriority(c, b.dataset.priority, next);
+        save();
+      });
       return;
     }
     if (b.dataset.requeue) {
@@ -1432,6 +1497,10 @@ $("#main").addEventListener("click", (e) => {
     }
     if (b.dataset.confirm) {
       confirmDetail(b.dataset.confirm, stage);
+      return;
+    }
+    if (b.dataset.confirmAll) {
+      confirmScores(b.dataset.confirmAll);
       return;
     }
     if (b.dataset.reset) {
@@ -1593,8 +1662,6 @@ window.addEventListener("storage", (e) => {
   if (e.key === KEY)
     warning("Changed in another tab. Export any unsaved work, then reload.");
 });
-window.addEventListener("online", status);
-window.addEventListener("offline", status);
 render();
 if (storageError)
   warning("Saved data could not be read. It has not been overwritten.");
@@ -1607,7 +1674,6 @@ if ("serviceWorker" in navigator) {
     hadController = !!navigator.serviceWorker.controller;
   const showUpdate = () => {
     $("#update").hidden = false;
-    $("#status").hidden = true;
   };
   $("#update").onclick = () => {
     if (!replaced && !registration?.waiting) return;
@@ -1631,8 +1697,6 @@ if ("serviceWorker" in navigator) {
     .then(async (reg) => {
       registration = reg;
       await navigator.serviceWorker.ready;
-      offlineReady = true;
-      status();
       let checking = false;
       const check = async () => {
         if (checking || document.visibilityState === "hidden" || !navigator.onLine)

@@ -53,7 +53,7 @@ export function newShoot(program, variant = "standard", name = "") {
     settings: {
       weapon,
       objective: "marksman",
-      order: "automatic",
+      order: "lowest",
       targets: {},
     },
   };
@@ -982,6 +982,16 @@ export function queue(s, stage) {
   for (const e of rows) {
     e.errors = e.detail ? stageCompositionErrors(s, e.detail.id, stage) : [];
     e.first = e.members.every((p) => best(s, p, stage) === null);
+    // Listed by hand even though the threshold is met.
+    e.above =
+      !e.first &&
+      e.members.every((p) => {
+        const v = best(s, p, stage),
+          g = goal(s, p, stage);
+        return (
+          v !== null && (!g || v >= (target(s, p, stage, g.objective) ?? 0))
+        );
+      });
     e.best = Math.min(...e.members.map((p) => best(s, p, stage) ?? 0));
     e.tag = s.priorities[e.key] || null;
     e.priority = e.members
@@ -1022,14 +1032,11 @@ export function queue(s, stage) {
   return rows.sort(
     (a, b) =>
       tier(a) - tier(b) ||
-      (s.settings.order === "lowest"
-        ? fraction(a) - fraction(b)
-        : s.settings.order === "highest"
-          ? fraction(b) - fraction(a)
-          : s.settings.order === "first"
-            ? a.last - b.last
-            : a.priority.rank - b.priority.rank ||
-              a.priority.gap - b.priority.gap),
+      (s.settings.order === "highest"
+        ? fraction(b) - fraction(a)
+        : s.settings.order === "first"
+          ? a.last - b.last
+          : fraction(a) - fraction(b)),
   );
 }
 export function dispatch(s, stage, keys) {

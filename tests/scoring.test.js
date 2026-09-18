@@ -625,7 +625,7 @@ test("Confirmed CS detail closes its redetail", () => {
   detailScore(s, d, "A", 40);
   assert.equal(s.dispatches[0].status, "scored");
 });
-test("Automatic redetailing lists firers until each stage reaches its threshold", () => {
+test("Redetailing lists firers until each stage reaches its threshold", () => {
   const { s, people } = setup("BTP", "standard", 3);
   for (const [i, a, b] of [
     [0, 12, 16],
@@ -638,7 +638,8 @@ test("Automatic redetailing lists firers until each stage reaches its threshold"
   const names = (stage) => queue(s, stage).map((e) => e.members[0].name);
   assert.deepEqual(names("A"), ["Person 2"]);
   // Stage B's BTP threshold is what Stage A still needs: 26 − 12 = 14 for Person 2.
-  assert.deepEqual(names("B"), ["Person 2", "Person 3"]);
+  // Lowest score goes first.
+  assert.deepEqual(names("B"), ["Person 3", "Person 2"]);
   s.settings.targets["SAR21:A:marksman"] = 12;
   assert.deepEqual(names("A"), []);
   const cs = setup("CS_SP", "standard", 4);
