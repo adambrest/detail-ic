@@ -124,7 +124,11 @@ async function addNames(page, names) {
 
     // Nothing in Redetailing before any score is confirmed.
     assert.equal(await page.locator(".queue-row").count(), 0);
-    assert.ok(await page.locator("#redetail").isDisabled());
+    assert.ok(
+      (await page.locator(".queue").innerText()).includes(
+        "Opens once the first Stage A · Day scores are in.",
+      ),
+    );
     // The stage tab is the firing order, starting as the roster.
     assert.equal(await page.locator("[data-individual] td.seat").count(), 3);
     assert.ok(
@@ -317,6 +321,11 @@ async function addNames(page, names) {
     assert.equal(await page.locator("tr.match").count(), 1);
     await page.locator("#search").fill("");
     await click(page, "Confirm participants");
+    // Combat Shoot starts on Stage B, as on the range.
+    assert.ok(
+      (await page.locator("#tabs .on").innerText()).includes("Stage B"),
+    );
+    await tab(page, "Stage A");
     assert.ok((await page.locator("#main").innerText()).includes("Detail 1"));
 
     // Stage A is scored by detail, and confirmed details drop out of the way.

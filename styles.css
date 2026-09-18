@@ -147,9 +147,15 @@ h1 .logo {
   letter-spacing: 0.2px;
   white-space: nowrap;
 }
+/* GitHub and Feedback sit at the top right; an Update pill, when shown, takes
+   over the push and the links follow it. */
 .links {
   display: flex;
   gap: 6px;
+  margin-left: auto;
+}
+.update-msg:not([hidden]) ~ .links {
+  margin-left: 0;
 }
 .update-msg {
   border: 0;
@@ -1213,9 +1219,14 @@ select.assign {
     flex-wrap: wrap;
     gap: 10px;
   }
+  /* The version pill tucks against the title; the desktop gap is wider. */
+  .version {
+    margin-left: -4px;
+  }
   #tabs {
     order: 3;
     width: 100%;
+    flex-wrap: wrap;
   }
   #status {
     font-size: 10px;
@@ -1283,6 +1294,14 @@ select.assign {
   }
   .score-input input {
     width: 48px;
+  }
+  .score-input input::-webkit-inner-spin-button,
+  .score-input input::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .score-input input {
+    -moz-appearance: textfield;
   }
   .score-input .muted {
     font-size: 9px;
