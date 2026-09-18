@@ -1051,7 +1051,7 @@ tr.match td,
 .queue-row.match {
   background: #fef9c3;
 }
-/* Skipped entries stay scoreable, just quieter until they are ready. */
+/* Skipped entries have not fired: greyed, and their score boxes are locked. */
 tr.skipped td:not(.more-cell),
 .score-panel.skipped .detail-head > :not(.actions),
 .score-panel.skipped .table-wrap,

@@ -56,6 +56,7 @@ import {
   detailAttempts,
   firingQueue,
   setSkipped,
+  nothingToGain,
   detailPlan,
   parseRoster,
   MISSING,
@@ -451,7 +452,7 @@ function individualPanel(c, stage) {
     const max = p.profile.components.find((x) => x.id === stage).max,
       e = entry.get(p.id),
       typed = entryValue(c, stage, p) !== "";
-    return `<tr data-row="${p.id}" class="${[waiting.has(p.id) && "awaiting", e.n === 0 && !e.skipped && "next", e.skipped && "skipped", search && "match"].filter(Boolean).join(" ")}"><td class="seat">${e.n + 1}</td><td class="name">${esc(p.name)}${multi && !cs ? `<div class="sub">${esc(p.weapon)}</div>` : ""}<div class="attempt ${waiting.has(p.id) ? "on" : ""}">${e.skipped ? "Skipped · " : ""}Attempt ${e.attempt}${waiting.has(p.id) ? " · redetailed" : ""}</div></td>${cs ? `<td><select class="row-weapon" data-stage-rifle="${p.id}" aria-label="${esc(p.name)} rifle for ${esc(stageLabel(c, stage))}">${option(weapons(c), stageRifle(c, p, stage))}</select></td>` : ""}<td><div class="score-input"><input type="number" min="0" max="${max}" step="1" inputmode="numeric" enterkeyhint="next" data-hits="${p.id}" value="${esc(entryValue(c, stage, p))}" aria-label="${esc(p.name)} hits" placeholder="—"><span class="muted">/${max}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell">${order.length > 1 ? skipButton(`person:${p.id}`, p.name, e.skipped, typed) : ""}<button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+    return `<tr data-row="${p.id}" class="${[waiting.has(p.id) && "awaiting", e.n === 0 && !e.skipped && "next", e.skipped && "skipped", search && "match"].filter(Boolean).join(" ")}"><td class="seat">${e.n + 1}</td><td class="name">${esc(p.name)}${multi && !cs ? `<div class="sub">${esc(p.weapon)}</div>` : ""}<div class="attempt ${waiting.has(p.id) ? "on" : ""}">${e.skipped ? "Skipped · " : ""}Attempt ${e.attempt}${waiting.has(p.id) ? " · redetailed" : ""}</div></td>${cs ? `<td><select class="row-weapon" data-stage-rifle="${p.id}" aria-label="${esc(p.name)} rifle for ${esc(stageLabel(c, stage))}">${option(weapons(c), stageRifle(c, p, stage))}</select></td>` : ""}<td><div class="score-input"><input type="number" min="0" max="${max}" step="1" inputmode="numeric" enterkeyhint="next" data-hits="${p.id}" value="${esc(entryValue(c, stage, p))}" aria-label="${esc(p.name)} hits" placeholder="${e.skipped ? "Skipped" : "—"}" ${e.skipped ? "disabled" : ""}><span class="muted">/${max}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell">${order.length > 1 ? skipButton(`person:${p.id}`, p.name, e.skipped, typed) : ""}<button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
   };
   const scoredRow = (p) =>
     `<tr data-row="${p.id}" class="${search ? "match" : ""}"><td class="name">${esc(p.name)}</td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
@@ -546,17 +547,17 @@ function detailPanels(c, stage) {
         if (!d) return toggle;
         const people = members(c, d.id),
           draft = getDraft(c, d.id, stage),
-          attempt = nextAttempt(c, people, stage);
-        const e = entry.get(d.id);
+          attempt = nextAttempt(c, people, stage),
+          e = entry.get(d.id);
         return `<section class="panel score-panel ${[d.temporary && "temporary", e?.n === 0 && !e.skipped && "next", e?.skipped && "skipped"].filter(Boolean).join(" ")}" data-detail="${d.id}"><div class="detail-head">${e ? `<span class="seat">${e.n + 1}</span>` : ""}<h3>${esc(d.name)}</h3>${e?.n === 0 && !e.skipped ? '<span class="badge blue">Next</span>' : ""}${badge(`Attempt ${attempt}`)}${borrowedNote(c, d, stage)}<span class="count">${people.length} firers</span><div class="actions">${e && order.length > 1 ? skipButton(`detail:${d.id}`, d.name, e.skipped, hasInput(draft)) : ""}<button data-detail-history="${d.id}" aria-label="History for ${esc(d.name)}">History</button><button class="icon-button" data-reset="${d.id}" title="Clear entries" aria-label="Clear entries for ${esc(d.name)}">↺</button></div></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th><th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${people
           .map((p) => {
             const row = draft.rows.find((r) => r.participantId === p.id),
               mine = nextAttempt(c, p, stage);
-            return `<tr data-row="${p.id}" class="${[waiting.has(p.id) && "awaiting", search && filtered(p) && "match"].filter(Boolean).join(" ")}"><td class="name">${esc(p.name)}${mine !== attempt || waiting.has(p.id) ? `<div class="attempt ${waiting.has(p.id) ? "on" : ""}">Attempt ${mine}${waiting.has(p.id) ? " · redetailed" : ""}</div>` : ""}</td><td class="rifle">${esc(rosterWeapon(c, d.id, p))}</td><td><div class="score-input"><input type="number" min="0" max="${cmax}" step="1" inputmode="numeric" enterkeyhint="next" data-cs-hits="${p.id}" value="${esc(row?.hits || "")}" aria-label="${esc(p.name)} hits" placeholder="—"><span class="muted">/${cmax}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+            return `<tr data-row="${p.id}" class="${[waiting.has(p.id) && "awaiting", search && filtered(p) && "match"].filter(Boolean).join(" ")}"><td class="name">${esc(p.name)}${mine !== attempt || waiting.has(p.id) ? `<div class="attempt ${waiting.has(p.id) ? "on" : ""}">Attempt ${mine}${waiting.has(p.id) ? " · redetailed" : ""}</div>` : ""}</td><td class="rifle">${esc(rosterWeapon(c, d.id, p))}</td><td><div class="score-input"><input type="number" min="0" max="${cmax}" step="1" inputmode="numeric" enterkeyhint="next" data-cs-hits="${p.id}" value="${esc(row?.hits || "")}" aria-label="${esc(p.name)} hits" placeholder="—" ${e?.skipped ? "disabled" : ""}><span class="muted">/${cmax}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
           })
           .join(
             "",
-          )}</tbody></table></div>${shared ? `<div class="aggregate"><label>Or detail total <input type="number" min="0" max="${people.length * cmax}" step="1" data-aggregate="${d.id}" value="${esc(draft.aggregate)}" aria-label="${esc(d.name)} total hits" placeholder="—"></label><span class="muted">/${people.length * cmax}</span></div>` : ""}<div class="errors draft-errors">${esc(draftErrors(c, draft).join("\n"))}</div><div class="score-footer"><span class="draft-summary">${esc(draftSummary(c, draft))}</span><button class="primary" data-confirm="${d.id}" aria-label="Confirm scores for ${esc(d.name)}">Confirm scores</button></div></section>`;
+          )}</tbody></table></div>${shared ? `<div class="aggregate"><label>Or detail total <input type="number" min="0" max="${people.length * cmax}" step="1" data-aggregate="${d.id}" value="${esc(draft.aggregate)}" aria-label="${esc(d.name)} total hits" placeholder="—" ${e?.skipped ? "disabled" : ""}></label><span class="muted">/${people.length * cmax}</span></div>` : ""}<div class="errors draft-errors">${esc(draftErrors(c, draft).join("\n"))}</div><div class="score-footer"><span class="draft-summary">${esc(e?.skipped ? "Skipped: it has not fired. Unskip to enter scores." : draftSummary(c, draft))}</span><button class="primary" data-confirm="${d.id}" aria-label="Confirm scores for ${esc(d.name)}" ${e?.skipped ? "disabled" : ""}>Confirm scores</button></div></section>`;
       })
       .join("") +
     (!shown.length
@@ -676,10 +677,17 @@ function confirmScores(stage) {
       "Enter at least one score.";
     return;
   }
+  const skipped = new Set(
+    firingQueue(c, stage)
+      .filter((e) => e.skipped)
+      .map((e) => e.members[0].id),
+  );
   for (const { p, hits } of pending) {
     const max = p.profile.components.find((x) => x.id === stage).max,
       parsed = parseHits(hits, max);
-    if (parsed.error) errors.push(`${p.name}: ${parsed.error}`);
+    if (skipped.has(p.id))
+      errors.push(`${p.name} is skipped and has not fired. Unskip them first.`);
+    else if (parsed.error) errors.push(`${p.name}: ${parsed.error}`);
   }
   if (errors.length) {
     panel.querySelector(".draft-errors").textContent = errors.join("\n");
@@ -1006,7 +1014,8 @@ function manualDetailDialog(stage) {
         : result(c, p).status === "Marksman"
           ? "marksman"
           : "";
-  // Firers with nothing to gain can still fire, to help a detail's average.
+  // Firers with nothing to gain can fire to help a detail's average, but only
+  // alongside someone who can still improve.
   const row = (p) =>
     `<div class="manual-row"><label class="manual-pick"><input type="checkbox" name="pick" value="${p.id}" aria-label="Include ${esc(p.name)}"><span>${esc(p.name)}${why(p) ? ` ${badge(why(p))}` : ""}</span></label><span class="rifle">${esc(p.weapon)}</span></div>`;
   dialog(
@@ -1048,6 +1057,19 @@ function manualDetailDialog(stage) {
         c,
         entries.map((e) => ({ weapon: e.weapon })),
       );
+      if (
+        entries.length &&
+        entries.every((e) =>
+          nothingToGain(
+            c,
+            c.participants.find((p) => p.id === e.participantId),
+            stage,
+          ),
+        )
+      )
+        problems.push(
+          "Everyone chosen already has the max score for this stage or is marksman. Include at least one firer who can still improve.",
+        );
       form.querySelector(".manual-summary").textContent = entries.length
         ? `${entries.length} firers chosen.`
         : "No firers chosen.";
@@ -1419,7 +1441,7 @@ $("#main").addEventListener("keydown", (e) => {
   ) {
     const boxes = [
         ...$("#main").querySelectorAll(
-          "[data-hits],[data-cs-hits],[data-aggregate]",
+          ":is([data-hits],[data-cs-hits],[data-aggregate]):not(:disabled)",
         ),
       ],
       next = boxes[boxes.indexOf(t) + (e.shiftKey ? -1 : 1)];

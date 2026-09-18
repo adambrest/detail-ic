@@ -639,27 +639,45 @@ test("Skipped entries wait below everyone, even later redetails", () => {
     /not waiting/,
   );
 });
-test("Firers with nothing to gain can fire in a manual detail to help others", () => {
-  const { s, d, people } = setup("CS_SP", "standard", 4);
+test("A manual detail needs at least one firer who can still improve", () => {
+  const { s, d, people } = setup("CS_SP", "standard", 4),
+    d2 = addDetail(s),
+    others = addParticipants(s, ["Q 1", "Q 2", "Q 3", "Q 4"], "SAR21", d2.id);
+  // Detail 1 maxes Stage A; Person 1 also finishes as Marksman.
   detailScore(s, d, "A", 60);
-  // Everyone maxed Stage A; Person 1 also finishes as Marksman.
   recordIndividual(s, people[0], "B", "8");
   detailScore(s, d, "C", 60);
   assert.equal(result(s, people[0]).status, "Marksman");
-  const temp = createTempDetail(
-    s,
-    "A",
-    people.map((p) => ({ participantId: p.id, weapon: p.weapon })),
+  const entry = (p) => ({ participantId: p.id, weapon: p.weapon });
+  assert.throws(
+    () => createTempDetail(s, "A", people.map(entry)),
+    /Include at least one firer who can still improve/,
   );
-  // Everyone in it has shot, yet the manual detail waits to fire.
+  // Three helpers with nothing to gain, firing for one who still can.
+  const temp = createTempDetail(s, "A", [
+    ...people.slice(0, 3).map(entry),
+    entry(others[0]),
+  ]);
+  // Everyone in it may have shot before, yet the manual detail waits to fire.
   assert.ok(firingQueue(s, "A").some((e) => e.key === `detail:${temp.id}`));
   const draft = getDraft(s, temp.id, "A");
-  draft.aggregate = "40";
+  draft.aggregate = "48";
   saveDetail(s, draft);
-  assert.ok(!firingQueue(s, "A").some((e) => e.key === `detail:${temp.id}`));
-  // A lower average never takes away a best score.
+  assert.equal(best(s, others[0], "A"), 12);
+  // A lower average never takes away a helper's best.
   assert.equal(best(s, people[0], "A"), 15);
-  assert.equal(result(s, people[0]).status, "Marksman");
+});
+test("A skipped detail takes no scores until unskipped", () => {
+  const store = newStore(),
+    s = createShoot(store, "CS_SP", "standard", "S");
+  addParticipants(s, Array.from({ length: 8 }, (_, i) => `P${i} ${i < 4 ? 1 : 2}`), "SAR21");
+  const [d1] = sortedDetails(s);
+  setSkipped(s, "A", `detail:${d1.id}`, true);
+  const draft = getDraft(s, d1.id, "A");
+  draft.aggregate = "40";
+  assert.throws(() => saveDetail(s, draft), /skipped/);
+  setSkipped(s, "A", `detail:${d1.id}`, false);
+  assert.equal(saveDetail(s, draft).score, 10);
 });
 test("Individual stages queue firers by detail, then redetails", () => {
   const { s, people } = setup("BTP", "standard", 3);

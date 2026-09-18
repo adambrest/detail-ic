@@ -192,6 +192,11 @@ export function createTempDetail(s, stage, entries, { oneOff = false } = {}) {
     rows.map((r) => ({ weapon: r.weapon })),
   );
   if (errors.length) throw Error(errors.join(" "));
+  // Helpers who cannot improve may fire, but only for someone who can.
+  if (rows.every((r) => nothingToGain(s, r.person, stage)))
+    throw Error(
+      "Everyone chosen already has the max score for this stage or is marksman. Include at least one firer who can still improve.",
+    );
   const d = {
     id: uid(),
     name: `Temp detail ${s.details.filter((x) => x.temporary).length + 1}`,
@@ -689,6 +694,8 @@ function recordDetailAttempt(s, stage, detailId, v, extra = {}) {
   return detailAttempt;
 }
 export function saveDetail(s, draft) {
+  if (isSkipped(s, draft.stage, `detail:${draft.detailId}`))
+    throw Error("This detail is skipped, so it has not fired. Unskip it to enter scores.");
   const v = validateDraft(s, draft);
   if (v.errors.length) throw Error(v.errors.join("\n"));
   const a = recordDetailAttempt(s, draft.stage, draft.detailId, v);
@@ -1249,6 +1256,16 @@ export function owesFirst(s, stage, e) {
           a.detailId === e.detail.id && a.stage === stage && a.status === "valid",
       )
     : e.members.some((p) => best(s, p, stage) === null);
+}
+// Maxed this stage, or marksman overall: another attempt changes nothing for them.
+export function nothingToGain(s, p, stage) {
+  const max = p.profile.components.find((c) => c.id === stage).max;
+  return best(s, p, stage) === max || result(s, p).status === "Marksman";
+}
+// A skipped entry has not fired, so it takes no scores until unskipped.
+export function isSkipped(s, stage, key) {
+  const e = entities(s, stage).find((x) => x.key === key);
+  return !!e && !!skipOf(s, stage, e);
 }
 // A skip holds only for the attempt it was made on, so it clears itself once
 // that entry is scored.

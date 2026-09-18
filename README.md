@@ -20,11 +20,11 @@ Everything works offline. Scores are saved on your device only, so export a back
 
 Each participant keeps their best score per stage. Final scores adds them for Pass, Marksman or Fail.
 
-BTP, ATP and APS scores save as you enter them. Combat Shoot is scored by detail: add a detail number after each name or tap the number buttons, then confirm each detail's scores. A detail confirms once every firer has hits, or with only the detail total. Choose History on a detail to see or edit its scores.
+BTP, ATP and APS scores save as you enter them. Combat Shoot is scored by detail: add a detail number after each name or tap the number buttons, then confirm each detail's scores. A detail confirms once every firer has hits, or with only the detail total. Choose History on a detail to see or edit its scores. A manual detail may include firers who already have the max score or marksman, to help the average, but needs at least one firer who can still improve.
 
 Each firer keeps the rifle set in Participants for the whole shoot. The exception is Combat Shoot Stage B, which can be fired on another rifle, since every Combat Shoot rifle fires the same rounds there. Every row shows which attempt it is, starting at Attempt 1.
 
-Each stage tab lists who still has to fire, in firing order: everyone's first attempt in detail order, then redetails in the order they were sent. Enter scores straight into it; scored entries drop off and the rest move up. If someone is not ready, Skip moves them below everyone waiting, including later redetails; tap Skipped to put them back. Skip greys out once hits are typed. Tab moves from score box to score box. Tick firers in Redetailing and choose Redetail to add them to the back of the queue. Tap ↕ to mark a firer high ▲ or low ▼ priority. Priority sorts the Redetailing list only, never the firing queue.
+Each stage tab lists who still has to fire, in firing order: everyone's first attempt in detail order, then redetails in the order they were sent. Enter scores straight into it; scored entries drop off and the rest move up. If someone is not ready, Skip moves them below everyone waiting, including later redetails; tap Skipped to put them back. A skipped entry has not fired, so it takes no scores until unskipped, and Skip greys out once hits are typed. Tab moves from score box to score box. Tick firers in Redetailing and choose Redetail to add them to the back of the queue. Tap ↕ to mark a firer high ▲ or low ▼ priority. Priority sorts the Redetailing list only, never the firing queue.
 
 ## Reproduction
 
