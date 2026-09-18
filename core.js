@@ -54,7 +54,7 @@ export function newShoot(program, variant = "standard", name = "") {
     settings: {
       weapon,
       objective: "marksman",
-      order: "lowest",
+      order: "smart",
       targets: {},
     },
   };
@@ -1109,20 +1109,7 @@ export function insights(s, stage = null) {
   );
   if (stage) {
     const detailed = detailedStage(s, stage),
-      hits = (p) => {
-        // A firer's own hits: best individual score, or best raw hits in a detail.
-        const list = s.attempts.filter(
-          (a) =>
-            a.participantId === p.id &&
-            a.stage === stage &&
-            a.status === "valid" &&
-            eligible(s, p, a),
-        );
-        const raw = list
-          .map((a) => (detailed ? a.rawHits : a.score))
-          .filter((v) => v !== null && v !== undefined);
-        return raw.length ? Math.max(...raw) : null;
-      };
+      hits = (p) => firerHits(s, p, stage);
     add(
       "warn",
       "Poor shooters",
@@ -1359,6 +1346,37 @@ export function queue(s, stage) {
         };
       })
       .sort((a, b) => a.rank - b.rank || a.gap - b.gap)[0];
+    // Why this entry is on the list, in the operator's terms.
+    const status = e.members.map((p) => {
+        const v = best(s, p, stage),
+          g = v === null ? null : goal(s, p, stage),
+          t = g ? target(s, p, stage, g.objective) : null;
+        return { p, v, g, t, short: t === null ? 0 : t - v };
+      }),
+      need = status.filter((x) => x.short > 0),
+      risk = need.filter((x) => x.g.objective === "pass"),
+      closest = need.toSorted((a, b) => a.short - b.short)[0];
+    // Smart order: a pass at risk first, then quick wins, then the rest by how
+    // close they are, since that is where a reshoot most likely changes a result.
+    e.smart = risk.length ? 0 : closest && closest.short <= 2 ? 1 : 2;
+    e.closest = closest
+      ? closest.short /
+        closest.p.profile.components.find((c) => c.id === stage).max
+      : Infinity;
+    e.reason = e.first
+      ? "not shot yet"
+      : !need.length
+        ? "above threshold, listed by hand"
+        : e.detail
+          ? [
+              risk.length
+                ? `${risk.length} at risk of failing`
+                : `${need.length} of ${e.members.length} short of Marksman`,
+              `closest ${closest.p.name}, ${closest.short} short`,
+            ].join("; ")
+          : risk.length
+            ? `pass at risk: best ${closest.v}, needs ${closest.t}`
+            : `${closest.short} short of Marksman (best ${closest.v}, needs ${closest.t})`;
     e.last = Math.max(
       0,
       ...s.attempts
@@ -1379,7 +1397,9 @@ export function queue(s, stage) {
     (a, b) =>
       tier(a) - tier(b) ||
       b.first - a.first ||
-      (s.settings.order === "highest"
+      (s.settings.order === "smart"
+        ? a.smart - b.smart || a.closest - b.closest
+        : s.settings.order === "highest"
         ? fraction(b) - fraction(a)
         : s.settings.order === "first"
           ? a.last - b.last
@@ -1503,6 +1523,89 @@ export function owesFirst(s, stage, e) {
 export function nothingToGain(s, p, stage) {
   const max = p.profile.components.find((c) => c.id === stage).max;
   return best(s, p, stage) === max || result(s, p).status === "Marksman";
+}
+// A firer's own best hits in a stage: their individual score, or their best
+// raw hits in a detail. Null when only detail totals were entered.
+export function firerHits(s, p, stage) {
+  const detailed = detailedStage(s, stage),
+    raw = s.attempts
+      .filter(
+        (a) =>
+          a.participantId === p.id &&
+          a.stage === stage &&
+          a.status === "valid" &&
+          eligible(s, p, a),
+      )
+      .map((a) => (detailed ? a.rawHits : a.score))
+      .filter((v) => v !== null && v !== undefined);
+  return raw.length ? Math.max(...raw) : null;
+}
+// Firers whose own hits are below pass pace, weakest first.
+export function weakFirers(s, stage) {
+  return s.participants
+    .map((p) => ({ p, hits: firerHits(s, p, stage), pace: passPace(p, stage) }))
+    .filter((x) => x.hits !== null && x.hits < x.pace && !nothingToGain(s, x.p, stage))
+    .toSorted((a, b) => a.hits - b.hits);
+}
+// A manual detail built around one weak firer: the strongest shooters who
+// still need this stage come first, since the reshoot helps them too; then
+// strong firers who have cleared it. Other weak firers, firers not yet shot
+// and firers already redetailed are left out. Keeps to the detail's size and
+// non-SAR21 limits, and says what the average should come to.
+export function buildAround(s, stage, weakId) {
+  const rule = DETAIL_RULES[s.program],
+    weak = s.participants.find((p) => p.id === weakId),
+    max = (p) => p.profile.components.find((c) => c.id === stage).max,
+    pace = (p) => Math.ceil((p.profile.marksman * max(p)) / p.profile.total),
+    skip = new Set([
+      ...weakFirers(s, stage).map((x) => x.p.id),
+      ...firingQueue(s, stage).flatMap((e) => e.members.map((p) => p.id)),
+    ]),
+    pool = s.participants
+      .filter((p) => p.id !== weakId && !skip.has(p.id))
+      .map((p) => {
+        const v = best(s, p, stage),
+          g = goal(s, p, stage);
+        return {
+          p,
+          hits: firerHits(s, p, stage) ?? v,
+          cleared:
+            nothingToGain(s, p, stage) ||
+            !g ||
+            v >= target(s, p, stage, g.objective),
+        };
+      })
+      .filter((x) => x.hits !== null),
+    strong = pool
+      .filter((x) => x.hits >= pace(x.p))
+      .toSorted((a, b) => a.cleared - b.cleared || b.hits - a.hits),
+    rest = pool
+      .filter((x) => x.hits < pace(x.p))
+      .toSorted((a, b) => b.hits - a.hits),
+    chosen = [{ p: weak, hits: firerHits(s, weak, stage) ?? 0, cleared: false }];
+  let nonSAR = NON_SAR.has(weak.weapon) ? 1 : 0;
+  const take = (list, upTo) => {
+    for (const x of list) {
+      if (chosen.length >= upTo) return;
+      if (NON_SAR.has(x.p.weapon)) {
+        if (nonSAR >= rule.nonSAR) continue;
+        nonSAR++;
+      }
+      chosen.push(x);
+    }
+  };
+  take(strong, rule.max);
+  // Too few strong shooters to make a detail: fill to the minimum with the next best.
+  take(rest, rule.min);
+  const known = chosen.every((x) => x.hits !== null);
+  return {
+    entries: chosen.map((x) => ({ participantId: x.p.id, weapon: x.p.weapon })),
+    people: chosen,
+    expected: known
+      ? Math.floor(chosen.reduce((n, x) => n + x.hits, 0) / chosen.length)
+      : null,
+    short: chosen.length < rule.min,
+  };
 }
 // A skipped entry has not fired, so it takes no scores until unskipped.
 export function isSkipped(s, stage, key) {

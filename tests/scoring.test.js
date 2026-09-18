@@ -47,6 +47,8 @@ import {
   nextAttempt,
   detailAttempts,
   firingQueue,
+  weakFirers,
+  buildAround,
   insights,
   standing,
   setSkipped,
@@ -798,6 +800,57 @@ test("Detail insights name the weakest shooter, or say hits are missing", () => 
     "Detail 2: poor-shooter checks are off for it",
   ]);
 });
+test("Smart order puts a pass at risk first, then quick wins, and says why", () => {
+  const { s, people } = setup("BTP", "standard", 3);
+  assert.equal(s.settings.order, "smart");
+  // Pass 16, Marksman 26 over two stages of 16. Stage B scored first.
+  recordIndividual(s, people[0], "B", "16"); // needs 10 in A for Marksman
+  recordIndividual(s, people[1], "B", "0"); // needs 16 in A just to pass
+  recordIndividual(s, people[2], "B", "14"); // needs 12 in A for Marksman
+  recordIndividual(s, people[0], "A", "5");
+  recordIndividual(s, people[1], "A", "3");
+  recordIndividual(s, people[2], "A", "11");
+  const q = queue(s, "A");
+  assert.deepEqual(
+    q.map((e) => e.members[0].name),
+    ["Person 2", "Person 3", "Person 1"],
+  );
+  assert.deepEqual(q.map((e) => e.reason), [
+    "pass at risk: best 3, needs 16",
+    "1 short of Marksman (best 11, needs 12)",
+    "5 short of Marksman (best 5, needs 10)",
+  ]);
+});
+test("A weak firer gets a detail of strong shooters, those still needing it first", () => {
+  const store = newStore(),
+    s = createShoot(store, "CS_SP", "standard", "W");
+  const people = addParticipants(
+    s,
+    Array.from({ length: 12 }, (_, i) => `P${i + 1} ${Math.floor(i / 4) + 1}`),
+    "SAR21",
+  );
+  const [d1, d2, d3] = sortedDetails(s);
+  // Detail 1: strong shooters dragged down by P4. Detail 2 cleared. Detail 3 middling.
+  detailScore(s, d1, "A", null, { individuals: [14, 13, 13, 1] });
+  detailScore(s, d2, "A", null, { individuals: [15, 15, 15, 15] });
+  detailScore(s, d3, "A", null, { individuals: [9, 9, 9, 9] });
+  assert.deepEqual(
+    weakFirers(s, "A").map((x) => x.p.name),
+    ["P4"],
+  );
+  const plan = buildAround(s, "A", people[3].id);
+  // Strong means at least marksman pace, 13/15. P1–P3 still need Stage A
+  // (Detail 1 averaged 10), so they come first;
+  // then cleared firers from Detail 2 up to six.
+  assert.deepEqual(
+    plan.people.map((x) => x.p.name),
+    ["P4", "P1", "P2", "P3", "P5", "P6"],
+  );
+  assert.equal(plan.expected, Math.floor((1 + 14 + 13 + 13 + 15 + 15) / 6));
+  assert.equal(plan.short, false);
+  // It is a valid manual detail.
+  createTempDetail(s, "A", plan.entries);
+});
 test("Individual stages queue firers by detail, then redetails", () => {
   const { s, people } = setup("BTP", "standard", 3);
   const order = () => firingQueue(s, "A").map((e) => e.members[0].name);
@@ -938,8 +991,11 @@ test("Thresholds float once the other stages are scored", () => {
     recordIndividual(s, people[i], "A", String(a));
     recordIndividual(s, people[i], "B", String(b));
   }
-  const names = (shoot, stage) =>
-    queue(shoot, stage).map((e) => e.members[0].name);
+  // This test is about thresholds; read the list lowest score first.
+  const names = (shoot, stage) => {
+    shoot.settings.order = "lowest";
+    return queue(shoot, stage).map((e) => e.members[0].name);
+  };
   // Person 1 reached Marksman (28), so nothing is left to chase.
   // The others need what is still missing: 26 − their other stage.
   assert.deepEqual(names(s, "A"), ["Person 2", "Person 3"]);
