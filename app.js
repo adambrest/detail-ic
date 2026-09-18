@@ -52,6 +52,12 @@ import {
   recordIndividual,
   parseHits,
   scoreHistory,
+  nextAttempt,
+  detailAttempts,
+  firingQueue,
+  MISSING,
+  attemptNumbers,
+  detailAttemptNumbers,
   best,
   result,
   voidAttempt,
@@ -94,7 +100,6 @@ let store,
   showScored = false,
   addMode = null,
   addNote = "",
-  forcedQueue = new Set(),
   showReached = false,
   pasteDetail = 1,
   apsView = "standard",
@@ -371,7 +376,7 @@ function renderParticipants() {
       ? '<p class="note lock-note">Scores are recorded, so the shoot type is locked. <button class="inline-link" data-action="shoots">Start a new shoot</button> to use a different type.</p>'
       : "") +
     (locked
-      ? `<div class="panel confirmed"><span>Participants confirmed and locked.${isCS(c) ? " Stage B rifles can still change on its tab." : ""}</span><div class="actions"><button data-action="unlock">Edit participants</button><button class="primary" data-action="to-stage">Go to ${esc(stages(c)[0].label)}</button></div></div>`
+      ? `<div class="panel confirmed"><span>Participants confirmed and locked.</span><div class="actions"><button data-action="unlock">Edit participants</button><button class="primary" data-action="to-stage">Go to ${esc(stages(c)[0].label)}</button></div></div>`
       : "") +
     (locked ? "" : addPanel(c)) +
     (c.participants.length
@@ -408,7 +413,7 @@ function renderStage(stage) {
       `<span class="spacer"></span>${searchBox()}${isCS(c) ? '<button data-action="manual-detail">Manual detail</button>' : ""}`,
     ) +
     issuesPanel(c) +
-    `<div class="grid"><div class="score-col">${detailedStage(c, stage) ? detailPanels(c, stage) : individualPanel(c, stage)}</div>${queuePanel(c, stage, q)}</div>`;
+    `<div class="grid"><div class="score-col">${detailedStage(c, stage) ? detailPanels(c, stage) : individualPanel(c, stage)}</div><div class="side-col">${firingPanel(c, stage)}${queuePanel(c, stage, q)}</div></div>`;
 }
 // Roster problems that will block scoring, with one link to fix them.
 function issuesPanel(c) {
@@ -433,25 +438,23 @@ function individualPanel(c, stage) {
       const d = c.details.find((x) => x.id === p.detailId);
       return d && !d.temporary ? detailNumber(d) : 99;
     },
-    rank = (p) => (waiting.has(p.id) ? waiting.get(p.id) : 1e9),
-    shown = c.participants
-      .filter(filtered)
-      .toSorted((a, b) => rank(a) - rank(b) || detailOf(a) - detailOf(b)),
-    toShoot = shown.filter(
-      (p) => best(c, p, stage) === null || waiting.has(p.id),
-    ),
-    done = shown.filter((p) => !toShoot.includes(p)),
+    toShoot = firingQueue(c, stage)
+      .map((e) => e.members[0])
+      .filter(filtered),
+    done = c.participants
+      .filter((p) => filtered(p) && !toShoot.includes(p))
+      .toSorted((a, b) => detailOf(a) - detailOf(b)),
     entered = toShoot.filter((p) => entryValue(c, stage, p) !== "").length;
   const row = (p) => {
     const max = p.profile.components.find((x) => x.id === stage).max;
-    return `<tr data-row="${p.id}" class="${waiting.has(p.id) ? "awaiting" : ""}"><td class="name">${esc(p.name)}${multi && !cs ? `<div class="sub">${esc(p.weapon)}</div>` : ""}${waiting.has(p.id) ? '<div class="pending">Redetailed</div>' : ""}</td>${cs ? `<td><select class="row-weapon" data-stage-rifle="${p.id}" aria-label="${esc(p.name)} rifle for ${esc(stageLabel(c, stage))}">${option(weapons(c), stageRifle(c, p, stage))}</select></td>` : ""}<td><div class="score-input"><input type="number" min="0" max="${max}" step="1" inputmode="numeric" enterkeyhint="next" data-hits="${p.id}" value="${esc(entryValue(c, stage, p))}" aria-label="${esc(p.name)} hits" placeholder="—"><span class="muted">/${max}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+    return `<tr data-row="${p.id}" class="${waiting.has(p.id) ? "awaiting" : ""}"><td class="name">${esc(p.name)}${multi ? `<div class="sub">${esc(p.weapon)}</div>` : ""}<div class="attempt ${waiting.has(p.id) ? "on" : ""}">Attempt ${nextAttempt(c, p, stage)}${waiting.has(p.id) ? " · redetailed" : ""}</div></td><td><div class="score-input"><input type="number" min="0" max="${max}" step="1" inputmode="numeric" enterkeyhint="next" data-hits="${p.id}" value="${esc(entryValue(c, stage, p))}" aria-label="${esc(p.name)} hits" placeholder="—"><span class="muted">/${max}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
   };
   const scoredRow = (p) =>
     `<tr data-row="${p.id}"><td class="name">${esc(p.name)}</td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
   return (
     `<section class="panel score-panel" data-individual><div class="detail-head"><h3>${esc(stageLabel(c, stage))}</h3><span class="count">${toShoot.length} to shoot</span></div>${cs ? '<p class="note stage-note">Fired individually, in any order. Details do not apply to this stage.</p>' : ""}${
       toShoot.length
-        ? `<div class="table-wrap"><table><thead><tr><th>Full name</th>${cs ? "<th>Rifle</th>" : ""}<th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${toShoot.map(row).join("")}</tbody></table></div>`
+        ? `<div class="table-wrap"><table><thead><tr><th>Full name</th><th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${toShoot.map(row).join("")}</tbody></table></div>`
         : `<div class="panel-body note">Everyone has a ${esc(stageLabel(c, stage))} score. Redetail firers to enter more.</div>`
     }<div class="errors draft-errors" role="alert"></div>${
       toShoot.length
@@ -463,40 +466,40 @@ function individualPanel(c, stage) {
       : "")
   );
 }
-// Combat Shoot Stage B can be fired on a different rifle, remembered per firer.
-function stageRifle(c, p, stage) {
-  return c.stageRifles?.[`${p.id}:${stage}`] ?? p.weapon;
-}
+// Composition problems belong to the roster and are reported at the top of the
+// tab, so a detail's score line does not repeat them.
+const COMPOSITION =
+  /^(Too few firers|Too many firers|Too many non-SAR21|Detail has no participants)/;
 function draftErrors(c, draft) {
   const hasInput =
     draft.rows.some((r) => r.hits !== "") || draft.aggregate !== "";
   const errors = hasInput
     ? validateDraft(c, draft).errors
     : stageCompositionErrors(c, draft.detailId, draft.stage);
-  return errors.filter(
-    (e) => !e.endsWith("Missing hits.") && !COMPOSITION.test(e),
-  );
+  return errors.filter((e) => !COMPOSITION.test(e) && !e.startsWith(MISSING));
 }
 function draftSummary(c, draft) {
   const v = validateDraft(c, draft),
-    max = stages(c).find((x) => x.id === draft.stage).max;
+    max = stages(c).find((x) => x.id === draft.stage).max,
+    entered = draft.rows.filter((r) => r.hits !== "").length;
   return v.shared && v.score !== null
     ? `Average ${v.aggregate}/${v.divisor} → ${v.score}/${max}.`
-    : `${v.rows.length} firers.`;
+    : entered
+      ? `${entered} of ${v.rows.length} entered.`
+      : `${v.rows.length} firers.`;
 }
-// A detail stays on the stage tab until its scores are confirmed, unless redetailed.
+// A detail stays on the stage tab until it is scored, or while it is redetailed.
 function needsScores(c, d, stage) {
   const draft = c.drafts[`${d.id}:${stage}`];
   return (
     c.dispatches.some(
       (x) =>
-        x.key === `detail:${d.id}` && x.stage === stage && x.status === "awaiting",
+        x.key === `detail:${d.id}` &&
+        x.stage === stage &&
+        x.status === "awaiting",
     ) ||
-    !c.shared.some(
-      (x) => x.detailId === d.id && x.stage === stage && x.status === "valid",
-    ) ||
-    (draft &&
-      (draft.aggregate !== "" || draft.rows.some((r) => r.hits !== "")))
+    members(c, d.id).some((p) => best(c, p, stage) === null) ||
+    (draft && (draft.aggregate !== "" || draft.rows.some((r) => r.hits !== "")))
   );
 }
 function detailPanels(c, stage) {
@@ -505,7 +508,10 @@ function detailPanels(c, stage) {
     shared = ["A", "C"].includes(stage),
     cmax = stages(c).find((x) => x.id === stage).max,
     all = stageDetails(c, stage),
-    open = all.filter((d) => needsScores(c, d, stage)),
+    seat = new Map(firingQueue(c, stage).map((e, i) => [e.detail.id, i])),
+    open = all
+      .filter((d) => needsScores(c, d, stage))
+      .toSorted((a, b) => (seat.get(a.id) ?? 1e9) - (seat.get(b.id) ?? 1e9)),
     scored = all.length - open.length,
     toggle =
       scored && !search
@@ -530,11 +536,13 @@ function detailPanels(c, stage) {
       .map((d) => {
         if (!d) return toggle;
         const people = members(c, d.id),
-          draft = getDraft(c, d.id, stage);
-        return `<section class="panel score-panel ${d.temporary ? "temporary" : ""}" data-detail="${d.id}"><div class="detail-head"><h3>${esc(d.name)}</h3>${borrowedNote(c, d, stage)}<span class="count">${people.length} firers</span><div class="actions"><button class="icon-button" data-reset="${d.id}" title="Clear entries" aria-label="Clear entries for ${esc(d.name)}">↺</button></div></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th><th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${people
+          draft = getDraft(c, d.id, stage),
+          attempt = nextAttempt(c, people, stage);
+        return `<section class="panel score-panel ${d.temporary ? "temporary" : ""}" data-detail="${d.id}"><div class="detail-head"><h3>${esc(d.name)}</h3>${badge(`Attempt ${attempt}`)}${borrowedNote(c, d, stage)}<span class="count">${people.length} firers</span><div class="actions"><button data-detail-history="${d.id}" aria-label="History for ${esc(d.name)}">History</button><button class="icon-button" data-reset="${d.id}" title="Clear entries" aria-label="Clear entries for ${esc(d.name)}">↺</button></div></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th><th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${people
           .map((p) => {
-            const row = draft.rows.find((r) => r.participantId === p.id);
-            return `<tr data-row="${p.id}" class="${[waiting.has(p.id) && "awaiting", search && filtered(p) && "match"].filter(Boolean).join(" ")}"><td class="name">${esc(p.name)}${waiting.has(p.id) ? '<div class="pending">Awaiting scores</div>' : ""}</td><td class="rifle">${esc(rosterWeapon(c, d.id, p))}</td><td><div class="score-input"><input type="number" min="0" max="${cmax}" step="1" inputmode="numeric" enterkeyhint="next" data-cs-hits="${p.id}" value="${esc(row?.hits || "")}" aria-label="${esc(p.name)} hits" placeholder="—"><span class="muted">/${cmax}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+            const row = draft.rows.find((r) => r.participantId === p.id),
+              mine = nextAttempt(c, p, stage);
+            return `<tr data-row="${p.id}" class="${[waiting.has(p.id) && "awaiting", search && filtered(p) && "match"].filter(Boolean).join(" ")}"><td class="name">${esc(p.name)}${mine !== attempt || waiting.has(p.id) ? `<div class="attempt ${waiting.has(p.id) ? "on" : ""}">Attempt ${mine}${waiting.has(p.id) ? " · redetailed" : ""}</div>` : ""}</td><td class="rifle">${esc(rosterWeapon(c, d.id, p))}</td><td><div class="score-input"><input type="number" min="0" max="${cmax}" step="1" inputmode="numeric" enterkeyhint="next" data-cs-hits="${p.id}" value="${esc(row?.hits || "")}" aria-label="${esc(p.name)} hits" placeholder="—"><span class="muted">/${cmax}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
           })
           .join(
             "",
@@ -557,13 +565,11 @@ function methodInfo(c) {
 function queuePanel(c, stage, q) {
   const cs = isCS(c),
     started = c.attempts.some((a) => a.stage === stage && a.status === "valid"),
-    pending = notYetShot(c, stage),
-    held = started && pending.length && !forcedQueue.has(`${c.id}:${stage}`),
     cap = !cs && DETAIL_RULES[c.program]?.max,
     count = q
       .filter((e) => selected.has(e.key))
       .reduce((n, e) => n + e.members.length, 0);
-  return `<section class="panel queue"><div class="queue-head"><div class="queue-title"><h3>Redetailing</h3><span class="count">${q.reduce((n, e) => n + e.members.length, 0)} firers</span></div><div class="queue-method"><select id="order" aria-label="Redetailing order">${[
+  return `<section class="panel queue"><div class="queue-head"><div class="queue-title"><h3>Redetailing</h3>${!started ? "" : `<span class="count">${q.reduce((n, e) => n + e.members.length, 0)} firers</span>`}</div><div class="queue-method"><select id="order" aria-label="Redetailing order">${[
     ["lowest", "Lowest score first"],
     ["highest", "Highest score first"],
     ["first", "Earliest shot first"],
@@ -574,19 +580,31 @@ function queuePanel(c, stage, q) {
     )
     .join(
       "",
-    )}</select>${info(methodInfo(c))}</div><div class="queue-actions"><button data-action="select-all" ${held || !started ? "disabled" : ""}>${cap ? `Select next ${cap}` : "Select all"}</button><button class="primary" id="redetail" data-action="redetail" ${count && !held && started ? "" : "disabled"}>Redetail${count ? ` (${count})` : ""}</button></div></div>${
-    held
-      ? `<div class="queue-held"><div class="errors">${pending.length} ${pending.length === 1 ? "firer has" : "firers have"} no ${esc(stageLabel(c, stage))} score yet: ${esc(pending.slice(0, 8).map((p) => p.name).join(", "))}${pending.length > 8 ? ` and ${pending.length - 8} more` : ""}.</div><div class="panel-body"><p class="note">Everyone shoots once before redetailing starts.</p><button data-action="force-queue">Redetail anyway</button></div></div>`
-      : ""
-  }${!started ? `<div class="panel-body note">No ${esc(stageLabel(c, stage))} scores yet.</div>` : ""}<div class="queue-list" ${held || !started ? "hidden" : ""}>${
+    )}</select>${info(methodInfo(c))}</div><div class="queue-actions"><button data-action="select-all" ${!started ? "disabled" : ""}>${cap ? `Select next ${cap}` : "Select all"}</button><button class="primary" id="redetail" data-action="redetail" ${count && started ? "" : "disabled"}>Redetail${count ? ` (${count})` : ""}</button></div></div>${!started ? `<div class="panel-body note">No ${esc(stageLabel(c, stage))} scores yet.</div>` : ""}<div class="queue-list" ${!started ? "hidden" : ""}>${
     q
       .map((e, i) => {
-        const name = cs ? e.detail.name : e.members[0].name,
+        const name = e.detail ? e.detail.name : e.members[0].name,
           max = e.priority.p.profile.components.find((x) => x.id === stage).max;
-        return `<div class="queue-row" data-key="${esc(e.key)}"><input type="checkbox" data-queue="${esc(e.key)}" ${selected.has(e.key) ? "checked" : ""} ${e.errors.length ? "disabled" : ""} aria-label="Select ${esc(name)}"><span class="count">${i + 1}</span><div><strong>${esc(name)}</strong>${e.detail ? borrowedNote(c, e.detail, stage) : ""}${e.above ? badge("Above threshold") : ""}<p class="note">${e.errors.length ? "Fix this detail in Participants" : e.first ? "First attempt" : `Best ${ratio(best(c, e.priority.p, stage), max)}`}</p></div><button type="button" class="prio ${e.tag || ""}" data-priority="${esc(e.key)}" aria-label="${esc(name)} priority: ${e.tag || "normal"}" title="${e.tag === "high" ? "High priority" : e.tag === "low" ? "Low priority" : "Set priority"}">${e.tag === "high" ? "▲" : e.tag === "low" ? "▼" : "↕"}</button></div>`;
+        return `<div class="queue-row" data-key="${esc(e.key)}"><input type="checkbox" data-queue="${esc(e.key)}" ${selected.has(e.key) ? "checked" : ""} ${e.errors.length ? "disabled" : ""} aria-label="Select ${esc(name)}"><span class="count">${i + 1}</span><div><strong>${esc(name)}</strong>${e.detail ? borrowedNote(c, e.detail, stage) : ""}${e.above ? badge("Above threshold") : ""}<p class="note">${e.errors.length ? "Fix this detail in Participants" : `Attempt ${e.attempt}${e.first ? " · not shot yet" : ` · best ${ratio(best(c, e.priority.p, stage), max)}`}`}</p></div><button type="button" class="prio ${e.tag || ""}" data-priority="${esc(e.key)}" aria-label="${esc(name)} priority: ${e.tag || "normal"}" title="${e.tag === "high" ? "High priority" : e.tag === "low" ? "Low priority" : "Set priority"}">${e.tag === "high" ? "▲" : e.tag === "low" ? "▼" : "↕"}</button></div>`;
       })
       .join("") || '<div class="panel-body note">No firers to redetail.</div>'
-  }</div>${held ? "" : reachedPanel(c, stage, q)}</section>`;
+  }</div>${reachedPanel(c, stage, q)}</section>`;
+}
+// Who fires next, in the order they sit on the ground. Redetails join the back
+// and move up as the entries ahead of them are scored.
+function firingPanel(c, stage) {
+  const list = firingQueue(c, stage),
+    firers = list.reduce((n, e) => n + e.members.length, 0);
+  return `<section class="panel firing"><div class="queue-head"><div class="queue-title"><h3>Firing queue</h3><span class="count">${firers} ${firers === 1 ? "firer" : "firers"}</span></div></div>${
+    list.length
+      ? `<ol class="firing-list">${list
+          .map((e, i) => {
+            const name = e.detail ? e.detail.name : e.members[0].name;
+            return `<li class="firing-row ${e.dispatch ? "again" : ""}"><span class="count">${i + 1}</span><div><strong>${esc(name)}</strong><p class="note">Attempt ${e.attempt}${e.dispatch ? " · redetailed" : ""}</p></div>${e.dispatch ? `<button type="button" class="icon-button" data-uncue="${e.dispatch.id}" title="Take out of the queue" aria-label="Take ${esc(name)} out of the firing queue">✕</button>` : ""}</li>`;
+          })
+          .join("")}</ol>`
+      : `<div class="panel-body note">Nobody waiting. Redetail firers to add them here.</div>`
+  }</section>`;
 }
 // Firers who already met the stage threshold, with a way to send them again.
 function reachedPanel(c, stage, q) {
@@ -664,15 +682,7 @@ function confirmScores(stage) {
     return;
   }
   for (const { p, hits } of pending) {
-    saved.push(
-      recordIndividual(
-        c,
-        p,
-        stage,
-        hits,
-        isCS(c) ? stageRifle(c, p, stage) : p.weapon,
-      ),
-    );
+    saved.push(recordIndividual(c, p, stage, hits, p.weapon));
     delete c.entries[`${stage}:${p.id}`];
   }
   save();
@@ -712,17 +722,15 @@ function redetail(stage) {
     chosen = queue(c, stage).filter((e) => selected.has(e.key));
   if (busy || !chosen.length) return;
   const keys = chosen.map((e) => e.key),
-    ids = new Set(chosen.flatMap((e) => e.members.map((p) => p.id))),
-    reshoot = chosen.some((e) =>
-      e.members.some((p) => best(c, p, stage) !== null),
-    ),
-    waiting = notYetShot(c, stage).filter((p) => !ids.has(p.id));
-  if (!reshoot || !waiting.length) return runRedetail(stage, keys);
-  const names = waiting.slice(0, 12).map((p) => p.name).join(", ");
+    total = c.participants.length,
+    shot = total - notYetShot(c, stage).length,
+    ahead = firingQueue(c, stage).reduce((n, e) => n + e.members.length, 0);
+  // Redetailing starts while others are still shooting; only warn this early.
+  if (shot * 2 >= total) return runRedetail(stage, keys);
   dialog(
-    "Not all participants have shot yet",
-    `<p>${waiting.length === 1 ? "1 participant has" : `${waiting.length} participants have`} no ${esc(stageLabel(c, stage))} score yet: ${esc(names)}${waiting.length > 12 ? ` and ${waiting.length - 12} more` : ""}.</p><p class="note">Let everyone shoot once before redetailing, or go back and fill in their scores.</p>`,
-    "Continue redetailing",
+    "Most firers have not shot yet",
+    `<p>Only ${shot} of ${total} firers have a ${esc(stageLabel(c, stage))} score.</p><p class="note">Redetailed firers join the back of the firing queue${ahead ? `, behind the ${ahead} ${ahead === 1 ? "firer" : "firers"} already waiting` : ""}.</p>`,
+    "Redetail",
     () => {
       $("#dialog").close();
       runRedetail(stage, keys);
@@ -753,8 +761,13 @@ async function runRedetail(stage, keys) {
   document.querySelectorAll("tr[data-row]").forEach((tr) => {
     if (ids.has(tr.dataset.row)) tr.classList.add("flash");
   });
+  const seats = firingQueue(c, stage)
+      .map((e, i) => (keys.includes(e.key) ? i + 1 : 0))
+      .filter(Boolean),
+    at =
+      seats.length > 1 ? `${seats[0]}–${seats.at(-1)}` : String(seats[0] ?? "");
   toast(
-    `${ids.size} ${ids.size === 1 ? "firer" : "firers"} redetailed. Enter their scores when they finish.`,
+    `${ids.size} ${ids.size === 1 ? "firer" : "firers"} redetailed, ${seats.length > 1 ? "places" : "place"} ${at} in the firing queue.`,
   );
 }
 // Brief shuffle of the list, ending in the order it should be.
@@ -927,7 +940,7 @@ function manualDetailDialog(stage) {
       ...(members(c, null).length ? [["Needs a detail", members(c, null)]] : []),
     ];
   const row = (p) =>
-    `<div class="manual-row"><label class="manual-pick"><input type="checkbox" name="pick" value="${p.id}" aria-label="Include ${esc(p.name)}"><span>${esc(p.name)}</span></label><select name="weapon-${p.id}" aria-label="${esc(p.name)} rifle" disabled>${option(weapons(c), p.weapon)}</select></div>`;
+    `<div class="manual-row"><label class="manual-pick"><input type="checkbox" name="pick" value="${p.id}" aria-label="Include ${esc(p.name)}"><span>${esc(p.name)}</span></label><span class="rifle">${esc(p.weapon)}</span></div>`;
   dialog(
     `Manual detail · ${label}`,
     `<p class="note">Choose who fires together and on what. The detail appears in ${esc(label)} so you can enter its scores. A one-off is dropped once its scores are in; a kept detail can be redetailed.</p><div class="manual-list">${groups.map(([name, people]) => `<div class="manual-group"><h3>${esc(name)}</h3>${people.map(row).join("")}</div>`).join("")}</div><p class="note manual-summary">No firers chosen.</p>`,
@@ -938,7 +951,7 @@ function manualDetailDialog(stage) {
     (f, action) => {
       const entries = f.getAll("pick").map((id) => ({
           participantId: id,
-          weapon: f.get(`weapon-${id}`),
+          weapon: c.participants.find((p) => p.id === id).weapon,
         })),
         d = createTempDetail(c, stage, entries, { oneOff: action === "once" });
       save();
@@ -957,11 +970,10 @@ function manualDetailDialog(stage) {
       for (const box of form.querySelectorAll("[name=pick]")) {
         const line = box.closest(".manual-row");
         line.classList.toggle("on", box.checked);
-        line.querySelector("select").disabled = !box.checked;
         if (box.checked)
           entries.push({
             participantId: box.value,
-            weapon: form.elements[`weapon-${box.value}`].value,
+            weapon: c.participants.find((p) => p.id === box.value).weapon,
           });
       }
       const problems = compositionErrors(
@@ -1036,15 +1048,13 @@ function sightingDialog(p) {
   );
 }
 function attemptRows(c, p) {
-  const seen = new Map();
+  const numbers = attemptNumbers(c, p);
   return c.attempts
     .filter((a) => a.participantId === p.id)
     .map((a) => {
-      const count = (seen.get(a.stage) ?? 0) + 1;
-      seen.set(a.stage, count);
       const shared = c.shared.find((d) => d.id === a.detailAttemptId),
         detail = c.details.find((d) => d.id === shared?.detailId);
-      return { attempt: a, number: count, shared, detail };
+      return { attempt: a, number: numbers.get(a.id), shared, detail };
     })
     .toReversed();
 }
@@ -1059,7 +1069,7 @@ function historyDialog(p) {
     pendingList
       .map(
         (d) =>
-          `<div class="history-row"><div>${esc(stageLabel(c, d.stage))} · Awaiting scores</div><button type="button" data-cancel="${d.id}">Cancel</button></div>`,
+          `<div class="history-row"><div>${esc(stageLabel(c, d.stage))} · attempt ${nextAttempt(c, p, d.stage)} not entered yet</div><button type="button" data-cancel="${d.id}">Cancel</button></div>`,
       )
       .join("") +
       rows
@@ -1073,7 +1083,7 @@ function historyDialog(p) {
                   .map((m) => `${esc(m.name)} (${esc(m.weapon)})`)
                   .join(", ")
               : "";
-          return `<div class="history-row ${a.status === "void" ? "void" : ""}"><div><b>${esc(stageLabel(c, a.stage))} · attempt ${number} · ${ratio(a.score, max)}</b> ${a.status === "void" ? badge(a.revisedBy ? "Edited" : "Voided") : ""}<p>${esc(source)}${roster ? `<br>With: ${roster}` : ""}<br>${new Date(a.recordedAt).toLocaleString("en-US")}${a.correction ? `<br>${esc(a.correction.reason)}` : ""}</p></div>${a.status === "valid" ? `<div class="actions"><button type="button" data-edit="${a.id}">Edit</button><button type="button" data-correct="${a.id}">Void</button></div>` : ""}</div>`;
+          return `<div class="history-row ${a.status === "void" ? "void" : ""}"><div><b>${esc(stageLabel(c, a.stage))} · ${number ? `attempt ${number}` : "not counted"} · ${ratio(a.score, max)}</b> ${a.status === "void" ? badge(a.revisedBy ? "Edited" : "Voided") : ""}<p>${esc(source)}${roster ? `<br>With: ${roster}` : ""}<br>${new Date(a.recordedAt).toLocaleString("en-US")}${a.correction ? `<br>${esc(a.correction.reason)}` : ""}</p></div>${a.status === "valid" ? `<div class="actions"><button type="button" data-edit="${a.id}">Edit</button><button type="button" data-correct="${a.id}">Void</button></div>` : ""}</div>`;
         })
         .join("") +
       (c.sightings || [])
@@ -1094,7 +1104,8 @@ function historyDialog(p) {
       (b) =>
         (b.onclick = () => {
           const a = c.attempts.find((x) => x.id === b.dataset.edit);
-          if (a.detailAttemptId) editDetailDialog(p, a.detailAttemptId);
+          if (a.detailAttemptId)
+            editDetailDialog(a.detailAttemptId, () => historyDialog(p));
           else editScoreDialog(p, a);
         }),
     );
@@ -1135,16 +1146,16 @@ function historyDialog(p) {
         }),
     );
 }
-// Editing an individual score, including the rifle where a stage allows a change.
+// Editing an individual score. The rifle is the firer's, set in Participants.
 function editScoreDialog(p, a) {
   const c = s(),
     max = a.profile.components.find((x) => x.id === a.stage).max;
   dialog(
     `Edit ${p.name} · ${stageLabel(c, a.stage)}`,
-    `<label class="field"><span>Hits /${max}</span><input name="hits" type="number" min="0" max="${max}" step="1" value="${a.score}" required autofocus></label>${isCS(c) ? `<label class="field"><span>Rifle</span><select name="weapon">${option(weapons(c), a.weapon)}</select></label>` : ""}`,
+    `<label class="field"><span>Hits /${max}</span><input name="hits" type="number" min="0" max="${max}" step="1" value="${a.score}" required autofocus></label><p class="note">${esc(a.weapon)}</p>`,
     "Save score",
     (f) => {
-      editIndividual(c, a.id, f.get("hits"), f.get("weapon") || a.weapon);
+      editIndividual(c, a.id, f.get("hits"), a.weapon);
       save();
       render();
       historyDialog(p);
@@ -1153,8 +1164,84 @@ function editScoreDialog(p, a) {
     () => historyDialog(p),
   );
 }
-// Editing a detail's score: each firer's hits, their rifles, or the detail total.
-function editDetailDialog(p, detailAttemptId) {
+// A detail's own history: every score confirmed for it, newest first, each one
+// editable or voidable the way an individual's attempts are.
+function detailHistoryDialog(detailId, stage) {
+  const c = s(),
+    d = c.details.find((x) => x.id === detailId),
+    list = detailAttempts(c, detailId, stage),
+    numbers = detailAttemptNumbers(c, detailId, stage),
+    max = stages(c).find((x) => x.id === stage).max,
+    back = () => detailHistoryDialog(detailId, stage),
+    waitingOn = c.dispatches.filter(
+      (x) =>
+        x.key === `detail:${detailId}` &&
+        x.stage === stage &&
+        x.status === "awaiting",
+    );
+  dialog(
+    `${d ? d.name : "Detail"} · ${stageLabel(c, stage)}`,
+    waitingOn
+      .map(
+        (x) =>
+          `<div class="history-row"><div>Attempt ${nextAttempt(c, members(c, detailId), stage)} not entered yet</div><button type="button" data-cancel="${x.id}">Cancel</button></div>`,
+      )
+      .join("") +
+      list
+        .toReversed()
+        .map((a) => {
+          const number = numbers.get(a.id);
+          const hits = a.roster
+            .map((m) => `${m.name} ${m.rawHits ?? "—"}`)
+            .join(", ");
+          return `<div class="history-row ${a.status === "void" ? "void" : ""}"><div><b>${number ? `Attempt ${number}` : "Not counted"} · ${ratio(a.score, max)}</b> ${a.status === "void" ? badge(a.revisedBy || list.some((x) => x.revisionOf === a.id) ? "Edited" : "Voided") : ""}<p>${esc(a.inputMode === "aggregate" ? `Detail total ${a.aggregateHits} over ${a.divisor} firers` : `${hits} · total ${a.aggregateHits} over ${a.divisor} firers`)}<br>${new Date(a.recordedAt).toLocaleString("en-US")}${a.correction ? `<br>${esc(a.correction.reason)}` : ""}</p></div>${a.status === "valid" ? `<div class="actions"><button type="button" data-edit-detail="${a.id}">Edit</button><button type="button" data-void-detail="${a.id}">Void</button></div>` : ""}</div>`;
+        })
+        .join("") +
+      (!list.length && !waitingOn.length
+        ? '<p class="note">No scores confirmed for this detail yet.</p>'
+        : ""),
+    null,
+  );
+  const box = $("#dialog");
+  box
+    .querySelectorAll("[data-edit-detail]")
+    .forEach(
+      (b) => (b.onclick = () => editDetailDialog(b.dataset.editDetail, back)),
+    );
+  box.querySelectorAll("[data-void-detail]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        const a = c.attempts.find(
+          (x) => x.detailAttemptId === b.dataset.voidDetail,
+        );
+        dialog(
+          "Void detail score",
+          `<p class="note">This removes the score from every firer in this record.</p><label class="field"><span>Reason</span><input name="reason" required autofocus></label>`,
+          "Void score",
+          (f) => {
+            voidAttempt(c, a.id, f.get("reason"));
+            save();
+            render();
+            back();
+          },
+          "Back",
+          back,
+        );
+      }),
+  );
+  box.querySelectorAll("[data-cancel]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        cancelDispatch(c, b.dataset.cancel);
+        save();
+        render();
+        back();
+      }),
+  );
+}
+// Editing a detail's score: each firer's hits, or the detail total. Clearing a
+// firer's hits takes them out of the record.
+function editDetailDialog(detailAttemptId, back) {
   const c = s(),
     shared = c.shared.find((d) => d.id === detailAttemptId),
     detail = c.details.find((d) => d.id === shared.detailId),
@@ -1162,10 +1249,10 @@ function editDetailDialog(p, detailAttemptId) {
       .max;
   dialog(
     `Edit ${detail ? detail.name : "detail"} · ${stageLabel(c, shared.stage)}`,
-    `<div class="manual-list">${shared.roster
+    `<p class="note">Enter every firer's hits, or only the detail total.</p><div class="manual-list">${shared.roster
       .map(
         (m) =>
-          `<div class="manual-row on"><span class="manual-pick">${esc(m.name)}</span><select name="weapon-${m.id}" aria-label="${esc(m.name)} rifle">${option(weapons(c), m.weapon)}</select><input type="number" name="hits-${m.id}" min="0" max="${max}" step="1" value="${m.rawHits ?? ""}" placeholder="—" aria-label="${esc(m.name)} hits"></div>`,
+          `<div class="manual-row on"><span class="manual-pick">${esc(m.name)}</span><span class="rifle">${esc(m.weapon)}</span><input type="number" name="hits-${m.id}" min="0" max="${max}" step="1" value="${m.rawHits ?? ""}" placeholder="—" aria-label="${esc(m.name)} hits"></div>`,
       )
       .join(
         "",
@@ -1174,16 +1261,16 @@ function editDetailDialog(p, detailAttemptId) {
     (f) => {
       const entries = shared.roster.map((m) => ({
         participantId: m.id,
-        weapon: f.get(`weapon-${m.id}`),
+        weapon: m.weapon,
         hits: f.get(`hits-${m.id}`) ?? "",
       }));
       editDetailAttempt(c, detailAttemptId, entries, f.get("aggregate") ?? "");
       save();
       render();
-      historyDialog(p);
+      back();
     },
     "Back",
-    () => historyDialog(p),
+    back,
   );
 }
 function download(name, content, type = "application/json") {
@@ -1319,10 +1406,6 @@ $("#main").addEventListener("change", (e) => {
       );
       save();
       later(render);
-    } else if (t.dataset.stageRifle) {
-      c.stageRifles ??= {};
-      c.stageRifles[`${t.dataset.stageRifle}:${stage}`] = t.value;
-      save();
     } else if (t.dataset.assign) {
       assignDetail(
         c,
@@ -1470,6 +1553,20 @@ $("#main").addEventListener("click", (e) => {
       toast("Thresholds reset.");
       return;
     }
+    if (b.dataset.uncue) {
+      const d = c.dispatches.find((x) => x.id === b.dataset.uncue);
+      cancelDispatch(c, d.id);
+      save();
+      render();
+      toast("Taken out of the firing queue.", () => {
+        d.status = "awaiting";
+      });
+      return;
+    }
+    if (b.dataset.detailHistory) {
+      detailHistoryDialog(b.dataset.detailHistory, stage);
+      return;
+    }
     if (b.dataset.confirm) {
       confirmDetail(b.dataset.confirm, stage);
       return;
@@ -1601,10 +1698,6 @@ $("#main").addEventListener("click", (e) => {
         break;
       case "manual-detail":
         manualDetailDialog(stage);
-        break;
-      case "force-queue":
-        forcedQueue.add(`${c.id}:${stage}`);
-        render();
         break;
       case "toggle-scored":
         showScored = !showScored;

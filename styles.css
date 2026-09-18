@@ -269,9 +269,15 @@ h1 .logo {
 .history-row .actions {
   align-items: flex-start;
 }
-td.rifle {
+td.rifle,
+.manual-row .rifle {
   font-size: 11px;
   white-space: nowrap;
+}
+.manual-row .rifle {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .manual-list {
   max-height: 45vh;
@@ -387,6 +393,7 @@ h3 {
 }
 .detail-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 9px;
   padding: 11px 12px;
@@ -535,14 +542,34 @@ td {
 .queue-list[hidden] {
   display: none;
 }
-.queue-held .errors {
-  border-top: 0;
+.side-col {
+  display: grid;
+  gap: 16px;
+  align-content: start;
 }
-.queue-held .panel-body {
-  padding: 10px 12px;
+/* The firing queue: who fires next, in seating order. */
+.firing-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 40vh;
+  overflow: auto;
 }
-.queue-held .note {
-  margin: 0 0 8px;
+.firing-row {
+  display: grid;
+  grid-template-columns: 19px 1fr auto;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 12px;
+}
+.firing-row + .firing-row {
+  border-top: 1px solid var(--line);
+}
+.firing-row .note {
+  margin: 2px 0 0;
+}
+.firing-row.again .note {
+  color: var(--accent);
 }
 .reached {
   border-top: 1px solid var(--line);
@@ -979,9 +1006,13 @@ details.reference {
 details.reference summary {
   cursor: pointer;
 }
-.pending {
+.attempt {
   font-size: 10px;
+  color: var(--muted);
+}
+.attempt.on {
   color: var(--accent);
+  font-weight: 600;
 }
 .sub {
   font-size: 10px;
@@ -1262,4 +1293,4 @@ select.assign {
     min-width: 105px;
   }
 }
-@media(max-width:550px){.score-panel th,.score-panel td{padding:7px 5px}.score-panel .name{min-width:76px;max-width:110px}.score-panel .row-weapon{max-width:73px}.score-panel .more{padding:4px 2px}}
+@media(max-width:550px){.score-panel th,.score-panel td{padding:7px 5px}.score-panel .name{min-width:76px;max-width:110px}.score-panel .more{padding:4px 2px}}

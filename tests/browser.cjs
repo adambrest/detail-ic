@@ -124,18 +124,19 @@ async function addNames(page, names) {
 
     // Nothing in Redetailing before any score is confirmed.
     assert.equal(await page.locator(".queue-row").count(), 0);
-    assert.equal(await page.locator(".queue-held").count(), 0);
     assert.ok(await page.locator("#redetail").isDisabled());
+    // The firing queue starts as the roster, in order.
+    assert.equal(await page.locator(".firing-row").count(), 3);
     await enterHits(page, "Alex Tan", "8");
-    assert.equal(await page.locator(".queue-held").count(), 0);
     await click(page, "Confirm scores");
-    assert.ok(
-      (await page.locator(".queue-held").innerText()).includes(
-        "2 firers have no Stage A · Day score yet",
-      ),
+    // Redetailing opens straight away; the firing queue shows who is next.
+    await waitFor(
+      page,
+      () => document.querySelectorAll(".queue-row").length === 1,
     );
-    assert.ok(await page.locator(".queue-list").isHidden());
-    assert.ok(await page.locator("#redetail").isDisabled());
+    const firing = await page.locator(".firing-list").innerText();
+    assert.ok(/Benjamin Lee[\s\S]*Chris Wong/.test(firing), firing);
+    assert.ok(!firing.includes("Alex Tan"), firing);
     await enterHits(page, "Benjamin Lee", "11");
     await enterHits(page, "Chris Wong", "14");
     await click(page, "Confirm scores");
@@ -222,9 +223,9 @@ async function addNames(page, names) {
     await click(page, "Save score");
     await click(page, "Close");
 
-    // Redetailing a reshoot before everyone has shot asks first.
+    // Redetailing while most firers have not shot asks first, and the
+    // redetail joins the back of the firing queue.
     await tab(page, "Stage B · Night");
-    await enterHits(page, "Alex Tan", "13");
     await enterHits(page, "Benjamin Lee", "5");
     await click(page, "Confirm scores");
     await waitFor(page, () =>
@@ -232,21 +233,29 @@ async function addNames(page, names) {
         r.innerText.includes("Benjamin Lee"),
       ),
     );
-    await click(page, "Redetail anyway");
     await page.getByRole("checkbox", { name: "Select Benjamin Lee" }).check();
     await page.locator("#redetail").click();
     assert.ok(
       (await page.locator("#dialog").innerText()).includes(
-        "Not all participants have shot yet",
+        "Only 1 of 3 firers",
       ),
     );
     await click(page, "Go back");
     await page.locator("#redetail").click();
-    await click(page, "Continue redetailing");
+    await page
+      .locator("#dialog")
+      .getByRole("button", { name: "Redetail", exact: true })
+      .click();
     await waitFor(
       page,
       () => document.querySelectorAll("tr.awaiting").length === 1,
     );
+    const order = await page.locator(".firing-row").allInnerTexts();
+    assert.ok(order[0].includes("Alex Tan"), order.join("|"));
+    assert.ok(order.at(-1).includes("Benjamin Lee"), order.join("|"));
+    assert.ok(order.at(-1).includes("Attempt 2 · redetailed"), order.join("|"));
+    await enterHits(page, "Alex Tan", "13");
+    await click(page, "Confirm scores");
 
     await tab(page, "Final scores");
     const first = await page.locator("tbody tr").first().innerText();
@@ -351,7 +360,6 @@ async function addNames(page, names) {
         (a) => a.score === 12,
       ),
     );
-    await click(page, "Redetail anyway");
     await waitFor(page, () =>
       [...document.querySelectorAll(".queue-row")].some((r) =>
         r.innerText.includes("Temp detail 1"),
@@ -361,7 +369,8 @@ async function addNames(page, names) {
     await page.locator("#order").selectOption("highest");
     await waitFor(page, () => document.querySelectorAll(".queue-row").length > 0);
 
-    // Stage B has no details at all, and can be fired on another rifle.
+    // Stage B has no details at all, and each firer keeps the rifle set in
+    // Participants: a total only makes sense on one rifle throughout.
     await tab(page, "Stage B");
     assert.equal(await page.locator(".score-panel").count(), 1);
     // Individual confirm, but no per-detail confirm.
@@ -374,15 +383,25 @@ async function addNames(page, names) {
         "Details do not apply",
       ),
     );
-    await page
-      .getByRole("combobox", { name: "Dana Koh rifle for Stage B" })
-      .selectOption("SAR21/M203");
+    assert.equal(
+      await page.getByRole("combobox", { name: /rifle for Stage B/ }).count(),
+      0,
+    );
     await enterHits(page, "Dana Koh", "6");
     await click(page, "Confirm scores");
     await waitFor(page, () =>
       JSON.parse(localStorage.getItem("detail-ic-v2")).shoots[1].attempts.some(
-        (a) => a.stage === "B" && a.weapon === "SAR21/M203",
+        (a) => a.stage === "B" && a.weapon === "LMG",
       ),
+    );
+    // Confirming used to crash here: a Combat Shoot firer queued on an
+    // individual stage has no detail to name.
+    assert.ok(
+      !(await page.locator("#toast").innerText()).includes("Cannot read"),
+    );
+    assert.equal(
+      await page.locator(".queue-row strong", { hasText: "Dana Koh" }).count(),
+      1,
     );
 
     // Stage C goes back to the original details.

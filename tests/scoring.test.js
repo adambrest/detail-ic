@@ -44,6 +44,11 @@ import {
   recordIndividual,
   best,
   bestAttempt,
+  nextAttempt,
+  detailAttempts,
+  firingQueue,
+  attemptNumbers,
+  detailAttemptNumbers,
   result,
   scoreHistory,
   target,
@@ -532,11 +537,115 @@ test("Detail totals and individual hits must match", () => {
   assert.match(validateDraft(s, draft).errors.join(" "), /difference 1/);
   draft.aggregate = "20";
   draft.rows[0].hits = "";
-  assert.match(validateDraft(s, draft).errors.join(" "), /Missing hits/);
+  assert.match(validateDraft(s, draft).errors.join(" "), /Missing: Person 1/);
   draft.rows[0].hits = "5";
   const a = saveDetail(s, draft);
   assert.equal(a.inputMode, "reconciled");
   assert.equal(a.individualsVerified, true);
+});
+test("A detail confirms whole: every firer's hits, or only the detail total", () => {
+  const { s, d, people } = setup("CS_M", "standard", 6),
+    draft = getDraft(s, d.id, "A");
+  for (const i of [0, 1, 2, 3]) draft.rows[i].hits = "10";
+  assert.throws(
+    () => saveDetail(s, draft),
+    /Enter every firer's hits, or only the detail total\. Missing: Person 5, Person 6\./,
+  );
+  assert.equal(s.shared.length, 0);
+  for (const r of draft.rows) r.hits = "";
+  draft.aggregate = "60";
+  const a = saveDetail(s, draft);
+  assert.equal(a.divisor, 6);
+  assert.equal(a.score, 10);
+  for (const p of people) assert.equal(best(s, p, "A"), 10);
+});
+test("A detail's records are numbered by attempt, and edits keep the number", () => {
+  const { s, d, people } = setup("CS_M", "standard", 6);
+  const r1 = detailScore(s, d, "A", 60),
+    r2 = detailScore(s, d, "A", 72);
+  const r3 = editDetailAttempt(
+    s,
+    r2.id,
+    r2.roster.map((m) => ({ participantId: m.id, weapon: m.weapon, hits: "" })),
+    "78",
+  );
+  assert.equal(r2.revisedBy, r3.id);
+  const numbers = detailAttemptNumbers(s, d.id, "A");
+  assert.equal(numbers.get(r1.id), 1);
+  assert.equal(numbers.get(r2.id), 2);
+  assert.equal(numbers.get(r3.id), 2);
+  assert.equal(nextAttempt(s, people, "A"), 3);
+});
+test("The firing queue keeps first attempts in order, then redetails as sent", () => {
+  const store = newStore(),
+    s = createShoot(store, "CS_SP", "standard", "Q");
+  addParticipants(
+    s,
+    Array.from({ length: 12 }, (_, i) => `P${i + 1} ${Math.floor(i / 4) + 1}`),
+    "SAR21",
+  );
+  const [d1, d2, d3] = sortedDetails(s),
+    names = () => firingQueue(s, "A").map((e) => `${e.detail.name}#${e.attempt}`);
+  assert.deepEqual(names(), ["Detail 1#1", "Detail 2#1", "Detail 3#1"]);
+  detailScore(s, d1, "A", 20);
+  assert.deepEqual(names(), ["Detail 2#1", "Detail 3#1"]);
+  // Redetailed before everyone has shot: it joins the back, behind Details 2 and 3.
+  dispatch(s, "A", [`detail:${d1.id}`]);
+  assert.deepEqual(names(), ["Detail 2#1", "Detail 3#1", "Detail 1#2"]);
+  // Priority sorts the redetail list, never the firing queue.
+  setPriority(s, `detail:${d3.id}`, "high");
+  assert.deepEqual(names(), ["Detail 2#1", "Detail 3#1", "Detail 1#2"]);
+  // Scoring out of order takes that entry off; the rest move up.
+  detailScore(s, d3, "A", 24);
+  assert.deepEqual(names(), ["Detail 2#1", "Detail 1#2"]);
+  dispatch(s, "A", [`detail:${d3.id}`]);
+  assert.deepEqual(names(), ["Detail 2#1", "Detail 1#2", "Detail 3#2"]);
+  detailScore(s, d2, "A", 16);
+  detailScore(s, d1, "A", 28);
+  assert.deepEqual(names(), ["Detail 3#2"]);
+  assert.equal(firingQueue(s, "A")[0].dispatch.status, "awaiting");
+});
+test("Individual stages queue firers by detail, then redetails", () => {
+  const { s, people } = setup("BTP", "standard", 3);
+  const order = () => firingQueue(s, "A").map((e) => e.members[0].name);
+  assert.deepEqual(order(), ["Person 1", "Person 2", "Person 3"]);
+  recordIndividual(s, people[1], "A", "4");
+  dispatch(s, "A", [`person:${people[1].id}`]);
+  assert.deepEqual(order(), ["Person 1", "Person 3", "Person 2"]);
+});
+test("History numbers match the attempt tags through edits and voids", () => {
+  const { s, p } = setup("BTP", "standard", 1),
+    n = (a) => attemptNumbers(s, p).get(a.id);
+  const a1 = recordIndividual(s, p, "A", "5");
+  assert.equal(n(a1), 1);
+  // An edit corrects attempt 1; it does not become attempt 2.
+  const e1 = editIndividual(s, a1.id, "7");
+  assert.equal(n(a1), 1);
+  assert.equal(n(e1), 1);
+  assert.equal(nextAttempt(s, p, "A"), 2);
+  const a2 = recordIndividual(s, p, "A", "9");
+  assert.equal(n(a2), 2);
+  // Voided outright, it no longer counts, so the next entry is attempt 2 again.
+  voidAttempt(s, a2.id, "Wrong firer");
+  assert.equal(n(a2), null);
+  assert.equal(nextAttempt(s, p, "A"), 2);
+  const a3 = recordIndividual(s, p, "A", "10");
+  assert.equal(n(a3), 2);
+  // Each stage counts on its own.
+  assert.equal(n(recordIndividual(s, p, "B", "4")), 1);
+});
+test("Attempt numbers count the scores a firer or detail already has", () => {
+  const { s, d, people } = setup("CS_SP", "standard", 4);
+  assert.equal(nextAttempt(s, people, "A"), 1);
+  assert.equal(nextAttempt(s, people[0], "A"), 1);
+  detailScore(s, d, "A", 20);
+  assert.equal(nextAttempt(s, people, "A"), 2);
+  assert.equal(nextAttempt(s, people[0], "A"), 2);
+  assert.equal(nextAttempt(s, people, "C"), 1);
+  assert.equal(detailAttempts(s, d.id, "A").length, 1);
+  detailScore(s, d, "A", 24);
+  assert.equal(detailAttempts(s, d.id, "A").length, 2);
+  assert.equal(nextAttempt(s, people, "A"), 3);
 });
 test("Stage B scores are individual; missing is not zero", () => {
   const { s, people, p } = setup("CS_SP", "standard", 4);

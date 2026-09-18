@@ -198,6 +198,7 @@ export function createTempDetail(s, stage, entries, { oneOff = false } = {}) {
     temporary: true,
     stage,
     oneOff,
+    createdAt: now(),
     memberIds: rows.map((r) => r.person.id),
     weapons: Object.fromEntries(rows.map((r) => [r.person.id, r.weapon])),
   };
@@ -466,6 +467,8 @@ export function removeParticipant(s, id, reason = "") {
   audit(s, "Participant removed", { participant: p, reason });
 }
 export const draftKey = (detailId, stage) => `${detailId}:${stage}`;
+// Starts the message for a detail confirmed with firers still blank.
+export const MISSING = "Enter every firer's hits, or only the detail total.";
 export function getDraft(s, detailId, stage) {
   const key = draftKey(detailId, stage);
   return (s.drafts[key] ??= {
@@ -495,6 +498,7 @@ export function parseHits(input, max) {
   return { value };
 }
 // Shared checks for a detail's scores, whether from its entry table or a manual detail.
+// A detail is confirmed whole: every firer's hits, or the detail total alone.
 function scoreRows(s, stage, input, aggregateInput, errors) {
   const shared = isCS(s) && ["A", "C"].includes(stage);
   const rows = input.map((row) => {
@@ -535,8 +539,13 @@ function scoreRows(s, stage, input, aggregateInput, errors) {
       "Individual results are required; a detail total cannot supply individual scores.",
     );
   if (!shared || !hasAggregate || someHits) {
+    const missing = rows.filter((r) => r.hits === "" || r.hits == null);
+    if (missing.length)
+      errors.push(
+        `${MISSING} Missing: ${missing.map((r) => r.person?.name || "Unknown participant").join(", ")}.`,
+      );
     for (const r of rows)
-      if (r.parsed.error)
+      if (r.parsed.error && !missing.includes(r))
         errors.push(
           `${r.person?.name || "Unknown participant"}: ${r.parsed.error}`,
         );
@@ -726,6 +735,7 @@ export function editDetailAttempt(s, detailAttemptId, entries, aggregate = "") {
     revisionOf: detailAttemptId,
     recordedAt: old.recordedAt,
   });
+  old.revisedBy = fresh.id;
   for (const x of s.attempts)
     if (x.detailAttemptId === detailAttemptId) x.revisedBy = fresh.id;
   audit(s, "Detail score edited", {
@@ -828,6 +838,72 @@ export function eligible(s, p, a) {
 // Every counted score for a stage, oldest first.
 export function scoreHistory(s, p, stage) {
   return s.attempts.filter((a) => a.stage === stage && eligible(s, p, a));
+}
+// Which attempt at this stage the next entry will be. Takes one firer or a
+// detail's members, whose counted attempts move together.
+export function nextAttempt(s, people, stage) {
+  const list = Array.isArray(people) ? people : [people];
+  return Math.max(0, ...list.map((p) => scoreHistory(s, p, stage).length)) + 1;
+}
+// Every detail score recorded for a detail at a stage, oldest first.
+export function detailAttempts(s, detailId, stage) {
+  return s.shared.filter((a) => a.detailId === detailId && a.stage === stage);
+}
+// Numbers a firer's attempts at each stage the same way the attempt tags count
+// them: an edit keeps the number of the attempt it corrects, and a score that
+// no longer counts (voided outright, say) has none. Keyed by attempt ID.
+export function attemptNumbers(s, p) {
+  const mine = s.attempts.filter((a) => a.participantId === p.id),
+    byId = new Map(mine.map((a) => [a.id, a])),
+    previous = (a) => {
+      if (a.revisionOf) return byId.get(a.revisionOf);
+      const shared =
+        a.detailAttemptId && s.shared.find((d) => d.id === a.detailAttemptId);
+      return shared?.revisionOf
+        ? mine.find((x) => x.detailAttemptId === shared.revisionOf)
+        : undefined;
+    },
+    root = (a) => {
+      let x = a;
+      for (let i = 0, prev; i < 1000 && (prev = previous(x)); i++) x = prev;
+      return x.id;
+    },
+    live = new Set(mine.filter((a) => eligible(s, p, a)).map(root)),
+    numbers = new Map(),
+    count = {};
+  for (const a of mine) {
+    const r = root(a);
+    if (!live.has(r)) numbers.set(a.id, null);
+    else {
+      if (!numbers.has(r))
+        numbers.set(r, (count[a.stage] = (count[a.stage] ?? 0) + 1));
+      numbers.set(a.id, numbers.get(r));
+    }
+  }
+  return numbers;
+}
+// The attempt each of a detail's records was for its firers. Keyed by detail
+// record ID.
+export function detailAttemptNumbers(s, detailId, stage) {
+  const cache = new Map(),
+    numbers = new Map();
+  for (const d of detailAttempts(s, detailId, stage)) {
+    let n = null;
+    for (const m of d.roster) {
+      const p = s.participants.find((x) => x.id === m.id),
+        a =
+          p &&
+          s.attempts.find(
+            (x) => x.participantId === p.id && x.detailAttemptId === d.id,
+          );
+      if (!a) continue;
+      if (!cache.has(p.id)) cache.set(p.id, attemptNumbers(s, p));
+      const k = cache.get(p.id).get(a.id);
+      if (k != null) n = Math.max(n ?? 0, k);
+    }
+    numbers.set(d.id, n);
+  }
+  return numbers;
 }
 export function bestAttempt(s, p, stage) {
   return scoreHistory(s, p, stage).reduce(
@@ -975,6 +1051,8 @@ export function setPriority(s, key, tag) {
   else delete s.priorities[key];
   audit(s, "Priority changed", { key, tag: tag || null });
 }
+// Who could be redetailed: firers below their threshold, or listed by hand.
+// Priority and the chosen order sort this list only, never the firing queue.
 export function queue(s, stage) {
   const rows = entities(s, stage)
     .filter(
@@ -1002,6 +1080,7 @@ export function queue(s, stage) {
   for (const e of rows) {
     e.errors = e.detail ? stageCompositionErrors(s, e.detail.id, stage) : [];
     e.first = e.members.every((p) => best(s, p, stage) === null);
+    e.attempt = nextAttempt(s, e.members, stage);
     // Listed by hand even though the threshold is met.
     e.above =
       !e.first &&
@@ -1044,14 +1123,13 @@ export function queue(s, stage) {
     );
   }
   const fraction = (e) =>
-      e.first
-        ? -1
-        : e.best /
-          e.members[0].profile.components.find((c) => c.id === stage).max,
+      e.best / e.members[0].profile.components.find((c) => c.id === stage).max,
     tier = (e) => (e.tag === "high" ? 0 : e.tag === "low" ? 2 : 1);
+  // A baseline attempt leads any reshoot, whichever order is chosen.
   return rows.sort(
     (a, b) =>
       tier(a) - tier(b) ||
+      b.first - a.first ||
       (s.settings.order === "highest"
         ? fraction(b) - fraction(a)
         : s.settings.order === "first"
@@ -1095,6 +1173,51 @@ export function dispatch(s, stage, keys) {
     (q) => q.stage !== stage || !keys.includes(q.key),
   );
   audit(s, "Firers redetailed", { stage, keys });
+}
+// The firing order for a stage, as firers sit waiting on the ground: everyone
+// still to take a first attempt, in detail order, then each redetail in the
+// order it was sent. Priority never reorders it; scoring an entry takes it off,
+// so the rest move up.
+export function firingQueue(s, stage) {
+  const all = entities(s, stage),
+    sent = s.dispatches.filter(
+      (d) => d.stage === stage && d.status === "awaiting",
+    ),
+    keys = new Set(sent.map((d) => d.key)),
+    seat = (e) =>
+      isCS(s) && !e.detail
+        ? detailNumber(
+            s.details.find((d) => d.id === e.members[0].detailId) ?? {
+              name: "",
+            },
+          ) || 1e9
+        : 0,
+    first = all
+      .filter(
+        (e) =>
+          !keys.has(e.key) &&
+          e.members.some((p) => best(s, p, stage) === null),
+      )
+      .map((e, i) => ({
+        ...e,
+        dispatch: null,
+        // A detail made on the spot joins when it is made.
+        joined:
+          e.detail?.temporary && e.detail.createdAt
+            ? Date.parse(e.detail.createdAt)
+            : -Infinity,
+        order: i,
+      }))
+      .sort((a, b) => a.joined - b.joined || seat(a) - seat(b) || a.order - b.order),
+    again = sent
+      .map((d) => {
+        const e = all.find((x) => x.key === d.key);
+        return e && { ...e, dispatch: d, joined: Date.parse(d.at) };
+      })
+      .filter(Boolean);
+  return [...first, ...again]
+    .sort((a, b) => (a.joined === b.joined ? 0 : a.joined - b.joined))
+    .map((e) => ({ ...e, attempt: nextAttempt(s, e.members, stage) }));
 }
 export function cancelDispatch(s, id) {
   const d = s.dispatches.find((d) => d.id === id && d.status === "awaiting");

@@ -20,9 +20,11 @@ Everything works offline. Scores are saved on your device only, so export a back
 
 Each participant keeps their best score per stage. Final scores adds them for Pass, Marksman or Fail.
 
-BTP, ATP and APS scores save as you enter them. Combat Shoot is scored by detail: add a detail number after each name or tap the number buttons, then confirm each detail's scores.
+BTP, ATP and APS scores save as you enter them. Combat Shoot is scored by detail: add a detail number after each name or tap the number buttons, then confirm each detail's scores. A detail confirms once every firer has hits, or with only the detail total. Choose History on a detail to see or edit its scores.
 
-Tick firers in Redetailing and choose Redetail. Tap ↕ to mark a firer high ▲ or low ▼ priority.
+Each firer keeps the rifle set in Participants for the whole shoot. Every row shows which attempt it is, starting at Attempt 1.
+
+The firing queue shows who fires next: everyone still to take a first attempt, in detail order, then redetails in the order they were sent. Tick firers in Redetailing and choose Redetail to add them to the back of the queue; they move up as the entries ahead are scored. Tap ↕ to mark a firer high ▲ or low ▼ priority. Priority sorts the Redetailing list only, never the firing queue.
 
 ## Reproduction
 
