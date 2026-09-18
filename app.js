@@ -467,7 +467,7 @@ function individualPanel(c, stage) {
   const scoredRow = (p) =>
     `<tr data-row="${p.id}" class="${search ? "match" : ""}"><td class="name">${esc(p.name)}</td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
   return (
-    `<section class="panel score-panel" data-individual><div class="detail-head"><h3>${esc(stageLabel(c, stage))}</h3><span class="count">${toShoot.length} in the queue</span></div><p class="note stage-note">${queueNote}${cs ? " Fired individually. Details do not apply to this stage; a firer may use a different rifle for it." : ""}</p>${
+    `<section class="panel score-panel" data-individual><div class="detail-head"><h3>${esc(stageLabel(c, stage))}</h3><span class="count">${toShoot.length} in the queue</span></div>${cs ? '<p class="note stage-note">Fired individually. Details do not apply to this stage; a firer may use a different rifle for it.</p>' : ""}${
       toShoot.length
         ? `<div class="table-wrap"><table><thead><tr><th>#</th><th>Full name</th>${cs ? "<th>Rifle</th>" : ""}<th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${toShoot.map(row).join("")}</tbody></table></div>`
         : `<div class="panel-body note">Everyone has a ${esc(stageLabel(c, stage))} score. Redetail firers to enter more.</div>`
@@ -506,9 +506,6 @@ function draftSummary(c, draft) {
 function hasInput(draft) {
   return !!draft && (draft.aggregate !== "" || draft.rows.some((r) => r.hits !== ""));
 }
-// How the order on a stage tab is made, said once above it.
-const queueNote =
-  "Firing order: first attempts, then redetails as sent. Skip moves someone not ready to the bottom.";
 // Skip toggles; it greys out once hits are typed, since that entry is firing.
 function skipButton(key, name, on, typed) {
   return `<button type="button" class="skip ${on ? "on" : ""}" data-skip="${esc(key)}" aria-pressed="${!!on}" ${typed ? "disabled" : ""} title="${on ? "Skipped: tap to put back in its place" : "Skip: move below everyone waiting"}" aria-label="${on ? "Unskip" : "Skip"} ${esc(name)}">${on ? "Skipped" : "Skip"}</button>`;
@@ -549,7 +546,6 @@ function detailPanels(c, stage) {
       '<p><button data-action="participants">Participants</button></p>',
     );
   return (
-    `<p class="note queue-note">${queueNote}</p>` +
     (unassigned
       ? `<p class="note">${unassigned} ${unassigned === 1 ? "participant needs" : "participants need"} a detail. <button class="inline-link" data-action="participants">Assign details</button></p>`
       : "") +

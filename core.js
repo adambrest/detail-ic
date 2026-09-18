@@ -1167,7 +1167,7 @@ export function insights(s, stage = null) {
         )
         .map(
           ({ p, vals }) =>
-            `${p.name}: ${vals.length} tries (${vals.join(", ")}), no better lately`,
+            `${p.name}: ${vals.length} tries (${vals.join(", ")})`,
         ),
     );
     if (detailed) {

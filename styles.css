@@ -615,9 +615,6 @@ tr.next td {
   min-height: 26px;
   margin-right: 4px;
 }
-.queue-note {
-  margin: 0 0 10px;
-}
 .reached {
   border-top: 1px solid var(--line);
   font-size: 11px;

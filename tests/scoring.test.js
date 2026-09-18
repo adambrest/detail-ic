@@ -757,7 +757,7 @@ test("Insights point out quick wins and firers who are not improving", () => {
     "Person 1: 12 → 13 for Marksman (1 short)",
   ]);
   assert.deepEqual(a["Not improving"], [
-    "Person 2: 4 tries (8, 9, 7, 6), no better lately",
+    "Person 2: 4 tries (8, 9, 7, 6)",
   ]);
   assert.ok(a["Overview"].includes("Stage A · Day: 2 of 2 have a score, 0 waiting to fire"));
 });
