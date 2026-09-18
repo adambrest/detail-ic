@@ -1046,8 +1046,27 @@ input.invalid {
 tr.awaiting td {
   background: #f5f9ff;
 }
-tr.match td {
+tr.match td,
+.reached-row.match,
+.queue-row.match {
   background: #fef9c3;
+}
+/* Skipped entries stay scoreable, just quieter until they are ready. */
+tr.skipped td:not(.more-cell),
+.score-panel.skipped .detail-head > :not(.actions),
+.score-panel.skipped .table-wrap,
+.score-panel.skipped .aggregate,
+.score-panel.skipped .score-footer {
+  opacity: 0.55;
+}
+.skip.on {
+  background: var(--panel2);
+  color: var(--text);
+  border-color: var(--muted);
+}
+.skip:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 tr.flash td {
   animation: flash 1.4s ease-out;

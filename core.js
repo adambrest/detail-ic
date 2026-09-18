@@ -1177,12 +1177,9 @@ export function dispatch(s, stage, keys) {
 // The firing order for a stage, as firers sit waiting on the ground: everyone
 // still to take a first attempt, in detail order, then each redetail in the
 // order it was sent. Priority never reorders it; scoring an entry takes it off,
-// so the rest move up. A skipped entry rejoins at the back.
+// so the rest move up. Skipped entries wait below everyone else, in the order
+// they were skipped, until unskipped or scored.
 export function firingQueue(s, stage) {
-  const skipped = (key) => {
-    const at = s.skips?.[`${stage}:${key}`];
-    return at ? Date.parse(at) : -Infinity;
-  };
   const all = entities(s, stage),
     sent = s.dispatches.filter(
       (d) => d.stage === stage && d.status === "awaiting",
@@ -1197,49 +1194,79 @@ export function firingQueue(s, stage) {
           ) || 1e9
         : 0,
     first = all
-      .filter(
-        (e) =>
-          !keys.has(e.key) &&
-          e.members.some((p) => best(s, p, stage) === null),
-      )
+      .filter((e) => !keys.has(e.key) && owesFirst(s, stage, e))
       .map((e, i) => ({
         ...e,
         dispatch: null,
         // A detail made on the spot joins when it is made.
-        joined: Math.max(
+        joined:
           e.detail?.temporary && e.detail.createdAt
             ? Date.parse(e.detail.createdAt)
             : -Infinity,
-          skipped(e.key),
-        ),
+        seat: seat(e),
         order: i,
-      }))
-      .sort((a, b) => a.joined - b.joined || seat(a) - seat(b) || a.order - b.order),
+      })),
     again = sent
-      .map((d) => {
+      .map((d, i) => {
         const e = all.find((x) => x.key === d.key);
         return (
           e && {
             ...e,
             dispatch: d,
-            joined: Math.max(Date.parse(d.at), skipped(e.key)),
+            joined: Date.parse(d.at),
+            seat: 0,
+            order: first.length + i,
           }
         );
       })
-      .filter(Boolean);
-  return [...first, ...again]
-    .sort((a, b) => (a.joined === b.joined ? 0 : a.joined - b.joined))
-    .map((e) => ({ ...e, attempt: nextAttempt(s, e.members, stage) }));
+      .filter(Boolean),
+    list = [...first, ...again].map((e) => {
+      const skip = skipOf(s, stage, e);
+      return {
+        ...e,
+        attempt: nextAttempt(s, e.members, stage),
+        skipped: !!skip,
+        skippedAt: skip ? Date.parse(skip.at) : 0,
+      };
+    }),
+    time = (a, b) => (a === b ? 0 : a - b);
+  return list.sort(
+    (a, b) =>
+      a.skipped - b.skipped ||
+      time(a.skippedAt, b.skippedAt) ||
+      time(a.joined, b.joined) ||
+      a.seat - b.seat ||
+      a.order - b.order,
+  );
 }
-// Sends an entry to the back of the firing order, e.g. when a firer falls out.
-// It keeps its place in the scores; only when it fires changes.
-export function skipQueue(s, stage, key) {
-  if (!firingQueue(s, stage).some((e) => e.key === key))
-    throw Error("That entry is not waiting to fire.");
+// Still to fire for the first time: a firer or detail with no score yet. A
+// manual detail is often made of firers who have shot already (helpers, or
+// people going again), so it waits until its own score is in.
+export function owesFirst(s, stage, e) {
+  return e.detail?.temporary
+    ? !s.shared.some(
+        (a) =>
+          a.detailId === e.detail.id && a.stage === stage && a.status === "valid",
+      )
+    : e.members.some((p) => best(s, p, stage) === null);
+}
+// A skip holds only for the attempt it was made on, so it clears itself once
+// that entry is scored.
+function skipOf(s, stage, e) {
+  const skip = s.skips?.[`${stage}:${e.key}`];
+  return skip?.attempt === nextAttempt(s, e.members, stage) ? skip : null;
+}
+// Skips an entry, e.g. when a firer falls out, or puts it back in its place.
+// Returns what was there before, so the change can be undone.
+export function setSkipped(s, stage, key, on) {
+  const e = firingQueue(s, stage).find((x) => x.key === key);
+  if (!e) throw Error("That entry is not waiting to fire.");
   s.skips ??= {};
-  const previous = s.skips[`${stage}:${key}`] ?? null;
-  s.skips[`${stage}:${key}`] = now();
-  audit(s, "Skipped in the firing order", { stage, key });
+  const slot = `${stage}:${key}`,
+    previous = s.skips[slot] ?? null;
+  if (on) s.skips[slot] = { at: now(), attempt: e.attempt };
+  else delete s.skips[slot];
+  audit(s, on ? "Skipped in the firing order" : "Unskipped", { stage, key });
   return previous;
 }
 export function cancelDispatch(s, id) {

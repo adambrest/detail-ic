@@ -47,7 +47,7 @@ import {
   nextAttempt,
   detailAttempts,
   firingQueue,
-  skipQueue,
+  setSkipped,
   attemptNumbers,
   detailAttemptNumbers,
   result,
@@ -606,22 +606,60 @@ test("The firing queue keeps first attempts in order, then redetails as sent", (
   assert.deepEqual(names(), ["Detail 3#2"]);
   assert.equal(firingQueue(s, "A")[0].dispatch.status, "awaiting");
 });
-test("Skipping sends an entry to the back of the firing order", async () => {
-  const { s, people } = setup("BTP", "standard", 3);
-  const order = () => firingQueue(s, "A").map((e) => e.members[0].name);
-  recordIndividual(s, people[2], "A", "4");
-  dispatch(s, "A", [`person:${people[2].id}`]);
+test("Skipped entries wait below everyone, even later redetails", () => {
+  const { s, people } = setup("BTP", "standard", 4);
+  const order = () =>
+    firingQueue(s, "A").map(
+      (e) => e.members[0].name + (e.skipped ? " (skipped)" : ""),
+    );
+  recordIndividual(s, people[3], "A", "4");
   assert.deepEqual(order(), ["Person 1", "Person 2", "Person 3"]);
-  await new Promise((done) => setTimeout(done, 5));
-  // Person 1 falls out: everyone else moves up, redetail included.
-  skipQueue(s, "A", `person:${people[0].id}`);
-  assert.deepEqual(order(), ["Person 2", "Person 3", "Person 1"]);
-  recordIndividual(s, people[0], "A", "9");
-  assert.deepEqual(order(), ["Person 2", "Person 3"]);
+  // Person 1 falls out.
+  setSkipped(s, "A", `person:${people[0].id}`, true);
+  assert.deepEqual(order(), ["Person 2", "Person 3", "Person 1 (skipped)"]);
+  // A redetail sent afterwards still goes above the skipped firer.
+  dispatch(s, "A", [`person:${people[3].id}`]);
+  assert.deepEqual(order(), [
+    "Person 2",
+    "Person 3",
+    "Person 4",
+    "Person 1 (skipped)",
+  ]);
+  // Unskipping puts them back where they were.
+  setSkipped(s, "A", `person:${people[0].id}`, false);
+  assert.equal(order()[0], "Person 1");
+  // Once scored, a skip no longer applies to that firer's next attempt.
+  setSkipped(s, "A", `person:${people[1].id}`, true);
+  recordIndividual(s, people[1], "A", "3");
+  dispatch(s, "A", [`person:${people[1].id}`]);
+  assert.ok(order().includes("Person 2"));
+  recordIndividual(s, people[2], "A", "12");
   assert.throws(
-    () => skipQueue(s, "A", `person:${people[0].id}`),
+    () => setSkipped(s, "A", `person:${people[2].id}`, true),
     /not waiting/,
   );
+});
+test("Firers with nothing to gain can fire in a manual detail to help others", () => {
+  const { s, d, people } = setup("CS_SP", "standard", 4);
+  detailScore(s, d, "A", 60);
+  // Everyone maxed Stage A; Person 1 also finishes as Marksman.
+  recordIndividual(s, people[0], "B", "8");
+  detailScore(s, d, "C", 60);
+  assert.equal(result(s, people[0]).status, "Marksman");
+  const temp = createTempDetail(
+    s,
+    "A",
+    people.map((p) => ({ participantId: p.id, weapon: p.weapon })),
+  );
+  // Everyone in it has shot, yet the manual detail waits to fire.
+  assert.ok(firingQueue(s, "A").some((e) => e.key === `detail:${temp.id}`));
+  const draft = getDraft(s, temp.id, "A");
+  draft.aggregate = "40";
+  saveDetail(s, draft);
+  assert.ok(!firingQueue(s, "A").some((e) => e.key === `detail:${temp.id}`));
+  // A lower average never takes away a best score.
+  assert.equal(best(s, people[0], "A"), 15);
+  assert.equal(result(s, people[0]).status, "Marksman");
 });
 test("Individual stages queue firers by detail, then redetails", () => {
   const { s, people } = setup("BTP", "standard", 3);

@@ -376,8 +376,8 @@ async function addNames(page, names) {
     await page.locator("#order").selectOption("highest");
     await waitFor(page, () => document.querySelectorAll(".queue-row").length > 0);
 
-    // Stage B has no details at all, and each firer keeps the rifle set in
-    // Participants: a total only makes sense on one rifle throughout.
+    // Stage B has no details at all, and can be fired on another rifle: LMG
+    // fires the same rounds as a rifle in Stage B.
     await tab(page, "Stage B");
     assert.equal(await page.locator(".score-panel").count(), 1);
     // Individual confirm, but no per-detail confirm.
@@ -390,15 +390,20 @@ async function addNames(page, names) {
         "Details do not apply",
       ),
     );
+    await page
+      .getByRole("combobox", { name: "Dana Koh rifle for Stage B" })
+      .selectOption("SAR21/M203");
+    // Tab skips the rifle and Skip, straight to the next score box.
+    await page.getByRole("spinbutton", { name: "Dana Koh hits" }).fill("6");
+    await page.keyboard.press("Tab");
     assert.equal(
-      await page.getByRole("combobox", { name: /rifle for Stage B/ }).count(),
-      0,
+      await page.evaluate(() => document.activeElement.getAttribute("aria-label")),
+      "Evan Lim hits",
     );
-    await enterHits(page, "Dana Koh", "6");
     await click(page, "Confirm scores");
     await waitFor(page, () =>
       JSON.parse(localStorage.getItem("detail-ic-v2")).shoots[1].attempts.some(
-        (a) => a.stage === "B" && a.weapon === "LMG",
+        (a) => a.stage === "B" && a.weapon === "SAR21/M203",
       ),
     );
     // Confirming used to crash here: a Combat Shoot firer queued on an

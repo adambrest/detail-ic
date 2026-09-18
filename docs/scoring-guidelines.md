@@ -90,7 +90,7 @@ Store actual weapon on each stage attempt, not only on the participant or detail
 
 A CS shared-stage result also references its detail-stage attempt, immutable roster snapshot, aggregate hits, divisor and floored average. Individual rows reference that shared record. If a firer changes weapon between stages, preserve both assignments rather than rewriting earlier records.
 
-For CS, SAR21/LMG cross-stage changes are numerically compatible with the supplied tables. For ATP, the user requires one weapon type throughout all stages. Lock the weapon type for the scored programme record and require every selected stage/retest result to match it. A different weapon type must be recorded separately and cannot contribute to the same combined ATP result.
+For CS, SAR21/LMG cross-stage changes are numerically compatible with the supplied tables. The user confirms that LMG firers shoot the same number of rounds as rifles in Stage B, so rifles are interchangeable for Stage B. For ATP, the user requires one weapon type throughout all stages. Lock the weapon type for the scored programme record and require every selected stage/retest result to match it. A different weapon type must be recorded separately and cannot contribute to the same combined ATP result. The user confirms ATP rifles are never interchanged: LMG fires 70, 8 and 48 rounds against 24, 8 and 16 for SAR21, SAR21 MMS, SAR21 SS, HK416 and M203, with a different scoring standard, so an LMG firer stays on LMG throughout.
 
 ## Best scores and retests
 
