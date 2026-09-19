@@ -1650,11 +1650,32 @@ export function firerHits(s, p, stage) {
       .filter((v) => v !== null && v !== undefined);
   return raw.length ? Math.max(...raw) : null;
 }
-// Firers whose own hits are under what a pass needs in the stage, weakest first.
+// This firer's own hits are under what a pass asks of the stage. It says how
+// they shoot, whatever their detail earned them, so it holds even after their
+// counted score is safe: they are still the wrong person to lend to a detail
+// that needs lifting.
+export function shootsPoorly(s, p, stage) {
+  const h = firerHits(s, p, stage);
+  return h !== null && h < passPace(p, stage);
+}
+// This firer has the stage score they need: at their threshold, out of reach of
+// improving it, or already Marksman.
+export function cleared(s, p, stage) {
+  const v = best(s, p, stage),
+    g = goal(s, p, stage);
+  return (
+    nothingToGain(s, p, stage) ||
+    !g ||
+    (v !== null && v >= target(s, p, stage, g.objective))
+  );
+}
+// Poor shooters still worth doing something about: they shoot poorly and have
+// not yet got the score this stage has to give them. Once one clears, there is
+// nothing left to act on, so they drop off the list. Weakest first.
 export function weakFirers(s, stage) {
   return s.participants
     .map((p) => ({ p, hits: firerHits(s, p, stage), pace: passPace(p, stage) }))
-    .filter((x) => x.hits !== null && x.hits < x.pace && !nothingToGain(s, x.p, stage))
+    .filter((x) => shootsPoorly(s, x.p, stage) && !cleared(s, x.p, stage))
     .toSorted((a, b) => a.hits - b.hits);
 }
 // A manual detail built around one weak firer: the strongest shooters who
@@ -1668,24 +1689,17 @@ export function buildAround(s, stage, weakId) {
     max = (p) => p.profile.components.find((c) => c.id === stage).max,
     pace = (p) => marksmanPace(p, stage),
     skip = new Set([
-      ...weakFirers(s, stage).map((x) => x.p.id),
+      ...s.participants.filter((p) => shootsPoorly(s, p, stage)).map((p) => p.id),
       ...firingQueue(s, stage).flatMap((e) => e.members.map((p) => p.id)),
       ...s.participants.filter((p) => committed(s, stage, p)).map((p) => p.id),
     ]),
     pool = s.participants
       .filter((p) => p.id !== weakId && !skip.has(p.id))
-      .map((p) => {
-        const v = best(s, p, stage),
-          g = goal(s, p, stage);
-        return {
-          p,
-          hits: firerHits(s, p, stage) ?? v,
-          cleared:
-            nothingToGain(s, p, stage) ||
-            !g ||
-            v >= target(s, p, stage, g.objective),
-        };
-      })
+      .map((p) => ({
+        p,
+        hits: firerHits(s, p, stage) ?? best(s, p, stage),
+        cleared: cleared(s, p, stage),
+      }))
       .filter((x) => x.hits !== null),
     // Pairing with another detail is the point, so among equals a firer from
     // elsewhere comes before one already sitting next to the weak firer.
@@ -1755,15 +1769,13 @@ export function planRest(s, stage, weakId, picked) {
   if (!home) return null;
   const max = (p) => p.profile.components.find((c) => c.id === stage).max,
     pace = (p) => marksmanPace(p, stage),
-    weakSet = new Set(weakFirers(s, stage).map((x) => x.p.id)),
+    weakSet = new Set(
+      s.participants.filter((p) => shootsPoorly(s, p, stage)).map((p) => p.id),
+    ),
     queued = new Set(
       firingQueue(s, stage).flatMap((e) => e.members.map((p) => p.id)),
     ),
-    cleared = (p) => {
-      const v = best(s, p, stage),
-        g = goal(s, p, stage);
-      return nothingToGain(s, p, stage) || !g || (v !== null && v >= target(s, p, stage, g.objective));
-    },
+    isCleared = (p) => cleared(s, p, stage),
     hits = (p) => firerHits(s, p, stage) ?? best(s, p, stage),
     rest = members(s, home.id).filter(
       (p) =>
@@ -1771,7 +1783,7 @@ export function planRest(s, stage, weakId, picked) {
         !weakSet.has(p.id) &&
         !queued.has(p.id) &&
         best(s, p, stage) !== null &&
-        !cleared(p),
+        !isCleared(p),
     );
   if (!rest.length) return null;
   const chosen = [],
@@ -1801,7 +1813,7 @@ export function planRest(s, stage, weakId, picked) {
         (a, b) =>
           (hits(b) >= pace(b)) - (hits(a) >= pace(a)) ||
           picked.includes(a.id) - picked.includes(b.id) ||
-          cleared(a) - cleared(b) ||
+          isCleared(a) - isCleared(b) ||
           hits(b) - hits(a),
       );
     for (const p of pool) {

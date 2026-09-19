@@ -59,6 +59,10 @@ import {
   nothingToGain,
   insights,
   weakFirers,
+  shootsPoorly,
+  cleared,
+  passPace,
+  marksmanPace,
   committed,
   overlapping,
   homeAttempts,
@@ -154,19 +158,21 @@ function later(fn) {
   else fn();
 }
 document.addEventListener("pointerdown", () => (pointerDown = true), true);
-document.addEventListener(
-  "pointerup",
-  () => {
-    pointerDown = false;
-    if (pending)
-      setTimeout(() => {
-        const fn = pending;
-        pending = null;
-        fn?.();
-      });
-  },
-  true,
-);
+// A touch that turns into a scroll is cancelled and never sends pointerup, and
+// a press that ends off the window may not either. Without these the waiting
+// redraw would never run and the page would stop responding to taps.
+function released() {
+  pointerDown = false;
+  if (pending)
+    setTimeout(() => {
+      const fn = pending;
+      pending = null;
+      fn?.();
+    });
+}
+for (const event of ["pointerup", "pointercancel"])
+  document.addEventListener(event, released, true);
+addEventListener("blur", released);
 function option(values, value) {
   return values
     .map(
@@ -283,12 +289,15 @@ function render() {
   const scoring = (key) => key.startsWith("stage:") || key === "final",
     shut = current && !current.locked;
   if (shut && scoring(tab)) tab = "participants";
-  $("#tabs").innerHTML = tabs
+  // Replacing the row would destroy the button a tap is in the middle of, and
+  // the click would go nowhere, so it is only rewritten when it has changed.
+  const bar = tabs
     .map(
       ([key, label]) =>
         `<button data-tab="${key}" class="${tab === key ? "on" : ""}" ${tab === key ? 'aria-current="page"' : ""} ${shut && scoring(key) ? 'disabled title="Confirm the participants first"' : ""}>${esc(label)}</button>`,
     )
     .join("");
+  if ($("#tabs").innerHTML !== bar) $("#tabs").innerHTML = bar;
   if (tab === "shoots") renderShoots();
   else if (tab === "settings") renderSettings();
   else if (tab === "participants") renderParticipants();
@@ -451,13 +460,43 @@ function awaiting(c, stage) {
       for (const m of d.roster) if (!map.has(m.id)) map.set(m.id, map.size);
   return map;
 }
+// In Stages A and C the counted score is the detail's average, shared by
+// everyone who fired it, so it can sit well above what a firer shot themselves
+// — most of all when a detail was confirmed on its total and no individual
+// hits were kept. Where the two differ, both are shown.
 function resultsCell(c, p, stage) {
   const list = scoreHistory(c, p, stage);
   if (!list.length) return '<span class="muted">—</span>';
-  const best = Math.max(...list.map((a) => a.score)),
-    rest = list.map((a) => a.score);
-  rest.splice(rest.indexOf(best), 1);
-  return `<b>${best}</b>${rest.length ? `<span class="prev">${rest.join(" ")}</span>` : ""}`;
+  const top = Math.max(...list.map((a) => a.score)),
+    rest = list.map((a) => a.score),
+    own = detailedStage(c, stage) ? firerHits(c, p, stage) : top,
+    max = p.profile.components.find((x) => x.id === stage).max;
+  rest.splice(rest.indexOf(top), 1);
+  return `<b title="Best counted ${esc(stageLabel(c, stage))} score: the detail's hits divided by its firers.">${top}</b>${rest.length ? `<span class="prev">${rest.join(" ")}</span>` : ""}${
+    own === top
+      ? ""
+      : `<span class="own" title="${esc(
+          own === null
+            ? `No individual hits recorded for ${p.name}: every ${stageLabel(c, stage)} score they have came from a detail total.`
+            : `${p.name} hit ${own}/${max} themselves; the rest of the average came from the others in the detail.`,
+        )}">own ${own === null ? "—" : own}</span>`
+  }`;
+}
+// Weak and Strong read a firer's own hits, never the detail average in the
+// Results column, so the mark carries the figures it was judged on.
+function abilityMark(c, p, stage, weak, strong) {
+  const low = weak.has(p.id),
+    high = !low && strong.has(p.id);
+  if (!low && !high) return "";
+  const own = firerHits(c, p, stage),
+    max = p.profile.components.find((x) => x.id === stage).max,
+    counted = best(c, p, stage),
+    note = `Own best hits ${own ?? "—"}/${max}${counted !== null && counted !== own ? `, counted score ${counted}/${max}` : ""}. ${
+      low
+        ? `Under the ${passPace(p, stage)} a pass asks of this stage.`
+        : `At or above the ${marksmanPace(p, stage)} that keeps them on course for Marksman.`
+    }`;
+  return ` <span class="badge ${high ? "green" : ""}" title="${esc(note)}">${low ? "Weak" : "Strong"}</span>`;
 }
 function renderStage(stage) {
   const c = s(),
@@ -519,7 +558,7 @@ function individualPanel(c, stage) {
     const max = p.profile.components.find((x) => x.id === stage).max,
       e = entry.get(p.id),
       typed = entryValue(c, stage, p) !== "";
-    return `<tr data-row="${p.id}" class="${[waiting.has(p.id) && "awaiting", e.n === 0 && !e.skipped && "next", e.skipped && "skipped", search && "match"].filter(Boolean).join(" ")}"><td class="seat">${e.n + 1}</td><td class="name">${esc(p.name)}${e.n === 0 && !e.skipped ? ' <span class="badge blue">Next</span>' : ""}${weak.has(p.id) ? ` ${badge("Weak")}` : ""}${strong.has(p.id) ? ' <span class="badge green">Strong</span>' : ""}${multi && !cs && p.weapon !== c.settings.weapon ? `<div class="sub">${esc(p.weapon)}</div>` : ""}<div class="attempt ${waiting.has(p.id) ? "on" : ""}">${e.skipped ? "Skipped · " : ""}Attempt ${e.attempt}${waiting.has(p.id) ? " · redetailed" : ""}</div></td>${cs ? `<td class="rifle">${esc(stageRifle(c, p, stage))}</td>` : ""}<td><div class="score-input"><input type="number" min="0" max="${max}" step="1" inputmode="numeric" enterkeyhint="next" data-hits="${p.id}" value="${esc(entryValue(c, stage, p))}" aria-label="${esc(p.name)} hits" placeholder="${e.skipped ? "Skipped" : "—"}" ${e.skipped ? "disabled" : ""}><span class="muted">/${max}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell">${order.length > 1 ? skipButton(`person:${p.id}`, p.name, e.skipped, typed) : ""}<button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+    return `<tr data-row="${p.id}" class="${[waiting.has(p.id) && "awaiting", e.n === 0 && !e.skipped && "next", e.skipped && "skipped", search && "match"].filter(Boolean).join(" ")}"><td class="seat">${e.n + 1}</td><td class="name">${esc(p.name)}${e.n === 0 && !e.skipped ? ' <span class="badge blue">Next</span>' : ""}${abilityMark(c, p, stage, weak, strong)}${multi && !cs && p.weapon !== c.settings.weapon ? `<div class="sub">${esc(p.weapon)}</div>` : ""}<div class="attempt ${waiting.has(p.id) ? "on" : ""}">${e.skipped ? "Skipped · " : ""}Attempt ${e.attempt}${waiting.has(p.id) ? " · redetailed" : ""}</div></td>${cs ? `<td class="rifle">${esc(stageRifle(c, p, stage))}</td>` : ""}<td><div class="score-input"><input type="number" min="0" max="${max}" step="1" inputmode="numeric" enterkeyhint="next" data-hits="${p.id}" value="${esc(entryValue(c, stage, p))}" aria-label="${esc(p.name)} hits" placeholder="${e.skipped ? "Skipped" : "—"}" ${e.skipped ? "disabled" : ""}><span class="muted">/${max}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell">${order.length > 1 ? skipButton(`person:${p.id}`, p.name, e.skipped, typed) : ""}<button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
   };
   const scoredRow = (p) => {
     const last = scoreHistory(c, p, stage).at(-1);
@@ -622,7 +661,7 @@ function detailPanels(c, stage) {
           .map((p) => {
             const row = draft.rows.find((r) => r.participantId === p.id),
               mine = nextAttempt(c, p, stage);
-            return `<tr data-row="${p.id}" class="${[waiting.has(p.id) && "awaiting", search && filtered(p) && "match"].filter(Boolean).join(" ")}"><td class="name">${esc(p.name)}${weak.has(p.id) ? ` ${badge("Weak")}` : ""}${strong.has(p.id) ? ' <span class="badge green">Strong</span>' : ""}${mine !== attempt || waiting.has(p.id) ? `<div class="attempt ${waiting.has(p.id) ? "on" : ""}">Attempt ${mine}${waiting.has(p.id) ? " · redetailed" : ""}</div>` : ""}</td><td class="rifle">${esc(rosterWeapon(c, d.id, p))}</td><td><div class="score-input"><input type="number" min="0" max="${cmax}" step="1" inputmode="numeric" enterkeyhint="next" data-cs-hits="${p.id}" value="${esc(row?.hits || "")}" aria-label="${esc(p.name)} hits" placeholder="—" ${e?.skipped ? "disabled" : ""}><span class="muted">/${cmax}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+            return `<tr data-row="${p.id}" class="${[waiting.has(p.id) && "awaiting", search && filtered(p) && "match"].filter(Boolean).join(" ")}"><td class="name">${esc(p.name)}${abilityMark(c, p, stage, weak, strong)}${mine !== attempt || waiting.has(p.id) ? `<div class="attempt ${waiting.has(p.id) ? "on" : ""}">Attempt ${mine}${waiting.has(p.id) ? " · redetailed" : ""}</div>` : ""}</td><td class="rifle">${esc(rosterWeapon(c, d.id, p))}</td><td><div class="score-input"><input type="number" min="0" max="${cmax}" step="1" inputmode="numeric" enterkeyhint="next" data-cs-hits="${p.id}" value="${esc(row?.hits || "")}" aria-label="${esc(p.name)} hits" placeholder="—" ${e?.skipped ? "disabled" : ""}><span class="muted">/${cmax}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
           })
           .join(
             "",
@@ -1189,18 +1228,51 @@ function manualDetailDialog(stage, around = null, picks = null) {
             : []),
         ];
   // What each firer brings, so a pick is an informed one.
-  const tag = (p) =>
-      p.id === around
-        ? ` ${badge("Weak")}`
+  const mark = (text, why, tone = "") =>
+      ` <span class="badge ${tone}" title="${esc(why)}">${text}</span>`,
+    // A poor shot stays flagged even once their own counted score is safe: the
+    // warning here is about lending them to a detail that needs lifting.
+    tag = (p) =>
+      p.id === around || shootsPoorly(c, p, stage)
+        ? mark(
+            "Weak",
+            `Own hits are under the ${passPace(p, stage)} a pass asks of ${label}, so they pull a detail's average down${cleared(c, p, stage) ? ", even though their own counted score is already safe" : ""}.`,
+          )
         : best(c, p, stage) === max
-          ? ' <span class="badge">Max score</span>'
+          ? mark(
+              "Max score",
+              `Their counted ${label} score is already ${max}/${max}, so firing again cannot improve it. They can still fire to help someone else's average.`,
+            )
           : result(c, p).status === "Marksman"
-            ? ` ${badge("Marksman")}`
+            ? mark(
+                "Marksman",
+                "Marksman on their total already, so another score changes nothing for them.",
+              )
             : isStrong(c, p, stage)
-              ? ' <span class="badge green">Strong</span>'
+              ? mark(
+                  "Strong",
+                  `Own best hits are at or above the ${marksmanPace(p, stage)} that keeps them on course for Marksman.`,
+                  "green",
+                )
               : "",
+    // Two different numbers: what the firer hit, and what their detail earned
+    // them. They part company when a detail was confirmed on its total alone.
+    figures = (p) => {
+      const o = hits(p),
+        counted = best(c, p, stage),
+        parts = [
+          o === null
+            ? `<span title="No individual hits recorded: every ${esc(label)} score they have came from a detail total.">own —</span>`
+            : `<span title="${esc(`${p.name} hit ${o}/${max} themselves. This is what the detail is built on.`)}">own ${o}/${max}</span>`,
+        ];
+      if (counted !== null && counted !== o)
+        parts.push(
+          `<span title="Best counted ${esc(label)} score: the detail's hits divided by its firers.">counted ${counted}/${max}</span>`,
+        );
+      return ` <span class="figures">${parts.join(" · ")}</span>`;
+    },
     row = (p) =>
-      `<div class="manual-row ${picked.has(p.id) ? "on" : ""}"><label class="manual-pick"><input type="checkbox" name="pick" value="${p.id}" aria-label="Include ${esc(p.name)}" ${picked.has(p.id) ? "checked" : ""}><span>${esc(p.name)}${tag(p)}${hits(p) !== null ? ` <span class="muted">${hits(p)}/${max}</span>` : ""}${committed(c, stage, p) ? ' <span class="muted">· already booked</span>' : ""}</span></label><span class="rifle">${esc(p.weapon)}</span></div>`;
+      `<div class="manual-row ${picked.has(p.id) ? "on" : ""}"><label class="manual-pick"><input type="checkbox" name="pick" value="${p.id}" aria-label="Include ${esc(p.name)}" ${picked.has(p.id) ? "checked" : ""}><span>${esc(p.name)}${tag(p)}${figures(p)}${committed(c, stage, p) ? ' <span class="muted">· already booked</span>' : ""}</span></label><span class="rifle">${esc(p.weapon)}</span></div>`;
   // Why this plan is what it is, and whether waiting would give a better one.
   const advisories = [];
   if (plan?.short)
@@ -1209,7 +1281,7 @@ function manualDetailDialog(stage, around = null, picks = null) {
     );
   if (plan?.waitFor.length)
     advisories.push(
-      `Not the strongest detail available: ${names(plan.waitFor.map((x) => x.name))} still ${plan.waitFor.length === 1 ? "needs" : "need"} ${label} and would fire harder, but ${plan.waitFor.length === 1 ? "is" : "are"} already booked. Waiting for that detail to finish makes a better one.`,
+      `A stronger detail is possible later. ${names(plan.waitFor.map((x) => x.name))} ${plan.waitFor.length === 1 ? "shoots" : "shoot"} better and still ${plan.waitFor.length === 1 ? "needs" : "need"} ${label}, so ${plan.waitFor.length === 1 ? "they" : "they"} would lift the average more — but ${plan.waitFor.length === 1 ? "they are" : "they are"} already in a detail waiting to fire. Wait for that detail to finish, or go ahead with this one.`,
     );
   dialog(
     around ? `Detail around ${weakName} · ${label}` : `Manual detail · ${label}`,
@@ -1888,12 +1960,12 @@ $("#main").addEventListener("change", (e) => {
       pr.targets[`${weapon}:${id}:${pr.objective}`] = parsed.value;
       applyPresets(store);
       save();
-      render();
+      later(render);
     } else if (t.dataset.defaultWeapon) {
       const [program, variant] = t.dataset.defaultWeapon.split("|");
       preset(store, program, variant).weapon = t.value;
       save();
-      render();
+      later(render);
     }
   } catch (err) {
     render();

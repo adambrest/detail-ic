@@ -48,6 +48,9 @@ import {
   detailAttempts,
   firingQueue,
   weakFirers,
+  shootsPoorly,
+  cleared,
+  firerHits,
   buildAround,
   planRest,
   committed,
@@ -914,6 +917,40 @@ test("The rest of a weak firer's detail gets a detail of its own", () => {
   assert.equal(rest.expected, 11);
   createTempDetail(s, "A", plan.entries);
   createTempDetail(s, "A", rest.entries);
+});
+test("A poor shooter who reaches what the stage needs drops off the list", () => {
+  const store = newStore(),
+    s = createShoot(store, "CS_SP", "standard", "C");
+  const people = addParticipants(
+    s,
+    Array.from({ length: 6 }, (_, i) => `P${i + 1} 1`),
+    rifle("CS_SP"),
+  );
+  const [d1] = sortedDetails(s),
+    p6 = people[5];
+  detailScore(s, d1, "A", null, { individuals: [15, 15, 15, 15, 15, 2] });
+  // Their own hits are 2/15, under the 8 a pass asks of Stage A.
+  assert.equal(firerHits(s, p6, "A"), 2);
+  assert.equal(shootsPoorly(s, p6, "A"), true);
+  // The detail carried them to 12/15, which Stage A alone does not settle.
+  assert.equal(best(s, p6, "A"), 12);
+  assert.equal(cleared(s, p6, "A"), false);
+  assert.deepEqual(
+    weakFirers(s, "A").map((x) => x.p.name),
+    ["P6"],
+  );
+  // With Stage B in, 12 is enough from Stage A, so nothing is left to act on
+  // and the poor shooter list lets them go.
+  for (const p of people) recordIndividual(s, p, "B", "8");
+  assert.equal(cleared(s, p6, "A"), true);
+  assert.deepEqual(weakFirers(s, "A"), []);
+  // They are still the wrong person to lend to a detail that needs lifting.
+  assert.equal(shootsPoorly(s, p6, "A"), true);
+  const plan = buildAround(s, "A", people[0].id);
+  assert.equal(
+    plan.entries.some((e) => e.participantId === p6.id),
+    false,
+  );
 });
 test("A firer booked into a detail is never built into a second one", () => {
   const store = newStore(),

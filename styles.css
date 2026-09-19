@@ -67,7 +67,7 @@ button.primary:hover {
 .danger:hover:not(:disabled) {
   color: var(--danger);
   border-color: var(--danger);
-  background: #fef2f2;
+  background: none;
 }
 button.danger-solid {
   background: var(--danger);
@@ -313,8 +313,18 @@ header h1 .logo {
 .history-row.void {
   opacity: 0.6;
 }
+.history-row > div:first-child {
+  min-width: 0;
+}
 .history-row .actions {
   align-items: flex-start;
+  flex-wrap: nowrap;
+  flex: none;
+}
+@media (max-width: 420px) {
+  .history-row .actions {
+    flex-direction: column;
+  }
 }
 td.rifle,
 .manual-row .rifle {
@@ -1095,6 +1105,16 @@ dialog .error {
   border-top: 1px solid var(--line);
   padding: 9px 12px;
   font-size: 12px;
+}
+.results .own {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.manual-row .figures {
+  color: var(--muted);
+  font-weight: 600;
 }
 .warn-note {
   color: var(--warn);
