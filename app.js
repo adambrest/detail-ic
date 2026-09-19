@@ -38,6 +38,7 @@ import {
   ensureDetail,
   updateParticipant,
   removeParticipant,
+  fillWeapons,
   clearParticipants,
   compositionErrors,
   getDraft,
@@ -324,7 +325,7 @@ function addPanel(c) {
   const cs = isCS(c),
     rifle =
       weapons(c).length > 1
-        ? `<label class="field inline"><span>Rifle</span><select id="add-weapon" aria-label="Rifle for these participants">${option(weapons(c), c.settings.weapon)}</select></label>`
+        ? `<label class="field inline add-rifle"><span>Rifle for these firers</span><select id="add-weapon" aria-label="Rifle for these participants">${option(weapons(c), c.settings.weapon)}</select></label>`
         : "";
   if (!addMode)
     return c.participants.length
@@ -333,7 +334,7 @@ function addPanel(c) {
   if (addMode === "choose")
     return `<section class="panel add-panel"><div class="panel-head"><h3>Add participants</h3><button class="icon-button" data-action="add-close" aria-label="Close">✕</button></div><div class="panel-body"><p class="note">Do you already know who is in each detail?</p><div class="actions"><button class="primary" data-action="add-by-detail">Paste detail by detail</button><button data-action="add-list">Paste the whole list</button></div></div></section>`;
   const byDetail = addMode === "detail";
-  return `<section class="panel add-panel"><div class="panel-head"><h3>${byDetail ? `Paste Detail ${pasteDetail}` : "Paste full names"}</h3><button class="icon-button" data-action="add-close" aria-label="Close">✕</button></div><div class="panel-body"><textarea id="add-names" aria-label="${byDetail ? `Full names for Detail ${pasteDetail}` : "Full names"}" placeholder="Alex Tan&#10;Benjamin Lee"></textarea>${rifle}<div class="actions">${byDetail ? '<button class="primary" data-action="add-next">Save and next detail</button><button data-action="add-done">Save and finish</button>' : '<button class="primary" data-action="add-save">Add participants</button>'}</div><div class="errors add-note">${esc(addNote)}</div><p class="note">${byDetail ? `Everyone in this box joins Detail ${pasteDetail}. Save and finish adds them and closes.` : cs ? "One full name per line. A detail number after a name puts them straight into it, for example “Alex Tan, 2”." : "One full name per line."}</p></div></section>`;
+  return `<section class="panel add-panel"><div class="panel-head"><h3>${byDetail ? `Paste Detail ${pasteDetail}` : "Paste full names"}</h3><button class="icon-button" data-action="add-close" aria-label="Close">✕</button></div><div class="panel-body">${rifle}<textarea id="add-names" aria-label="${byDetail ? `Full names for Detail ${pasteDetail}` : "Full names"}" placeholder="Alex Tan&#10;Benjamin Lee"></textarea><div class="actions">${byDetail ? '<button class="primary" data-action="add-next">Save and next detail</button><button data-action="add-done">Save and finish</button>' : '<button class="primary" data-action="add-save">Add participants</button>'}</div><div class="errors add-note">${esc(addNote)}</div><p class="note">${byDetail ? `Everyone in this box joins Detail ${pasteDetail}. Save and finish adds them and closes.` : cs ? "One full name per line. A detail number after a name puts them straight into it, for example “Alex Tan, 2”." : "One full name per line."}</p></div></section>`;
 }
 function renderParticipants() {
   const c = s(),
@@ -404,7 +405,7 @@ function renderParticipants() {
       ? `<div class="panel confirmed"><span>Participants confirmed and locked.${isCS(c) ? " Stage B rifles can still change on its tab." : ""}</span><div class="actions"><button data-action="unlock">Edit participants</button><button class="primary" data-action="to-stage">Go to ${esc(stageLabel(c, firstStage(c)))}</button></div></div>`
       : "") +
     (c.participants.length
-      ? `<div class="toolbar">${searchBox()}<span class="count">${c.participants.length} participants</span><span class="spacer"></span>${locked ? "" : `<button class="danger" data-action="clear-participants">Clear participants</button>${ready ? '<button class="primary" data-action="confirm-participants">Confirm participants</button>' : ""}`}</div>`
+      ? `<div class="toolbar">${searchBox()}<span class="count">${c.participants.length} participants</span><span class="spacer"></span>${locked ? "" : `<button class="more" data-action="roster-menu" aria-label="More participant actions">⋯</button><button class="danger" data-action="clear-participants">Clear participants</button>${ready ? '<button class="primary" data-action="confirm-participants">Confirm participants</button>' : ""}`}</div>`
       : "") +
     (locked ? "" : addPanel(c)) +
     body;
@@ -447,6 +448,13 @@ function issuesPanel(c) {
     ? `<div class="panel issues" role="status">${esc(issues.join("\n"))}\n<button class="inline-link" data-action="participants">Fix in Participants</button></div>`
     : "";
 }
+// Short local time, e.g. 9:42 AM, for when a score was confirmed.
+function timeLabel(iso) {
+  return new Date(iso).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
 function entryValue(c, stage, p) {
   return c.entries?.[`${stage}:${p.id}`] ?? "";
 }
@@ -477,8 +485,10 @@ function individualPanel(c, stage) {
       typed = entryValue(c, stage, p) !== "";
     return `<tr data-row="${p.id}" class="${[waiting.has(p.id) && "awaiting", e.n === 0 && !e.skipped && "next", e.skipped && "skipped", search && "match"].filter(Boolean).join(" ")}"><td class="seat">${e.n + 1}</td><td class="name">${esc(p.name)}${weak.has(p.id) ? ` ${badge("Weak")}` : ""}${multi && !cs && p.weapon !== c.settings.weapon ? `<div class="sub">${esc(p.weapon)}</div>` : ""}<div class="attempt ${waiting.has(p.id) ? "on" : ""}">${e.skipped ? "Skipped · " : ""}Attempt ${e.attempt}${waiting.has(p.id) ? " · redetailed" : ""}</div></td>${cs ? `<td class="rifle">${esc(stageRifle(c, p, stage))}</td>` : ""}<td><div class="score-input"><input type="number" min="0" max="${max}" step="1" inputmode="numeric" enterkeyhint="next" data-hits="${p.id}" value="${esc(entryValue(c, stage, p))}" aria-label="${esc(p.name)} hits" placeholder="${e.skipped ? "Skipped" : "—"}" ${e.skipped ? "disabled" : ""}><span class="muted">/${max}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell">${order.length > 1 ? skipButton(`person:${p.id}`, p.name, e.skipped, typed) : ""}<button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
   };
-  const scoredRow = (p) =>
-    `<tr data-row="${p.id}" class="${search ? "match" : ""}"><td class="name">${esc(p.name)}</td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+  const scoredRow = (p) => {
+    const last = scoreHistory(c, p, stage).at(-1);
+    return `<tr data-row="${p.id}" class="${search ? "match" : ""}"><td class="name">${esc(p.name)}</td><td class="num results">${resultsCell(c, p, stage)}</td><td class="muted when">${last ? esc(timeLabel(last.recordedAt)) : ""}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+  };
   return (
     `<section class="panel score-panel" data-individual><div class="detail-head"><h3>${esc(stageLabel(c, stage))}</h3><span class="count">${toShoot.length} in the queue</span>${toShoot.length ? `<div class="actions"><span class="draft-summary">${entered} of ${toShoot.length} entered.</span><button class="primary" data-confirm-all="${stage}">Confirm scores</button></div>` : ""}</div>${cs ? '<p class="note stage-note">Fired individually. Details do not apply to this stage; a firer may use a different rifle for it.</p>' : ""}${
       toShoot.length
@@ -490,7 +500,7 @@ function individualPanel(c, stage) {
         : ""
     }</section>` +
     (done.length
-      ? `<details class="panel past-scores"${search ? " open" : ""}><summary>Past scores · ${done.length} ${done.length === 1 ? "firer" : "firers"}</summary><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Results</th><th></th></tr></thead><tbody>${done.map(scoredRow).join("")}</tbody></table></div></details>`
+      ? `<details class="panel past-scores"${search ? " open" : ""}><summary>Past scores · ${done.length} ${done.length === 1 ? "firer" : "firers"}</summary><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Results</th><th>Confirmed</th><th></th></tr></thead><tbody>${done.map(scoredRow).join("")}</tbody></table></div></details>`
       : "")
   );
 }
@@ -1957,6 +1967,24 @@ $("#main").addEventListener("click", (e) => {
           toast(
             `${people.length} ${people.length === 1 ? "participant" : "participants"} added.`,
           );
+        break;
+      }
+      case "roster-menu": {
+        const list = weapons(c);
+        dialog(
+          "Participant tools",
+          list.length > 1
+            ? `<label class="field"><span>Rifle for everyone</span><select name="weapon">${option(list, c.settings.weapon)}</select></label><p class="note">Use this if the wrong rifle was set when the names went in. It only works before any scores are recorded.</p>`
+            : '<p class="note">This shoot has one rifle type, so there is nothing to set.</p>',
+          list.length > 1 ? "Set for everyone" : null,
+          (f) => {
+            fillWeapons(c, f.get("weapon"));
+            save();
+            $("#dialog").close();
+            render();
+            toast(`Everyone is on ${f.get("weapon")}.`);
+          },
+        );
         break;
       }
       case "clear-participants":
