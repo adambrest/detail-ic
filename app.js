@@ -71,6 +71,7 @@ import {
   buildAround,
   planRest,
   firerHits,
+  hitsRange,
   detailPlan,
   parseRoster,
   MISSING,
@@ -460,26 +461,39 @@ function awaiting(c, stage) {
       for (const m of d.roster) if (!map.has(m.id)) map.set(m.id, map.size);
   return map;
 }
+// What a firer's own best hits were, as far as they can be known: a figure
+// when it is pinned down, a span when a detail total only narrows it.
+function ownText(range) {
+  return range.low === null
+    ? "—"
+    : range.low === range.high
+      ? String(range.low)
+      : `${range.low}–${range.high}`;
+}
+function ownTitle(c, p, stage, range) {
+  const max = p.profile.components.find((x) => x.id === stage).max;
+  return range.low === null
+    ? `No individual hits recorded for ${p.name}, and their details' totals do not pin down what they shot.`
+    : range.low === range.high
+      ? `${p.name} hit ${range.low}/${max} themselves. The counted score is their detail's average.`
+      : `${p.name} hit between ${range.low} and ${range.high} of ${max} themselves. Their detail was confirmed on its total, which narrows it this far but no further.`;
+}
 // In Stages A and C the counted score is the detail's average, shared by
-// everyone who fired it, so it can sit well above what a firer shot themselves
-// — most of all when a detail was confirmed on its total and no individual
-// hits were kept. Where the two differ, both are shown.
+// everyone who fired it, so it can sit well above what a firer shot themselves.
+// Where the two differ, both are shown.
 function resultsCell(c, p, stage) {
   const list = scoreHistory(c, p, stage);
   if (!list.length) return '<span class="muted">—</span>';
   const top = Math.max(...list.map((a) => a.score)),
     rest = list.map((a) => a.score),
-    own = detailedStage(c, stage) ? firerHits(c, p, stage) : top,
-    max = p.profile.components.find((x) => x.id === stage).max;
+    range = detailedStage(c, stage)
+      ? hitsRange(c, p, stage)
+      : { low: top, high: top };
   rest.splice(rest.indexOf(top), 1);
   return `<b title="Best counted ${esc(stageLabel(c, stage))} score: the detail's hits divided by its firers.">${top}</b>${rest.length ? `<span class="prev">${rest.join(" ")}</span>` : ""}${
-    own === top
+    range.low === top && range.high === top
       ? ""
-      : `<span class="own" title="${esc(
-          own === null
-            ? `No individual hits recorded for ${p.name}: every ${stageLabel(c, stage)} score they have came from a detail total.`
-            : `${p.name} hit ${own}/${max} themselves; the rest of the average came from the others in the detail.`,
-        )}">own ${own === null ? "—" : own}</span>`
+      : `<span class="own" title="${esc(ownTitle(c, p, stage, range))}">own ${ownText(range)}</span>`
   }`;
 }
 // Weak and Strong read a firer's own hits, never the detail average in the
@@ -488,10 +502,10 @@ function abilityMark(c, p, stage, weak, strong) {
   const low = weak.has(p.id),
     high = !low && strong.has(p.id);
   if (!low && !high) return "";
-  const own = firerHits(c, p, stage),
+  const range = hitsRange(c, p, stage),
     max = p.profile.components.find((x) => x.id === stage).max,
     counted = best(c, p, stage),
-    note = `Own best hits ${own ?? "—"}/${max}${counted !== null && counted !== own ? `, counted score ${counted}/${max}` : ""}. ${
+    note = `Own best hits ${ownText(range)}/${max}${counted !== null ? `, counted score ${counted}/${max}` : ""}. ${
       low
         ? `Under the ${passPace(p, stage)} a pass asks of this stage.`
         : `At or above the ${marksmanPace(p, stage)} that keeps them on course for Marksman.`
@@ -751,7 +765,7 @@ function weakPanel(c, stage) {
   const max = stages(c).find((x) => x.id === stage).max,
     label = stageLabel(c, stage);
   return `<details class="reached weak-list" open><summary>${list.length} poor ${list.length === 1 ? "shooter" : "shooters"}</summary><p class="note weak-note">Build detail lifts a poor shooter's ${esc(label)} average by pairing them with the best shooters from other details, firers who still need ${esc(label)} first. It opens once their own detail has fired ${esc(label)} twice.</p>${list
-    .map(({ p, hits }) => {
+    .map(({ p, range }) => {
       const d = c.details.find((x) => x.id === p.detailId),
         booked = committed(c, stage, p),
         tries = homeAttempts(c, p, stage),
@@ -760,7 +774,7 @@ function weakPanel(c, stage) {
           : tries < 2
             ? `${d ? d.name : "their detail"} fires ${tries ? "once more" : "twice"} first`
             : "";
-      return `<div class="reached-row ${search && filtered(p) ? "match" : ""}"><span class="count">!</span><div><strong>${esc(p.name)}</strong><p class="note">${hits}/${max}${advice(c, p, stage) ? `, ${advice(c, p, stage).text}` : ""}${d ? ` · ${esc(d.name)}` : ""}${why ? ` · ${esc(why)}` : ""}</p></div>${why ? "" : `<button type="button" data-build="${p.id}" aria-label="Build a detail around ${esc(p.name)}">Build detail</button>`}</div>`;
+      return `<div class="reached-row ${search && filtered(p) ? "match" : ""}"><span class="count">!</span><div><strong>${esc(p.name)}</strong><p class="note">${ownText(range)}/${max}${advice(c, p, stage) ? `, ${advice(c, p, stage).text}` : ""}${d ? ` · ${esc(d.name)}` : ""}${why ? ` · ${esc(why)}` : ""}</p></div>${why ? "" : `<button type="button" data-build="${p.id}" aria-label="Build a detail around ${esc(p.name)}">Build detail</button>`}</div>`;
     })
     .join("")}</details>`;
 }
@@ -1101,13 +1115,16 @@ function presetBody(program) {
     label = typeLabel(program, variant),
     pr = preset(store, program, variant),
     list = weaponsFor(program, variant),
+    // A preset saved before a rifle option was renamed must not take the page
+    // down with it.
+    chosen = list.includes(pr.weapon) ? pr.weapon : list[0],
     rule = DETAIL_RULES[program],
     shoot = {
       program,
       variant,
       attempts: [],
       settings: {
-        weapon: pr.weapon,
+        weapon: chosen,
         objective: pr.objective,
         targets: pr.targets,
       },
@@ -1133,7 +1150,7 @@ function presetBody(program) {
         : ""
     }</section>`;
   };
-  return `${program === "APS" ? `<div class="seg" style="margin-bottom:14px"><button data-aps="standard" class="${apsView === "standard" ? "on" : ""}">APS</button><button data-aps="ns" class="${apsView === "ns" ? "on" : ""}">APS (NS)</button></div>` : ""}<div class="field inline rifle-type"><span>New participants start on</span>${list.length > 1 ? `<select data-default-weapon="${key}" aria-label="${esc(label)} default rifle">${option(list, pr.weapon)}</select>` : `<strong>${esc(pr.weapon)}</strong>`}</div>${rule ? `<p class="limit">${rule.min ? `${rule.min}–${rule.max} firers per detail. Up to ${rule.nonSAR} non-SAR21 weapons per detail. Stages A and C: detail hits ÷ firers, rounded down.` : ""}</p>` : ""}<p class="muted rifle-sets-head">Thresholds by rifle</p>${list.map(rifle).join("")}`;
+  return `${program === "APS" ? `<div class="seg" style="margin-bottom:14px"><button data-aps="standard" class="${apsView === "standard" ? "on" : ""}">APS</button><button data-aps="ns" class="${apsView === "ns" ? "on" : ""}">APS (NS)</button></div>` : ""}<div class="field inline rifle-type"><span>New participants start on</span>${list.length > 1 ? `<select data-default-weapon="${key}" aria-label="${esc(label)} default rifle">${option(list, chosen)}</select>` : `<strong>${esc(chosen)}</strong>`}</div>${rule ? `<p class="limit">${rule.min ? `${rule.min}–${rule.max} firers per detail. Up to ${rule.nonSAR} non-SAR21 weapons per detail. Stages A and C: detail hits ÷ firers, rounded down.` : ""}</p>` : ""}<p class="muted rifle-sets-head">Thresholds by rifle</p>${list.map(rifle).join("")}`;
 }
 function dialog(title, body, label, submit, closeLabel = "Close", onClose) {
   const d = $("#dialog"),
@@ -1258,14 +1275,12 @@ function manualDetailDialog(stage, around = null, picks = null) {
     // Two different numbers: what the firer hit, and what their detail earned
     // them. They part company when a detail was confirmed on its total alone.
     figures = (p) => {
-      const o = hits(p),
+      const range = hitsRange(c, p, stage),
         counted = best(c, p, stage),
         parts = [
-          o === null
-            ? `<span title="No individual hits recorded: every ${esc(label)} score they have came from a detail total.">own —</span>`
-            : `<span title="${esc(`${p.name} hit ${o}/${max} themselves. This is what the detail is built on.`)}">own ${o}/${max}</span>`,
+          `<span title="${esc(ownTitle(c, p, stage, range))}">own ${ownText(range)}/${max}</span>`,
         ];
-      if (counted !== null && counted !== o)
+      if (counted !== null && String(counted) !== ownText(range))
         parts.push(
           `<span title="Best counted ${esc(label)} score: the detail's hits divided by its firers.">counted ${counted}/${max}</span>`,
         );
@@ -1732,12 +1747,22 @@ function restore() {
 }
 $("#tabs").onclick = (e) => {
   const b = e.target.closest("[data-tab]");
-  if (b) {
-    tab = b.dataset.tab;
-    search = "";
-    addMode = null;
-    selected.clear();
+  if (!b) return;
+  const previous = tab;
+  tab = b.dataset.tab;
+  search = "";
+  addMode = null;
+  selected.clear();
+  // The tab row is redrawn before the page below it, so a failure there would
+  // otherwise light up the tab and leave the old page sitting underneath.
+  try {
     render();
+  } catch (err) {
+    tab = previous;
+    try {
+      render();
+    } catch (again) {}
+    toast(`${b.textContent} could not open: ${err.message}`);
   }
 };
 $("#main").addEventListener("input", (e) => {

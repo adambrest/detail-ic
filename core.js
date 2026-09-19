@@ -1195,10 +1195,14 @@ export function insights(s, stage = null) {
       "Poor shooters",
       // On a detailed stage the detail carries the recommendation, so a poor
       // shooter line is just who they are, where they fire and what they hit.
-      weakFirers(s, stage).map(({ p, hits }) => {
+      weakFirers(s, stage).map(({ p, range }) => {
         const d = detailed && s.details.find((x) => x.id === p.detailId),
-          a = detailed ? null : advice(s, p, stage);
-        return `${p.name}${d ? ` (${d.name})` : ""}: ${hits}/${max(p)}${a ? `, ${a.text}` : ""}`;
+          a = detailed ? null : advice(s, p, stage),
+          own =
+            range.low === range.high
+              ? `${range.low}`
+              : `${range.low}–${range.high}`;
+        return `${p.name}${d ? ` (${d.name})` : ""}: ${own}/${max(p)}${a ? `, ${a.text}` : ""}`;
       }),
     );
     // Several tries without getting better: coach them, or stop spending time.
@@ -1626,13 +1630,40 @@ export function marksmanPace(p, stage) {
   return Math.ceil((p.profile.marksman * c.max) / p.profile.total);
 }
 export function isStrong(s, p, stage) {
-  const h = firerHits(s, p, stage);
-  return h !== null && h >= marksmanPace(p, stage);
+  const { low } = hitsRange(s, p, stage);
+  return low !== null && low >= marksmanPace(p, stage);
 }
 // Maxed this stage, or marksman overall: another attempt changes nothing for them.
 export function nothingToGain(s, p, stage) {
   const max = p.profile.components.find((c) => c.id === stage).max;
   return best(s, p, stage) === max || result(s, p).status === "Marksman";
+}
+// What a firer's own best hits in a stage must have been. Where their hits were
+// written down, that is the answer. Where a detail was confirmed on its total
+// alone, the total still pins them down: with `n` firers and a stage maximum of
+// `m`, a total of `t` leaves nobody below `t - (n - 1)m` and nobody above
+// `min(m, t)`. A detail that shot well enough proves a good score for every
+// firer in it; proving a bad one takes a total below what a pass asks, so only
+// a dreadful detail gives it away. Both ends are the best of what each attempt
+// allows, since a firer keeps their best.
+export function hitsRange(s, p, stage) {
+  const detailed = detailedStage(s, stage);
+  let low = null,
+    high = null;
+  for (const a of scoreHistory(s, p, stage)) {
+    let lo, hi;
+    if (!detailed || a.rawHits !== null) lo = hi = detailed ? a.rawHits : a.score;
+    else {
+      const d = s.shared.find((x) => x.id === a.detailAttemptId),
+        m = a.profile.components.find((c) => c.id === stage).max;
+      if (!d || d.aggregateHits === null || !d.divisor) continue;
+      lo = Math.max(0, d.aggregateHits - (d.divisor - 1) * m);
+      hi = Math.min(m, d.aggregateHits);
+    }
+    low = low === null ? lo : Math.max(low, lo);
+    high = high === null ? hi : Math.max(high, hi);
+  }
+  return { low, high };
 }
 // A firer's own best hits in a stage: their individual score, or their best
 // raw hits in a detail. Null when only detail totals were entered.
@@ -1655,8 +1686,8 @@ export function firerHits(s, p, stage) {
 // counted score is safe: they are still the wrong person to lend to a detail
 // that needs lifting.
 export function shootsPoorly(s, p, stage) {
-  const h = firerHits(s, p, stage);
-  return h !== null && h < passPace(p, stage);
+  const { high } = hitsRange(s, p, stage);
+  return high !== null && high < passPace(p, stage);
 }
 // This firer has the stage score they need: at their threshold, out of reach of
 // improving it, or already Marksman.
@@ -1674,7 +1705,10 @@ export function cleared(s, p, stage) {
 // nothing left to act on, so they drop off the list. Weakest first.
 export function weakFirers(s, stage) {
   return s.participants
-    .map((p) => ({ p, hits: firerHits(s, p, stage), pace: passPace(p, stage) }))
+    .map((p) => {
+      const range = hitsRange(s, p, stage);
+      return { p, range, hits: range.high, pace: passPace(p, stage) };
+    })
     .filter((x) => shootsPoorly(s, x.p, stage) && !cleared(s, x.p, stage))
     .toSorted((a, b) => a.hits - b.hits);
 }
@@ -1697,7 +1731,7 @@ export function buildAround(s, stage, weakId) {
       .filter((p) => p.id !== weakId && !skip.has(p.id))
       .map((p) => ({
         p,
-        hits: firerHits(s, p, stage) ?? best(s, p, stage),
+        hits: hitsRange(s, p, stage).low ?? best(s, p, stage),
         cleared: cleared(s, p, stage),
       }))
       .filter((x) => x.hits !== null),
@@ -1776,7 +1810,7 @@ export function planRest(s, stage, weakId, picked) {
       firingQueue(s, stage).flatMap((e) => e.members.map((p) => p.id)),
     ),
     isCleared = (p) => cleared(s, p, stage),
-    hits = (p) => firerHits(s, p, stage) ?? best(s, p, stage),
+    hits = (p) => hitsRange(s, p, stage).low ?? best(s, p, stage),
     rest = members(s, home.id).filter(
       (p) =>
         !picked.includes(p.id) &&
@@ -1985,6 +2019,22 @@ export function migrateStore(data) {
 }
 // Maps rifles that are no longer offered onto the option that replaces them.
 export function repairWeapons(store) {
+  // A preset names a rifle and keys its thresholds by it. Left behind, it
+  // makes Settings ask for a profile that no longer exists.
+  for (const [key, pr] of Object.entries(store.presets ?? {})) {
+    const [program, variant = "standard"] = key.split(":"),
+      options = PROGRAMS[program] ? weaponsFor(program, variant) : [];
+    if (!options.length) continue;
+    const map = (w) =>
+      options.includes(w) ? w : weaponGroup(program, variant, w);
+    pr.weapon = map(pr.weapon);
+    pr.targets = Object.fromEntries(
+      Object.entries(pr.targets ?? {}).map(([slot, value]) => {
+        const [w, ...rest] = slot.split(":");
+        return [[map(w), ...rest].join(":"), value];
+      }),
+    );
+  }
   for (const s of store.shoots ?? []) {
     const options = weaponsFor(s.program, s.variant),
       map = (w) =>

@@ -54,7 +54,7 @@ Total = A + B + C
 
 Each division rounds down on its own. 59 hits over 6 firers is 9 and 65 over 6 is 10, so A + C is 19, not 20. Rounding a percentage into a threshold rounds up; these are different operations.
 
-Averaging happens before best scores are chosen. A firer keeps the best Stage A average they earned, the best Stage B hits, and the best Stage C average, and the three may come from different attempts. An average counts for a firer only if they were in that detail. Best individual hits are never recombined into a new average.
+Averaging happens before best scores are chosen. A firer keeps the best Stage A average they earned, the best Stage B hits, and the best Stage C average, and the three may come from different attempts. An average counts for a firer only if they were in that detail, so once details are mixed up, firers who started in the same detail can hold different Stage A and Stage C scores. Best individual hits are never recombined into a new average.
 
 Every Combat Shoot rifle fires the same rounds in Stage B, so a firer may use a different rifle for that stage. Stages A and C use the rifle set on their roster.
 
@@ -75,7 +75,9 @@ A temporary detail scores one stage with any mix of firers, for swaps and reruns
 
 Hits are whole numbers from zero to that stage's maximum. A blank is missing, not zero, and a missing stage leaves the total ungraded.
 
-For Stages A and C, enter each firer's hits or the detail total. Entering hits fills the total; a total typed by hand must match the hits exactly, and a mismatch blocks confirmation. A detail confirmed on its total alone records no individual hits, so per-firer checks are unavailable for that attempt.
+For Stages A and C, enter each firer's hits or the detail total. Entering hits fills the total; a total typed by hand must match the hits exactly, and a mismatch blocks confirmation.
+
+A detail confirmed on its total alone records no individual hits, but the total still bounds them. With `n` firers and a stage maximum of `m`, a total of `t` leaves no firer below `t − (n − 1)m` and none above `min(m, t)`. A detail that shot well enough proves a good score for everyone in it: 140 over 7 firers of 20 puts every one of them on 20. Proving a poor shot takes a total under what a pass asks of the stage, so only a dreadful detail gives one away. A firer counts as a strong shot when even the lowest they can have fired is on course for Marksman, and as a poor one when even the highest falls short of a pass.
 
 Every firer on the detail's roster is included in the attempt. Roster changes are explicit edits, never a side effect of scoring.
 

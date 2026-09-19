@@ -51,6 +51,8 @@ import {
   shootsPoorly,
   cleared,
   firerHits,
+  hitsRange,
+  repairWeapons,
   buildAround,
   planRest,
   committed,
@@ -917,6 +919,110 @@ test("The rest of a weak firer's detail gets a detail of its own", () => {
   assert.equal(rest.expected, 11);
   createTempDetail(s, "A", plan.entries);
   createTempDetail(s, "A", rest.entries);
+});
+test("A temporary detail's average follows only the firers who were in it", () => {
+  const store = newStore(),
+    s = createShoot(store, "CS_SP", "standard", "M"),
+    people = addParticipants(
+      s,
+      Array.from({ length: 8 }, (_, i) => `P${i + 1} ${i < 4 ? 1 : 2}`),
+      rifle("CS_SP"),
+    ),
+    [d1, d2] = sortedDetails(s);
+  detailScore(s, d1, "A", 40); // 10 each
+  detailScore(s, d2, "A", 48); // 12 each
+  for (const p of people.slice(0, 4)) assert.equal(best(s, p, "A"), 10);
+  // P1 is pulled out and fires with three of Detail 2.
+  const temp = createTempDetail(
+    s,
+    "A",
+    [people[0], people[4], people[5], people[6]].map((p) => ({
+      participantId: p.id,
+      weapon: p.weapon,
+    })),
+  );
+  detailScore(s, temp, "A", 60); // 15 each
+  // Only the four who fired it take the 15. Their own detail is untouched.
+  assert.equal(best(s, people[0], "A"), 15);
+  for (const p of people.slice(1, 4)) assert.equal(best(s, p, "A"), 10);
+  for (const p of [people[4], people[5], people[6]])
+    assert.equal(best(s, p, "A"), 15);
+  // P8 stayed behind in Detail 2 and keeps its 12.
+  assert.equal(best(s, people[7], "A"), 12);
+  // Members of one original detail now hold three different Stage A scores.
+  assert.deepEqual(
+    people.map((p) => best(s, p, "A")),
+    [15, 10, 10, 10, 15, 15, 15, 12],
+  );
+});
+test("A detail total pins down what each firer must have shot", () => {
+  const store = newStore(),
+    s = createShoot(store, "CS_M", "standard", "B"),
+    people = addParticipants(
+      s,
+      Array.from({ length: 7 }, (_, i) => `P${i + 1} 1`),
+      rifle("CS_M"),
+    ),
+    [d1] = sortedDetails(s);
+  // Individual hits first: one very poor shot in an otherwise fair detail.
+  detailScore(s, d1, "A", null, { individuals: [18, 18, 1, 1, 1, 20, 1] });
+  assert.deepEqual(hitsRange(s, people[2], "A"), { low: 1, high: 1 });
+  assert.equal(shootsPoorly(s, people[2], "A"), true);
+  assert.equal(isStrong(s, people[0], "A"), true);
+  // The detail fires again and is confirmed on its total alone: 140 over 7
+  // firers of 20 each leaves no room for anyone to be under 20.
+  dispatch(s, "A", [`detail:${d1.id}`]);
+  saveDetail(s, {
+    ...getDraft(s, d1.id, "A"),
+    rows: members(s, d1.id).map((p) => ({ participantId: p.id, hits: "" })),
+    aggregate: "140",
+  });
+  for (const p of people) {
+    assert.deepEqual(hitsRange(s, p, "A"), { low: 20, high: 20 });
+    assert.equal(isStrong(s, p, "A"), true);
+    // Their worst recorded hits no longer describe them.
+    assert.equal(shootsPoorly(s, p, "A"), false);
+  }
+  // A middling total proves far less: it only narrows the span.
+  const t = createShoot(store, "CS_M", "standard", "N"),
+    crowd = addParticipants(
+      t,
+      Array.from({ length: 7 }, (_, i) => `Q${i + 1} 1`),
+      rifle("CS_M"),
+    ),
+    [e1] = sortedDetails(t);
+  saveDetail(t, { ...getDraft(t, e1.id, "A"), aggregate: "70" });
+  assert.deepEqual(hitsRange(t, crowd[0], "A"), { low: 0, high: 20 });
+  assert.equal(isStrong(t, crowd[0], "A"), false);
+  assert.equal(shootsPoorly(t, crowd[0], "A"), false);
+  // Only a dreadful total proves a poor shot: 63 over 7 caps everyone at 9,
+  // under the 10 a pass asks of CS (M) Stage A.
+  const u = createShoot(store, "CS_M", "standard", "D"),
+    few = addParticipants(
+      u,
+      Array.from({ length: 7 }, (_, i) => `R${i + 1} 1`),
+      rifle("CS_M"),
+    ),
+    [f1] = sortedDetails(u);
+  saveDetail(u, { ...getDraft(u, f1.id, "A"), aggregate: "9" });
+  assert.deepEqual(hitsRange(u, few[0], "A"), { low: 0, high: 9 });
+  assert.equal(shootsPoorly(u, few[0], "A"), true);
+});
+test("A preset keeps up with a rifle option that has been renamed", () => {
+  const store = newStore();
+  createShoot(store, "CS_M", "standard", "P");
+  // A preset saved before the Combat Shoot SAR21 options were merged.
+  store.presets.CS_M.weapon = "SAR21/M203";
+  store.presets.CS_M.targets = { "SAR21/M203:A:marksman": 17 };
+  repairWeapons(store);
+  assert.equal(store.presets.CS_M.weapon, "SAR21/SAR21 SS/M203");
+  assert.deepEqual(store.presets.CS_M.targets, {
+    "SAR21/SAR21 SS/M203:A:marksman": 17,
+  });
+  // Settings builds a profile from it, so it has to be one that exists.
+  assert.doesNotThrow(() =>
+    profileFor("CS_M", "standard", store.presets.CS_M.weapon),
+  );
 });
 test("A poor shooter who reaches what the stage needs drops off the list", () => {
   const store = newStore(),
