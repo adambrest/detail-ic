@@ -38,7 +38,6 @@ import {
   ensureDetail,
   updateParticipant,
   removeParticipant,
-  fillWeapons,
   clearParticipants,
   compositionErrors,
   getDraft,
@@ -109,6 +108,7 @@ let store,
   showScored = false,
   addMode = null,
   addNote = "",
+  dragging = null,
   showReached = false,
   closedSummaries = new Set(),
   pasteDetail = 1,
@@ -306,7 +306,7 @@ function renderShoots() {
         ? `<section class="panel"><div class="panel-head"><h3>Shoots <span class="count">${list.length}</span></h3></div>${list
             .map(
               (x) =>
-                `<div class="shoot-row"><div><strong>${esc(x.name)}</strong><p class="note">${esc(typeLabel(x.program, x.variant))} · ${esc(dateLabel(x.createdAt))} · ${x.participants.length} participants · ${hasScores(x) ? "Scores recorded" : "No scores yet"}</p></div><div class="actions"><button class="danger" data-delete-shoot="${x.id}" aria-label="Delete ${esc(x.name)}">Delete</button><button ${x.id === store.active ? 'class="primary"' : ""} data-open-shoot="${x.id}" aria-label="${x.id === store.active ? "Continue" : "Open"} ${esc(x.name)}">${x.id === store.active ? "Continue" : "Open"}</button></div></div>`,
+                `<div class="shoot-row"><div><strong>${esc(x.name)}</strong><p class="note">${esc(typeLabel(x.program, x.variant))} · ${esc(dateLabel(x.createdAt))} · ${x.participants.length} participants · ${hasScores(x) ? "Scores recorded" : "No scores yet"}</p></div>${x.id === store.active ? '<span class="badge blue">Open now</span>' : ""}<div class="actions"><button class="danger" data-delete-shoot="${x.id}" aria-label="Delete ${esc(x.name)}">Delete</button><button class="primary" data-open-shoot="${x.id}" aria-label="Open ${esc(x.name)}">Open</button></div></div>`,
             )
             .join("")}</section>`
         : ""
@@ -314,19 +314,22 @@ function renderShoots() {
 }
 // Detail buttons offered per participant: as many details as the minimum size allows.
 function nextDetailNumber(c) {
-  return (
-    Math.max(
-      0,
-      ...c.details.filter((d) => !d.temporary).map(detailNumber),
-    ) + 1
+  const used = new Set(
+    c.details
+      .filter((d) => !d.temporary && members(c, d.id).length)
+      .map(detailNumber),
   );
+  let n = 1;
+  while (used.has(n)) n++;
+  return n;
+}
+// How many details this roster can fill, so numbering cannot run away.
+function detailCap(c) {
+  const rule = DETAIL_RULES[c.program];
+  return rule ? Math.max(1, Math.floor(c.participants.length / rule.min)) : 1;
 }
 function addPanel(c) {
-  const cs = isCS(c),
-    rifle =
-      weapons(c).length > 1
-        ? `<label class="field inline add-rifle"><span>Rifle for these firers</span><select id="add-weapon" aria-label="Rifle for these participants">${option(weapons(c), c.settings.weapon)}</select></label>`
-        : "";
+  const cs = isCS(c);
   if (!addMode)
     return c.participants.length
       ? '<div class="add-bar"><button class="primary" data-action="add">Add participants</button></div>'
@@ -334,7 +337,7 @@ function addPanel(c) {
   if (addMode === "choose")
     return `<section class="panel add-panel"><div class="panel-head"><h3>Add participants</h3><button class="icon-button" data-action="add-close" aria-label="Close">✕</button></div><div class="panel-body"><p class="note">Do you already know who is in each detail?</p><div class="actions"><button class="primary" data-action="add-by-detail">Paste detail by detail</button><button data-action="add-list">Paste the whole list</button></div></div></section>`;
   const byDetail = addMode === "detail";
-  return `<section class="panel add-panel"><div class="panel-head"><h3>${byDetail ? `Paste Detail ${pasteDetail}` : "Paste full names"}</h3><button class="icon-button" data-action="add-close" aria-label="Close">✕</button></div><div class="panel-body">${rifle}<textarea id="add-names" aria-label="${byDetail ? `Full names for Detail ${pasteDetail}` : "Full names"}" placeholder="Alex Tan&#10;Benjamin Lee"></textarea><div class="actions">${byDetail ? '<button class="primary" data-action="add-next">Save and next detail</button><button data-action="add-done">Save and finish</button>' : '<button class="primary" data-action="add-save">Add participants</button>'}</div><div class="errors add-note">${esc(addNote)}</div><p class="note">${byDetail ? `Everyone in this box joins Detail ${pasteDetail}. Save and finish adds them and closes.` : cs ? "One full name per line. A detail number after a name puts them straight into it, for example “Alex Tan, 2”." : "One full name per line."}</p></div></section>`;
+  return `<section class="panel add-panel"><div class="panel-head"><h3>${byDetail ? `Paste Detail ${pasteDetail}` : "Paste full names"}</h3><button class="icon-button" data-action="add-close" aria-label="Close">✕</button></div><div class="panel-body"><textarea id="add-names" aria-label="${byDetail ? `Full names for Detail ${pasteDetail}` : "Full names"}" placeholder="Alex Tan&#10;Benjamin Lee"></textarea><div class="actions">${byDetail ? '<button class="primary" data-action="add-next">Save and next detail</button><button data-action="add-done">Save and finish</button>' : '<button class="primary" data-action="add-save">Add participants</button>'}</div><div class="errors add-note">${esc(addNote)}</div><p class="note">${byDetail ? `Everyone in this box joins Detail ${pasteDetail}. Save and finish adds them and closes.` : cs ? "One full name per line. A detail number after a name puts them straight into it, for example “Alex Tan, 2”." : "One full name per line."} Everyone starts on ${esc(baseWeapons(c.program, c.variant)[0])}; change a firer's rifle on their row.</p></div></section>`;
 }
 function renderParticipants() {
   const c = s(),
@@ -346,6 +349,16 @@ function renderParticipants() {
       0,
       ...c.details.filter((d) => !d.temporary).map(detailNumber),
     );
+  const full = (n) => {
+      const d = c.details.find((x) => !x.temporary && detailNumber(x) === n);
+      return d ? members(c, d.id).length : 0;
+    },
+    max = DETAIL_RULES[c.program]?.max ?? Infinity,
+    // A further detail is offered only once every earlier one has someone in it.
+    roomForNew =
+      cs &&
+      Array.from({ length: highest }, (_, i) => full(i + 1)).every((n) => n) &&
+      highest < detailCap(c);
   const picker = (p) => {
     const fixed =
         locked ||
@@ -358,13 +371,18 @@ function renderParticipants() {
     return `<td><select class="assign" data-assign="${p.id}" aria-label="Detail for ${esc(p.name)}" ${fixed ? "disabled" : ""}><option value="" ${n ? "" : "selected"}>—</option>${Array.from(
       { length: Math.max(highest, n) },
       (_, i) =>
-        `<option value="${i + 1}" ${i + 1 === n ? "selected" : ""}>Detail ${i + 1}</option>`,
-    ).join("")}<option value="new">New detail</option></select></td>`;
+        `<option value="${i + 1}" ${i + 1 === n ? "selected" : ""} ${full(i + 1) >= max && i + 1 !== n ? "disabled" : ""}>Detail ${i + 1}${full(i + 1) >= max && i + 1 !== n ? " · full" : ""}</option>`,
+    ).join("")}${roomForNew || !n ? '<option value="new">New detail</option>' : ""}</select></td>`;
   };
   const row = (p) =>
-    `<tr class="${matches(p) ? "match" : ""}"><td class="name"><input class="name-input" type="text" data-name="${p.id}" value="${esc(p.name)}" aria-label="Name for ${esc(p.name)}" ${locked ? "disabled" : ""}></td>${multi ? `<td><select class="row-weapon" data-rifle="${p.id}" aria-label="Rifle for ${esc(p.name)}" ${locked ? "disabled" : ""}>${option(weapons(c), p.weapon)}</select></td>` : ""}${cs ? picker(p) : ""}<td class="more-cell">${locked ? "" : `<button class="icon-button danger" data-remove="${p.id}" aria-label="Remove ${esc(p.name)}">✕</button>`}</td></tr>`;
-  const table = (people) =>
-    `<div class="table-wrap"><table><thead><tr><th>Full name</th>${multi ? "<th>Rifle</th>" : ""}${cs ? "<th>Detail</th>" : ""}<th></th></tr></thead><tbody>${people.map(row).join("")}</tbody></table></div>`;
+    `<tr class="${matches(p) ? "match" : ""}" ${cs && !locked ? `draggable="true" data-drag="${p.id}"` : ""}>${cs ? `<td class="grip">${locked ? "" : `<span class="handle" aria-hidden="true">☰</span>`}</td>` : ""}<td class="name"><input class="name-input" type="text" data-name="${p.id}" value="${esc(p.name)}" aria-label="Name for ${esc(p.name)}" ${locked ? "disabled" : ""}></td>${multi ? `<td><select class="row-weapon" data-rifle="${p.id}" aria-label="Rifle for ${esc(p.name)}" ${locked ? "disabled" : ""}>${option(weapons(c), p.weapon)}</select></td>` : ""}${cs ? picker(p) : ""}<td class="more-cell">${locked ? "" : `<button class="icon-button danger" data-remove="${p.id}" aria-label="Remove ${esc(p.name)}">✕</button>`}</td></tr>`;
+  // An empty row on each detail, so a short detail can be filled in place.
+  const addRow = (d, people) =>
+    locked || !d || people.length >= max
+      ? ""
+      : `<tr class="add-row"><td class="grip"></td><td class="name" colspan="${1 + (multi ? 1 : 0) + 1}"><input class="name-input" type="text" data-add-to="${d.id}" placeholder="Add a firer to ${esc(d.name)}" aria-label="Add a firer to ${esc(d.name)}"></td><td></td></tr>`;
+  const table = (people, d) =>
+    `<div class="table-wrap"><table><thead><tr>${cs ? "<th></th>" : ""}<th>Full name</th>${multi ? "<th>Rifle</th>" : ""}${cs ? "<th>Detail</th>" : ""}<th></th></tr></thead><tbody>${people.map(row).join("")}${cs ? addRow(d, people) : ""}</tbody></table></div>`;
   let body = "";
   if (!c.participants.length)
     body = addMode
@@ -390,11 +408,11 @@ function renderParticipants() {
         .map(([d, people]) =>
           d?.temporary
             ? `<section class="panel temporary"><div class="detail-head"><h3>${esc(d.name)}</h3><span class="count">${people.length} firers</span></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th></tr></thead><tbody>${people.map((p) => `<tr class="${matches(p) ? "match" : ""}"><td class="name">${esc(p.name)}</td><td>${esc(rosterWeapon(c, d.id, p))}</td></tr>`).join("")}</tbody></table></div></section>`
-            : `<section class="panel ${d ? "" : "unassigned"}"><div class="detail-head"><h3>${d ? esc(d.name) : "Needs a detail"}</h3>${d ? borrowedNote(c, d) : ""}<span class="count">${people.length} firers</span>${d || locked ? "" : '<div class="actions"><button class="primary" data-action="auto-detail">Auto-detail</button></div>'}</div>${table(people)}</section>`,
+            : `<section class="panel ${d ? "" : "unassigned"}" ${d && !locked ? `data-drop="${d.id}"` : 'data-drop=""'}><div class="detail-head"><h3>${d ? esc(d.name) : "Needs a detail"}</h3>${d ? borrowedNote(c, d) : ""}<span class="count">${people.length}${d && max !== Infinity ? ` of ${max}` : ""} firers</span>${d || locked ? "" : '<div class="actions"><button class="primary" data-action="auto-detail">Auto-detail</button></div>'}</div>${table(people, d)}</section>`,
         )
         .join("");
   } else
-    body = `<section class="panel">${table(c.participants.filter(filtered))}</section>`;
+    body = `<section class="panel">${table(c.participants.filter(filtered), null)}</section>`;
   const ready = c.participants.length && !rosterIssues(c).length;
   $("#main").innerHTML =
     shootHead("", true) +
@@ -405,7 +423,7 @@ function renderParticipants() {
       ? `<div class="panel confirmed"><span>Participants confirmed and locked.${isCS(c) ? " Stage B rifles can still change on its tab." : ""}</span><div class="actions"><button data-action="unlock">Edit participants</button><button class="primary" data-action="to-stage">Go to ${esc(stageLabel(c, firstStage(c)))}</button></div></div>`
       : "") +
     (c.participants.length
-      ? `<div class="toolbar">${searchBox()}<span class="count">${c.participants.length} participants</span><span class="spacer"></span>${locked ? "" : `<button class="more" data-action="roster-menu" aria-label="More participant actions">⋯</button><button class="danger" data-action="clear-participants">Clear participants</button>${ready ? '<button class="primary" data-action="confirm-participants">Confirm participants</button>' : ""}`}</div>`
+      ? `<div class="toolbar">${searchBox()}<span class="count">${c.participants.length} participants</span><span class="spacer"></span>${locked ? "" : `<button class="danger" data-action="clear-participants">Clear participants</button>${ready ? '<button class="primary" data-action="confirm-participants">Confirm participants</button>' : ""}`}</div>`
       : "") +
     (locked ? "" : addPanel(c)) +
     body;
@@ -1633,6 +1651,45 @@ $("#main").addEventListener(
   },
   true,
 );
+$("#main").addEventListener("dragstart", (e) => {
+  const row = e.target.closest?.("[data-drag]");
+  if (!row) return;
+  dragging = row.dataset.drag;
+  e.dataTransfer.effectAllowed = "move";
+  e.dataTransfer.setData("text/plain", dragging);
+  row.classList.add("dragging");
+});
+$("#main").addEventListener("dragend", (e) => {
+  dragging = null;
+  e.target.closest?.("[data-drag]")?.classList.remove("dragging");
+  for (const panel of document.querySelectorAll(".drop-here"))
+    panel.classList.remove("drop-here");
+});
+$("#main").addEventListener("dragover", (e) => {
+  const panel = e.target.closest?.("[data-drop]");
+  if (!dragging || !panel) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "move";
+  for (const other of document.querySelectorAll(".drop-here"))
+    if (other !== panel) other.classList.remove("drop-here");
+  panel.classList.add("drop-here");
+});
+$("#main").addEventListener("drop", (e) => {
+  const panel = e.target.closest?.("[data-drop]"),
+    id = dragging || e.dataTransfer.getData("text/plain");
+  if (!panel || !id) return;
+  e.preventDefault();
+  dragging = null;
+  const c = s(),
+    detail = c.details.find((d) => d.id === panel.dataset.drop);
+  try {
+    assignDetail(c, id, detail ? detailNumber(detail) : null);
+    save();
+    render();
+  } catch (err) {
+    toast(err.message);
+  }
+});
 $("#main").addEventListener("keydown", (e) => {
   const t = e.target;
   // Tab goes from score box to score box, past rifles, Skip and menus.
@@ -1696,6 +1753,13 @@ $("#main").addEventListener("change", (e) => {
     } else if (t.dataset.queue) {
       t.checked ? selected.add(t.dataset.queue) : selected.delete(t.dataset.queue);
       updateRedetailButton(stage);
+    } else if (t.dataset.addTo) {
+      const name = t.value.trim();
+      if (!name) return;
+      addParticipants(c, name, baseWeapons(c.program, c.variant)[0], t.dataset.addTo);
+      save();
+      render();
+      $(`[data-add-to="${t.dataset.addTo}"]`)?.focus();
     } else if (t.dataset.name || t.dataset.rifle) {
       const id = t.dataset.name || t.dataset.rifle,
         p = c.participants.find((x) => x.id === id);
@@ -1936,7 +2000,7 @@ $("#main").addEventListener("click", (e) => {
       case "add-next":
       case "add-save": {
         const names = $("#add-names").value,
-          weapon = $("#add-weapon")?.value || c.settings.weapon,
+          weapon = baseWeapons(c.program, c.variant)[0],
           byDetail = b.dataset.action === "add-next",
           finishing = b.dataset.action === "add-done";
         // Finishing with an empty box just closes the panel.
@@ -1967,24 +2031,6 @@ $("#main").addEventListener("click", (e) => {
           toast(
             `${people.length} ${people.length === 1 ? "participant" : "participants"} added.`,
           );
-        break;
-      }
-      case "roster-menu": {
-        const list = weapons(c);
-        dialog(
-          "Participant tools",
-          list.length > 1
-            ? `<label class="field"><span>Rifle for everyone</span><select name="weapon">${option(list, c.settings.weapon)}</select></label><p class="note">Use this if the wrong rifle was set when the names went in. It only works before any scores are recorded.</p>`
-            : '<p class="note">This shoot has one rifle type, so there is nothing to set.</p>',
-          list.length > 1 ? "Set for everyone" : null,
-          (f) => {
-            fillWeapons(c, f.get("weapon"));
-            save();
-            $("#dialog").close();
-            render();
-            toast(`Everyone is on ${f.get("weapon")}.`);
-          },
-        );
         break;
       }
       case "clear-participants":

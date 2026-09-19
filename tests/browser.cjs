@@ -342,6 +342,32 @@ async function addNames(page, names) {
     await page
       .getByRole("combobox", { name: "Rifle for Farah Ali" })
       .selectOption("SAR21/M203");
+    // A short detail can be filled from its own row, and numbering cannot skip.
+    const firstDetail = page.locator("[data-drop]").first();
+    await firstDetail
+      .getByRole("textbox", { name: /Add a firer to Detail 1/ })
+      .fill("Nadia Goh");
+    await firstDetail
+      .getByRole("textbox", { name: /Add a firer to Detail 1/ })
+      .press("Tab");
+    await waitFor(page, () =>
+      JSON.parse(localStorage.getItem("detail-ic-v2")).shoots[1].participants.some(
+        (p) => p.name === "Nadia Goh",
+      ),
+    );
+    const options = await page
+      .getByRole("combobox", { name: "Detail for Nadia Goh" })
+      .locator("option")
+      .allInnerTexts();
+    assert.ok(!options.includes("Detail 4"), "cannot skip to an empty detail");
+    // Put the roster back for the scoring that follows.
+    await page.getByRole("button", { name: "Remove Nadia Goh" }).click();
+    await waitFor(page, () =>
+      JSON.parse(
+        localStorage.getItem("detail-ic-v2"),
+      ).shoots[1].participants.every((p) => p.name !== "Nadia Goh"),
+    );
+
     await page.locator("#search").fill("Farah");
     assert.equal(await page.locator("tr.match").count(), 1);
     await page.locator("#search").fill("");

@@ -660,6 +660,29 @@ tr.next td {
   padding: 5px 8px;
   min-height: 28px;
 }
+td.grip {
+  width: 26px;
+  padding-right: 0;
+}
+.handle {
+  color: #cbd5e1;
+  cursor: grab;
+  font-size: 13px;
+}
+tr[data-drag] {
+  cursor: grab;
+}
+tr.dragging {
+  opacity: 0.4;
+}
+.drop-here {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px #2563eb22;
+}
+.add-row .name-input {
+  border-style: dashed;
+  color: var(--muted);
+}
 .past-scores {
   padding: 0;
 }
