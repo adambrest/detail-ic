@@ -272,6 +272,18 @@ export function assignDetail(s, id, number) {
       delete s.drafts[key];
   audit(s, "Detail assigned", { participantId: id, detail: d?.name ?? null });
 }
+// Moves a firer so they sit just before another in the list. Details are shown
+// in list order, so this is how a detail is put in the order it will fire.
+export function orderParticipant(s, id, beforeId) {
+  const from = s.participants.findIndex((p) => p.id === id);
+  if (from < 0) throw Error("Participant not found.");
+  if (id === beforeId) return;
+  const [p] = s.participants.splice(from, 1),
+    to = beforeId ? s.participants.findIndex((x) => x.id === beforeId) : -1;
+  if (to < 0) s.participants.push(p);
+  else s.participants.splice(to, 0, p);
+  audit(s, "Order changed", { participantId: id, beforeId: beforeId ?? null });
+}
 // Fills details in number order, so groups of `size` come out in roster order.
 // Splits everyone into as few details as possible, each within the allowed size.
 export function detailPlan(count, { min = 1, max = count || 1 } = {}) {
@@ -1181,9 +1193,12 @@ export function insights(s, stage = null) {
     add(
       "warn",
       "Poor shooters",
+      // On a detailed stage the detail carries the recommendation, so a poor
+      // shooter line is just who they are, where they fire and what they hit.
       weakFirers(s, stage).map(({ p, hits }) => {
-        const a = advice(s, p, stage);
-        return `${p.name}: ${hits}/${max(p)}${a ? `, ${a.text}` : ""}`;
+        const d = detailed && s.details.find((x) => x.id === p.detailId),
+          a = detailed ? null : advice(s, p, stage);
+        return `${p.name}${d ? ` (${d.name})` : ""}: ${hits}/${max(p)}${a ? `, ${a.text}` : ""}`;
       }),
     );
     // Several tries without getting better: coach them, or stop spending time.
@@ -1237,11 +1252,9 @@ export function insights(s, stage = null) {
               shown = pool.length
                 ? pool.reduce((a, b) => (b.score > a.score ? b : a))
                 : null,
-              known = top.roster.filter((m) => m.rawHits !== null),
-              weakest = known.length
-                ? known.reduce((a, b) => (b.rawHits < a.rawHits ? b : a))
-                : null;
-            return `${d.name}: averages ${top.score}${shown ? `, ${shown.text}` : ""}${weakest ? `. Weakest: ${weakest.name} with ${weakest.rawHits}` : ""}`;
+              cmax = people[0].profile.components.find((c) => c.id === stage)
+                .max;
+            return `${d.name}: averages ${top.score}/${cmax}${shown ? `, ${shown.text}` : ""}`;
           })
           .filter(Boolean),
       );
@@ -1414,6 +1427,19 @@ export function queue(s, stage) {
               `furthest ${furthest.p.name}: best ${furthest.v}, ${say(furthest)}`,
             ].join("; ")
           : `${risk.length ? "at risk of failing: " : ""}best ${furthest.v}, ${say(furthest)}`;
+    // A permanent detail that has had its second go and still carries a poor
+    // shooter: it may fire again, but a detail built around them clears faster.
+    e.holdingBack =
+      e.detail && !e.detail.temporary
+        ? weakFirers(s, stage)
+            .filter(
+              (x) =>
+                e.members.some((p) => p.id === x.p.id) &&
+                !committed(s, stage, x.p) &&
+                homeAttempts(s, x.p, stage) >= 2,
+            )
+            .map((x) => x.p)
+        : [];
     e.last = Math.max(
       0,
       ...s.attempts
@@ -1553,6 +1579,56 @@ export function owesFirst(s, stage, e) {
       )
     : e.members.some((p) => best(s, p, stage) === null);
 }
+// A firer already booked to fire this stage again: awaiting a redetail, or in a
+// temporary detail that has not put its scores in yet. Building another detail
+// around them would double-book them on the range.
+export function committed(s, stage, p) {
+  if (
+    s.dispatches.some(
+      (d) =>
+        d.stage === stage &&
+        d.status === "awaiting" &&
+        d.roster.some((m) => m.id === p.id),
+    )
+  )
+    return true;
+  return s.details.some(
+    (d) =>
+      d.temporary &&
+      !d.retired &&
+      d.stage === stage &&
+      d.memberIds?.includes(p.id) &&
+      !s.shared.some(
+        (a) => a.detailId === d.id && a.stage === stage && a.status === "valid",
+      ),
+  );
+}
+// Firers in a proposed detail who are already booked elsewhere for this stage.
+export function overlapping(s, stage, ids) {
+  return s.participants.filter((p) => ids.includes(p.id) && committed(s, stage, p));
+}
+// How many times a firer's own permanent detail has scored this stage. The
+// detail gets a second go before it is worth breaking up.
+export function homeAttempts(s, p, stage) {
+  return p.detailId
+    ? s.shared.filter(
+        (a) =>
+          a.detailId === p.detailId &&
+          a.stage === stage &&
+          a.status === "valid",
+      ).length
+    : 0;
+}
+// The share of a stage a firer must hit to be on course for Marksman. A firer
+// at or above it is a strong shooter for that stage.
+export function marksmanPace(p, stage) {
+  const c = p.profile.components.find((x) => x.id === stage);
+  return Math.ceil((p.profile.marksman * c.max) / p.profile.total);
+}
+export function isStrong(s, p, stage) {
+  const h = firerHits(s, p, stage);
+  return h !== null && h >= marksmanPace(p, stage);
+}
 // Maxed this stage, or marksman overall: another attempt changes nothing for them.
 export function nothingToGain(s, p, stage) {
   const max = p.profile.components.find((c) => c.id === stage).max;
@@ -1590,10 +1666,11 @@ export function buildAround(s, stage, weakId) {
   const rule = DETAIL_RULES[s.program],
     weak = s.participants.find((p) => p.id === weakId),
     max = (p) => p.profile.components.find((c) => c.id === stage).max,
-    pace = (p) => Math.ceil((p.profile.marksman * max(p)) / p.profile.total),
+    pace = (p) => marksmanPace(p, stage),
     skip = new Set([
       ...weakFirers(s, stage).map((x) => x.p.id),
       ...firingQueue(s, stage).flatMap((e) => e.members.map((p) => p.id)),
+      ...s.participants.filter((p) => committed(s, stage, p)).map((p) => p.id),
     ]),
     pool = s.participants
       .filter((p) => p.id !== weakId && !skip.has(p.id))
@@ -1610,12 +1687,17 @@ export function buildAround(s, stage, weakId) {
         };
       })
       .filter((x) => x.hits !== null),
+    // Pairing with another detail is the point, so among equals a firer from
+    // elsewhere comes before one already sitting next to the weak firer.
+    own = (x) => x.p.detailId === weak.detailId,
     strong = pool
       .filter((x) => x.hits >= pace(x.p))
-      .toSorted((a, b) => a.cleared - b.cleared || b.hits - a.hits),
+      .toSorted(
+        (a, b) => a.cleared - b.cleared || own(a) - own(b) || b.hits - a.hits,
+      ),
     rest = pool
       .filter((x) => x.hits < pace(x.p))
-      .toSorted((a, b) => b.hits - a.hits),
+      .toSorted((a, b) => own(a) - own(b) || b.hits - a.hits),
     chosen = [{ p: weak, hits: firerHits(s, weak, stage) ?? 0, cleared: false }];
   let nonSAR = NON_SAR.has(weak.weapon) ? 1 : 0;
   const take = (list, upTo) => {
@@ -1629,9 +1711,25 @@ export function buildAround(s, stage, weakId) {
     }
   };
   take(strong, rule.max);
-  // Too few strong shooters to make a detail: fill to the minimum with the next best.
-  take(rest, rule.min);
-  const known = chosen.every((x) => x.hits !== null);
+  // Too few strong shooters: the next best fill the detail. A fuller detail
+  // divides the weak firer's hits across more people, so fill it right up
+  // from other details. Their own detail only tops it up to the minimum,
+  // since taking more just rebuilds the detail they already fire in.
+  take(rest.filter((x) => !own(x)), rule.max);
+  take(rest.filter(own), rule.min);
+  const known = chosen.every((x) => x.hits !== null),
+    // Good shooters who still need this stage are the best partners, so say
+    // when the plan had to fall back on ones who have already cleared it, and
+    // whether waiting would turn up better ones.
+    borrowed = chosen.filter((x) => x.p.id !== weakId && x.cleared),
+    held = s.participants.filter(
+      (p) =>
+        p.id !== weakId &&
+        skip.has(p.id) &&
+        isStrong(s, p, stage) &&
+        !nothingToGain(s, p, stage) &&
+        best(s, p, stage) !== null,
+    );
   return {
     entries: chosen.map((x) => ({ participantId: x.p.id, weapon: x.p.weapon })),
     people: chosen,
@@ -1639,6 +1737,10 @@ export function buildAround(s, stage, weakId) {
       ? Math.floor(chosen.reduce((n, x) => n + x.hits, 0) / chosen.length)
       : null,
     short: chosen.length < rule.min,
+    room: rule.max - chosen.length,
+    borrowed: borrowed.map((x) => x.p),
+    // Better partners exist but are busy: waiting for them makes a better detail.
+    waitFor: borrowed.length ? held : [],
   };
 }
 // Once a weak firer is moved out, the rest of their detail should not be left
@@ -1652,7 +1754,7 @@ export function planRest(s, stage, weakId, picked) {
     home = weak && s.details.find((d) => d.id === weak.detailId);
   if (!home) return null;
   const max = (p) => p.profile.components.find((c) => c.id === stage).max,
-    pace = (p) => Math.ceil((p.profile.marksman * max(p)) / p.profile.total),
+    pace = (p) => marksmanPace(p, stage),
     weakSet = new Set(weakFirers(s, stage).map((x) => x.p.id)),
     queued = new Set(
       firingQueue(s, stage).flatMap((e) => e.members.map((p) => p.id)),

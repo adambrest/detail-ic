@@ -50,6 +50,11 @@ import {
   weakFirers,
   buildAround,
   planRest,
+  committed,
+  overlapping,
+  homeAttempts,
+  isStrong,
+  orderParticipant,
   insights,
   standing,
   setSkipped,
@@ -151,15 +156,20 @@ test("Only plain SAR21 variants share an option; a shoot is set on a base rifle"
     "SAR21 SS/HK416",
     "LMG",
   ]);
-  assert.deepEqual(weaponsFor("CS_M"), ["SAR21/M203", "SAR21 SS", "LMG"]);
-  assert.deepEqual(weaponsFor("CS_SP"), ["SAR21", "LMG"]);
-  assert.equal(weaponGroup("CS_M", "standard", "M203"), "SAR21/M203");
+  // Combat Shoot holds every SAR21 variant to the same mark, so they are one option.
+  assert.deepEqual(weaponsFor("CS_M"), ["SAR21/SAR21 SS/M203", "LMG"]);
+  assert.deepEqual(weaponsFor("CS_SP"), ["SAR21/SAR21 SS", "LMG"]);
+  assert.equal(weaponGroup("CS_M", "standard", "M203"), "SAR21/SAR21 SS/M203");
+  assert.equal(
+    weaponGroup("CS_M", "standard", "SAR21 SS"),
+    "SAR21/SAR21 SS/M203",
+  );
   // SAR21 SS keeps its own requirement in ATP (M), so it is never lumped in.
   assert.equal(profileFor("ATP_M", "standard", "SAR21 SS/HK416").pass, 32);
   assert.equal(profileFor("ATP_M", "standard", "SAR21/SAR21 MMS/M203").pass, 24);
   // M16 and LMG are given out per firer, after the details are set.
-  assert.deepEqual(baseWeapons("CS_M"), ["SAR21/M203", "SAR21 SS"]);
-  assert.deepEqual(baseWeapons("CS_SP"), ["SAR21"]);
+  assert.deepEqual(baseWeapons("CS_M"), ["SAR21/SAR21 SS/M203"]);
+  assert.deepEqual(baseWeapons("CS_SP"), ["SAR21/SAR21 SS"]);
   assert.deepEqual(baseWeapons("ATP_M"), weaponsFor("ATP_M"));
 });
 test("Unsupported rifles stay out of selectors and scoring", () => {
@@ -199,7 +209,7 @@ test("Shoot type can change until scores are recorded", () => {
   s.name = "ATP (M) · Sep 18, 2026";
   changeShootType(s, "CS_SP");
   assert.equal(s.name, "CS (SP) · Sep 18, 2026");
-  assert.equal(p.weapon, "SAR21");
+  assert.equal(p.weapon, rifle("CS_SP"));
   assert.equal(p.detailId, null);
   assert.equal(members(s, null).length, 9);
   changeShootType(s, "BTP");
@@ -218,13 +228,13 @@ test("Pasted rosters read detail numbers from CSV, TSV or a trailing number", ()
     { name: "Team 7", detail: null },
   ]);
   const s = newShoot("CS_SP");
-  addParticipants(s, "A,1\nB,1\nC,1\nD,1\nE", "SAR21");
+  addParticipants(s, "A,1\nB,1\nC,1\nD,1\nE", rifle("CS_SP"));
   assert.equal(members(s, s.details[0].id).length, 4);
   assert.match(rosterIssues(s).join(" "), /1 participant needs a detail/);
 });
 test("Detail buttons assign firers; skipped, small and large details are reported", () => {
   const s = newShoot("CS_SP"),
-    people = addParticipants(s, "A\nB\nC\nD\nE\nF\nG\nH", "SAR21");
+    people = addParticipants(s, "A\nB\nC\nD\nE\nF\nG\nH", rifle("CS_SP"));
   people.slice(0, 3).forEach((p) => assignDetail(s, p.id, 1));
   people.slice(3).forEach((p) => assignDetail(s, p.id, 3));
   const issues = rosterIssues(s).join("\n");
@@ -295,13 +305,13 @@ test("CS floors each stage before addition: 59/6 + 65/6 = 9+10", () => {
 test("A one-off temporary detail scores once and then leaves the roster", () => {
   const { s, d, people } = setup("CS_SP", "standard", 4),
     other = addDetail(s),
-    others = addParticipants(s, ["B1", "B2", "B3", "B4"], "SAR21", other.id);
+    others = addParticipants(s, ["B1", "B2", "B3", "B4"], rifle("CS_SP"), other.id);
   const temp = createTempDetail(
     s,
     "A",
     [people[0], people[1], others[0], others[1]].map((p, i) => ({
       participantId: p.id,
-      weapon: i === 0 ? "LMG" : "SAR21",
+      weapon: i === 0 ? "LMG" : rifle("CS_SP"),
     })),
     { oneOff: true },
   );
@@ -316,7 +326,7 @@ test("A one-off temporary detail scores once and then leaves the roster", () => 
 test("A kept temporary detail belongs to its stage and flags where firers came from", () => {
   const { s, d, people } = setup("CS_SP", "standard", 4),
     other = addDetail(s),
-    others = addParticipants(s, ["B1", "B2", "B3", "B4"], "SAR21", other.id);
+    others = addParticipants(s, ["B1", "B2", "B3", "B4"], rifle("CS_SP"), other.id);
   detailScore(s, d, "A", 20);
   detailScore(s, other, "A", 20);
   const temp = createTempDetail(
@@ -324,7 +334,7 @@ test("A kept temporary detail belongs to its stage and flags where firers came f
     "A",
     [people[0], people[1], others[0], others[1]].map((p) => ({
       participantId: p.id,
-      weapon: "SAR21",
+      weapon: rifle("CS_SP"),
     })),
   );
   assert.equal(temp.name, "Temp detail 1");
@@ -348,7 +358,7 @@ test("A kept temporary detail belongs to its stage and flags where firers came f
 });
 test("Temporary details follow the detail size and rifle rules", () => {
   const { s, people } = setup("CS_SP", "standard", 6),
-    entry = (p, weapon = "SAR21") => ({ participantId: p.id, weapon });
+    entry = (p, weapon = rifle("CS_SP")) => ({ participantId: p.id, weapon });
   assert.throws(
     () => createTempDetail(s, "A", people.slice(0, 3).map((p) => entry(p))),
     /Too few/,
@@ -358,7 +368,7 @@ test("Temporary details follow the detail size and rifle rules", () => {
       createTempDetail(
         s,
         "A",
-        people.slice(0, 4).map((p, i) => entry(p, i < 3 ? "LMG" : "SAR21")),
+        people.slice(0, 4).map((p, i) => entry(p, i < 3 ? "LMG" : rifle("CS_SP"))),
       ),
     /non-SAR21/,
   );
@@ -379,7 +389,7 @@ test("Recorded scores can be edited, keeping the original in the history", () =>
   editDetailAttempt(
     cs.s,
     detail.id,
-    cs.people.map((x) => ({ participantId: x.id, weapon: "SAR21", hits: "" })),
+    cs.people.map((x) => ({ participantId: x.id, weapon: rifle("CS_SP"), hits: "" })),
     "52",
   );
   assert.equal(best(cs.s, cs.p, "A"), 13);
@@ -412,9 +422,9 @@ test("Combat Shoot Stage B is fired individually, on any rifle", () => {
     detailId: d.id,
     weapon: "LMG",
   });
-  recordIndividual(s, people[0], "B", "5", "SAR21");
+  recordIndividual(s, people[0], "B", "5", rifle("CS_SP"));
   assert.equal(best(s, people[0], "B"), 5);
-  assert.equal(bestAttempt(s, people[0], "B").weapon, "SAR21");
+  assert.equal(bestAttempt(s, people[0], "B").weapon, rifle("CS_SP"));
   assert.throws(() => recordIndividual(s, people[1], "A", "10"), /whole detail/);
   assert.deepEqual(
     queue(s, "B").map((e) => e.key),
@@ -467,7 +477,7 @@ test("A detail takes at most two non-SAR21 rifles, however they are arranged", (
   );
   assert.throws(() => dispatch(s, "A", [`detail:${d.id}`]), /non-SAR21/);
   assert.throws(() => detailScore(s, d, "A", 30), /non-SAR21/);
-  for (const i of [2, 3, 4, 5]) give(i, "SAR21");
+  for (const i of [2, 3, 4, 5]) give(i, rifle("CS_SP"));
   assert.deepEqual(compositionErrors(s, members(s, d.id)), []);
 });
 test("M203 counts as SAR21 in CS (M); a whole detail on LMG is flagged", () => {
@@ -478,7 +488,7 @@ test("M203 counts as SAR21 in CS (M); a whole detail on LMG is flagged", () => {
     compositionErrors(s, people).join(" "),
     /Too many non-SAR21 weapons: 5\/2/,
   );
-  fillWeapons(s, "SAR21/M203");
+  fillWeapons(s, "SAR21/SAR21 SS/M203");
   assert.deepEqual(compositionErrors(s, people), []);
 });
 test("Mixed rifles in CS share thresholds and keep the rifle per stage", () => {
@@ -507,7 +517,7 @@ test("CS best is selected from earned averaged attempts, never raw individual be
 test("An average cannot be borrowed from a detail the participant did not attend", () => {
   const { s, d, people } = setup("CS_SP", "standard", 4),
     other = addDetail(s),
-    others = addParticipants(s, ["B1", "B2", "B3", "B4"], "SAR21", other.id);
+    others = addParticipants(s, ["B1", "B2", "B3", "B4"], rifle("CS_SP"), other.id);
   detailScore(s, d, "A", 12);
   detailScore(s, other, "A", 60);
   assert.equal(best(s, people[0], "A"), 3);
@@ -585,7 +595,7 @@ test("The firing queue keeps first attempts in order, then redetails as sent", (
   addParticipants(
     s,
     Array.from({ length: 12 }, (_, i) => `P${i + 1} ${Math.floor(i / 4) + 1}`),
-    "SAR21",
+    rifle("CS_SP"),
   );
   const [d1, d2, d3] = sortedDetails(s),
     names = () => firingQueue(s, "A").map((e) => `${e.detail.name}#${e.attempt}`);
@@ -644,7 +654,7 @@ test("Skipped entries wait below everyone, even later redetails", () => {
 test("A manual detail needs at least one firer who can still improve", () => {
   const { s, d, people } = setup("CS_SP", "standard", 4),
     d2 = addDetail(s),
-    others = addParticipants(s, ["Q 1", "Q 2", "Q 3", "Q 4"], "SAR21", d2.id);
+    others = addParticipants(s, ["Q 1", "Q 2", "Q 3", "Q 4"], rifle("CS_SP"), d2.id);
   // Detail 1 maxes Stage A; Person 1 also finishes as Marksman.
   detailScore(s, d, "A", 60);
   recordIndividual(s, people[0], "B", "8");
@@ -672,7 +682,7 @@ test("A manual detail needs at least one firer who can still improve", () => {
 test("A skipped detail takes no scores until unskipped", () => {
   const store = newStore(),
     s = createShoot(store, "CS_SP", "standard", "S");
-  addParticipants(s, Array.from({ length: 8 }, (_, i) => `P${i} ${i < 4 ? 1 : 2}`), "SAR21");
+  addParticipants(s, Array.from({ length: 8 }, (_, i) => `P${i} ${i < 4 ? 1 : 2}`), rifle("CS_SP"));
   const [d1] = sortedDetails(s);
   setSkipped(s, "A", `detail:${d1.id}`, true);
   const draft = getDraft(s, d1.id, "A");
@@ -785,27 +795,29 @@ test("Insights point out firers who are not improving", () => {
     ),
   );
 });
-test("Detail insights name the weakest shooter, and group firers with the same fix", () => {
+test("Detail insights say each thing once, and group firers with the same fix", () => {
   const store = newStore(),
     s = createShoot(store, "CS_M", "standard", "I");
   addParticipants(
     s,
     Array.from({ length: 12 }, (_, i) => `P${i + 1} ${i < 6 ? 1 : 2}`),
-    "SAR21/M203",
+    "SAR21/SAR21 SS/M203",
   );
   const [d1, d2] = sortedDetails(s);
   detailScore(s, d1, "A", null, { individuals: [12, 11, 10, 9, 8, 1] });
   detailScore(s, d2, "A", 30);
   const a = Object.fromEntries(insights(s, "A").map((n) => [n.title, n.items]));
   // Before B or C are in, CS (M) Stage A starts at 39 × 20/48 = 17 for Marksman.
+  // The detail line carries the recommendation, so a poor shooter line says
+  // only who they are, where they fire and what they hit.
   assert.deepEqual(a["Poor shooters"], [
-    "P6: 1/20, recommended 17 for Marksman",
-    "P5: 8/20, recommended 17 for Marksman",
-    "P4: 9/20, recommended 17 for Marksman",
+    "P6 (Detail 1): 1/20",
+    "P5 (Detail 1): 8/20",
+    "P4 (Detail 1): 9/20",
   ]);
   assert.deepEqual(a["Weak details"], [
-    "Detail 1: averages 8, recommended 17 for Marksman. Weakest: P6 with 1",
-    "Detail 2: averages 5, recommended 17 for Marksman",
+    "Detail 1: averages 8/20, recommended 17 for Marksman",
+    "Detail 2: averages 5/20, recommended 17 for Marksman",
   ]);
   // All twelve need the same fix: one line, not twelve. On the Stage A tab
   // that fix is Stage A itself, so it is not repeated as a warning.
@@ -845,7 +857,7 @@ test("A weak firer gets a detail of strong shooters, those still needing it firs
   const people = addParticipants(
     s,
     Array.from({ length: 12 }, (_, i) => `P${i + 1} ${Math.floor(i / 4) + 1}`),
-    "SAR21",
+    rifle("CS_SP"),
   );
   const [d1, d2, d3] = sortedDetails(s);
   // Detail 1: strong shooters dragged down by P4. Detail 2 cleared. Detail 3 middling.
@@ -876,7 +888,7 @@ test("The rest of a weak firer's detail gets a detail of its own", () => {
   const people = addParticipants(
     s,
     Array.from({ length: 12 }, (_, i) => `P${i + 1} ${i < 6 ? 1 : 2}`),
-    "SAR21",
+    rifle("CS_SP"),
   );
   const [d1, d2] = sortedDetails(s);
   detailScore(s, d1, "A", null, { individuals: [11, 11, 11, 11, 11, 2] });
@@ -903,6 +915,91 @@ test("The rest of a weak firer's detail gets a detail of its own", () => {
   createTempDetail(s, "A", plan.entries);
   createTempDetail(s, "A", rest.entries);
 });
+test("A firer booked into a detail is never built into a second one", () => {
+  const store = newStore(),
+    s = createShoot(store, "CS_SP", "standard", "O");
+  const people = addParticipants(
+    s,
+    Array.from({ length: 12 }, (_, i) => `P${i + 1} ${Math.floor(i / 4) + 1}`),
+    rifle("CS_SP"),
+  );
+  const [d1, d2, d3] = sortedDetails(s);
+  // Details 1 and 2 each carry a poor shooter; Detail 3 has cleared Stage A.
+  detailScore(s, d1, "A", null, { individuals: [13, 13, 13, 1] });
+  detailScore(s, d2, "A", null, { individuals: [13, 13, 13, 2] });
+  detailScore(s, d3, "A", null, { individuals: [15, 15, 15, 15] });
+  assert.deepEqual(
+    weakFirers(s, "A").map((x) => x.p.name),
+    ["P4", "P8"],
+  );
+  // Nobody is booked yet, so the first plan may take anyone.
+  assert.equal(committed(s, "A", people[4]), false);
+  const first = buildAround(s, "A", people[3].id);
+  // Good shooters who still need Stage A come first, from another detail.
+  assert.deepEqual(first.waitFor, []);
+  createTempDetail(s, "A", first.entries);
+  const taken = first.entries.map((e) => e.participantId);
+  // Everyone in that temporary detail is now waiting to fire it.
+  for (const id of taken)
+    assert.equal(committed(s, "A", people.find((p) => p.id === id)), true);
+  assert.deepEqual(
+    overlapping(s, "A", taken)
+      .map((p) => p.id)
+      .toSorted(),
+    taken.toSorted(),
+  );
+  // The next poor shooter's plan leaves every one of them alone.
+  const second = buildAround(s, "A", people[7].id);
+  assert.equal(
+    second.entries.some((e) => taken.includes(e.participantId)),
+    false,
+  );
+  // It had to fall back on firers who have already cleared Stage A, while
+  // better partners sit in the detail just made: waiting gives a better one.
+  assert.ok(second.borrowed.length);
+  assert.ok(
+    second.waitFor.every((p) => taken.includes(p.id)) &&
+      second.waitFor.length > 0,
+  );
+});
+test("A detail gets two goes before its poor shooter is worth moving", () => {
+  const store = newStore(),
+    s = createShoot(store, "CS_SP", "standard", "H");
+  const people = addParticipants(
+    s,
+    Array.from({ length: 12 }, (_, i) => `P${i + 1} ${i < 6 ? 1 : 2}`),
+    rifle("CS_SP"),
+  );
+  const [d1, d2] = sortedDetails(s);
+  detailScore(s, d1, "A", null, { individuals: [13, 13, 13, 13, 13, 2] });
+  detailScore(s, d2, "A", null, { individuals: [13, 13, 13, 13, 13, 13] });
+  assert.equal(homeAttempts(s, people[5], "A"), 1);
+  // Strong is marksman pace, 13/15 for CS (SP) Stage A.
+  assert.equal(isStrong(s, people[0], "A"), true);
+  assert.equal(isStrong(s, people[5], "A"), false);
+  const holding = () =>
+    queue(s, "A").find((e) => e.detail?.id === d1.id)?.holdingBack ?? [];
+  assert.deepEqual(holding(), []);
+  detailScore(s, d1, "A", null, { individuals: [13, 13, 13, 13, 13, 2] });
+  assert.equal(homeAttempts(s, people[5], "A"), 2);
+  assert.deepEqual(
+    holding().map((p) => p.name),
+    ["P6"],
+  );
+});
+test("Firers can be put in the order they will fire", () => {
+  const { s, people } = setup("CS_SP", "standard", 4),
+    order = () => s.participants.map((p) => p.name);
+  assert.deepEqual(order(), ["Person 1", "Person 2", "Person 3", "Person 4"]);
+  orderParticipant(s, people[3].id, people[0].id);
+  assert.deepEqual(order(), ["Person 4", "Person 1", "Person 2", "Person 3"]);
+  // No target means last.
+  orderParticipant(s, people[3].id, null);
+  assert.deepEqual(order(), ["Person 1", "Person 2", "Person 3", "Person 4"]);
+  // Dropping a firer onto themselves changes nothing.
+  orderParticipant(s, people[1].id, people[1].id);
+  assert.deepEqual(order(), ["Person 1", "Person 2", "Person 3", "Person 4"]);
+});
 test("Too few left over: good shooters top them up", () => {
   // One detail of six: five decent, one bad, and nobody else strong.
   const store = newStore(),
@@ -910,7 +1007,7 @@ test("Too few left over: good shooters top them up", () => {
   const people = addParticipants(
     s,
     Array.from({ length: 6 }, (_, i) => `P${i + 1} 1`),
-    "SAR21",
+    rifle("CS_SP"),
   );
   const [d1] = sortedDetails(s);
   detailScore(s, d1, "A", null, { individuals: [12, 11, 11, 10, 10, 2] });
@@ -1041,7 +1138,7 @@ test("Roster corrections keep historical membership and make old entries stale",
   detailScore(s, d, "A", 40);
   getDraft(s, d.id, "C").aggregate = "20";
   const other = addDetail(s);
-  addParticipants(s, ["Other 1", "Other 2", "Other 3"], "SAR21", other.id);
+  addParticipants(s, ["Other 1", "Other 2", "Other 3"], rifle("CS_SP"), other.id);
   updateParticipant(
     s,
     p.id,
@@ -1151,7 +1248,7 @@ test("Repeated names are reported before scoring starts", () => {
 test("Rifles taken out of service are mapped onto what replaces them", () => {
   const store = newStore(),
     s = createShoot(store, "CS_SP", "standard", "Alpha"),
-    people = addParticipants(s, "A 1\nB 1\nC 1\nD 1", "SAR21");
+    people = addParticipants(s, "A 1\nB 1\nC 1\nD 1", rifle("CS_SP"));
   s.participants[0].weapon = "M16";
   s.attempts.push({
     id: "a1",
@@ -1161,15 +1258,15 @@ test("Rifles taken out of service are mapped onto what replaces them", () => {
     variant: "standard",
     stage: "B",
     weapon: "M16",
-    profile: profileFor("CS_SP", "standard", "SAR21"),
+    profile: profileFor("CS_SP", "standard", rifle("CS_SP")),
     score: 5,
     status: "valid",
     recordedAt: now(),
   });
   const repaired = validateStore(migrateStore(JSON.parse(JSON.stringify(store)))),
     rs = getShoot(repaired);
-  assert.equal(rs.participants[0].weapon, "SAR21");
-  assert.equal(rs.attempts[0].weapon, "SAR21");
+  assert.equal(rs.participants[0].weapon, rifle("CS_SP"));
+  assert.equal(rs.attempts[0].weapon, rifle("CS_SP"));
   assert.equal(best(rs, rs.participants[0], "B"), 5);
 });
 
@@ -1222,7 +1319,7 @@ test("Unknown or incompatible profile versions cannot enter best score selection
 test("Backup round trip keeps shoots, drafts and best attempt IDs", () => {
   const store = newStore();
   const s = createShoot(store, "CS_SP", "standard", "Alpha"),
-    people = addParticipants(s, "A 1\nB 1\nC 1\nD 1", "SAR21"),
+    people = addParticipants(s, "A 1\nB 1\nC 1\nD 1", rifle("CS_SP")),
     d = s.details[0];
   detailScore(s, d, "A", 44);
   getDraft(s, d.id, "C").aggregate = "30";

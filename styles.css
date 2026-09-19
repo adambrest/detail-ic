@@ -64,6 +64,19 @@ button.primary:hover {
 .danger {
   color: var(--danger);
 }
+.danger:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: #fef2f2;
+}
+button.danger-solid {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+button.danger-solid:hover {
+  background: #991b1b;
+}
 input,
 select,
 textarea {
@@ -679,6 +692,9 @@ tr.dragging {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px #2563eb22;
 }
+tr.drop-before td {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
 .add-row .name-input {
   border-style: dashed;
   color: var(--muted);
@@ -696,25 +712,8 @@ tr.dragging {
 .past-scores[open] > summary {
   border-bottom: 1px solid var(--line);
 }
-.queue-list.shuffling::before {
-  content: "";
-  position: sticky;
-  top: 0;
-  display: block;
-  height: 2px;
-  z-index: 1;
-  background: linear-gradient(90deg, transparent, var(--accent), transparent)
-    no-repeat;
-  background-size: 50% 100%;
-  animation: loading 0.5s linear infinite;
-}
-@keyframes loading {
-  from {
-    background-position: -100% 0;
-  }
-  to {
-    background-position: 200% 0;
-  }
+.queue-list.settling {
+  overflow: hidden;
 }
 .queue-row {
   display: grid;
@@ -1097,6 +1096,23 @@ dialog .error {
   padding: 9px 12px;
   font-size: 12px;
 }
+.warn-note {
+  color: var(--warn);
+}
+.queue-row .holding {
+  color: var(--warn);
+}
+.weak-note {
+  padding: 0 12px 8px;
+  margin: 0;
+}
+.manual-seg {
+  margin: 10px 0;
+}
+.manual-seg button {
+  flex: 1;
+  font-size: 12px;
+}
 .insight strong {
   display: block;
   margin-bottom: 4px;
@@ -1212,8 +1228,8 @@ details.reference summary {
 input.invalid {
   border-color: var(--danger);
 }
-tr.awaiting td {
-  background: #f5f9ff;
+tr.awaiting td.name .attempt.on {
+  font-weight: 700;
 }
 tr.match td,
 .reached-row.match,

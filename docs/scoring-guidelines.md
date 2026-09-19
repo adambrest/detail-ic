@@ -13,17 +13,16 @@ P = pass minimum, M = marksman minimum. Both are whole numbers of hits against t
 | ATP (M) | SAR21 SS/HK416 | 48 | 32 | 39 |
 | ATP (M) | LMG | 126 | 32 | 63 |
 | ATP (SP) | SAR21/SAR21 MMS/M203 | 36 | 18 | 29 |
-| CS (M) | SAR21/M203 | 48 | 24 | 39 |
-| CS (M) | SAR21 SS | 48 | 24 | 39 |
+| CS (M) | SAR21/SAR21 SS/M203 | 48 | 24 | 39 |
 | CS (M) | LMG | 48 | 24 | 39 |
-| CS (SP) | SAR21 | 38 | 19 | 31 |
+| CS (SP) | SAR21/SAR21 SS | 38 | 19 | 31 |
 | CS (SP) | LMG | 38 | 19 | 31 |
 | APS | SAR21 | 24 | 12 | 20 |
 | APS (NS) | SAR21 | 30 | 15 | 24 |
 
 A total at or above M is Marksman, at or above P is Pass, below P is Fail. A total is only graded once every stage has a score. The total alone decides the grade; no stage carries its own pass mark.
 
-Rifles share one option only when their requirement is identical and they are plain SAR21 variants. SAR21 SS keeps its own option in ATP (M) because it passes at 32, not 24. M16 is out of service and is not offered; rosters that still name it are moved to the SAR21 option, which scores the same.
+Rifles share one option only when their requirement is identical. The SAR21 SS keeps its own option in ATP (M) because it passes at 32, not 24; in Combat Shoot every SAR21 variant passes at the same mark, so they are one option. M16 is out of service and is not offered; rosters that still name it are moved to the SAR21 option, which scores the same.
 
 LMG is not offered for BTP, ATP (SP) or APS: those tables carry no LMG standard, and one is never borrowed from another shoot type.
 

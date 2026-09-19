@@ -5,7 +5,8 @@ const tab = (page, name) =>
   page.locator("#tabs").getByRole("button", { name, exact: true }).click();
 const click = (page, name) =>
   page.getByRole("button", { name, exact: true }).click();
-const waitFor = (page, fn) => page.waitForFunction(fn, null, { timeout: 5000 });
+const waitFor = (page, fn, arg = null) =>
+  page.waitForFunction(fn, arg, { timeout: 5000 });
 const stored = (page) =>
   page.evaluate(() => JSON.parse(localStorage.getItem("detail-ic-v2")));
 async function inViewport(page, locator) {
@@ -341,7 +342,7 @@ async function addNames(page, names) {
     assert.ok((await page.locator(".issues").innerText()).includes("non-SAR21"));
     await page
       .getByRole("combobox", { name: "Rifle for Farah Ali" })
-      .selectOption("SAR21/M203");
+      .selectOption("SAR21/SAR21 SS/M203");
     // A short detail can be filled from its own row, and numbering cannot skip.
     const firstDetail = page.locator("[data-drop]").first();
     await firstDetail
@@ -366,6 +367,41 @@ async function addNames(page, names) {
       JSON.parse(
         localStorage.getItem("detail-ic-v2"),
       ).shoots[1].participants.every((p) => p.name !== "Nadia Goh"),
+    );
+
+    // A firer can be dragged onto another to set the order inside a detail.
+    const detailOne = () =>
+      page.evaluate(() => {
+        const shoot = JSON.parse(localStorage.getItem("detail-ic-v2")).shoots[1],
+          detail = shoot.details.find((d) => d.name === "Detail 1");
+        return shoot.participants
+          .filter((p) => p.detailId === detail.id)
+          .map((p) => ({ id: p.id, name: p.name }));
+      });
+    const seats = await detailOne();
+    await page.evaluate(([from, onto]) => {
+      const dt = new DataTransfer(),
+        fire = (el, type) =>
+          el.dispatchEvent(
+            new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }),
+          );
+      fire(document.querySelector(`[data-drag="${from}"]`), "dragstart");
+      const target = document.querySelector(`[data-drop-row="${onto}"]`);
+      fire(target, "dragover");
+      fire(target, "drop");
+    }, [seats.at(-1).id, seats[0].id]);
+    await waitFor(
+      page,
+      ([first, moved]) => {
+        const shoot = JSON.parse(localStorage.getItem("detail-ic-v2")).shoots[1],
+          names = shoot.participants.map((p) => p.name);
+        return names.indexOf(moved) < names.indexOf(first);
+      },
+      [seats[0].name, seats.at(-1).name],
+    );
+    assert.deepEqual(
+      (await detailOne()).map((p) => p.name),
+      [seats.at(-1).name, ...seats.slice(0, -1).map((p) => p.name)],
     );
 
     await page.locator("#search").fill("Farah");
@@ -462,7 +498,7 @@ async function addNames(page, names) {
     await page.getByRole("button", { name: "Options for Dana Koh" }).first().click();
     await page
       .getByRole("combobox", { name: "Rifle for Stage B" })
-      .selectOption("SAR21/M203");
+      .selectOption("SAR21/SAR21 SS/M203");
     await click(page, "Close");
     // Tab skips the rifle and Skip, straight to the next score box.
     await page.getByRole("spinbutton", { name: "Dana Koh hits" }).fill("6");
@@ -474,7 +510,7 @@ async function addNames(page, names) {
     await click(page, "Confirm scores");
     await waitFor(page, () =>
       JSON.parse(localStorage.getItem("detail-ic-v2")).shoots[1].attempts.some(
-        (a) => a.stage === "B" && a.weapon === "SAR21/M203",
+        (a) => a.stage === "B" && a.weapon === "SAR21/SAR21 SS/M203",
       ),
     );
     // Confirming used to crash here: a Combat Shoot firer queued on an

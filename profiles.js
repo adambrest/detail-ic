@@ -1,4 +1,4 @@
-export const VERSION = "2026-09-18.3";
+export const VERSION = "2026-09-19.1";
 export const PROGRAMS = {
   BTP: "BTP",
   ATP_M: "ATP (M)",
@@ -19,8 +19,9 @@ export const TYPES = [
 ];
 export const typeLabel = (program, variant = "standard") =>
   (PROGRAMS[program] || program) + (variant === "ns" ? " (NS)" : "");
-// Only plain SAR21 variants share an option; anything that can carry its own
-// requirement (SAR21 SS, HK416) stays separate. M16 is out of service.
+// Rifles share an option when their requirement is identical. In ATP the
+// SAR21 SS passes at 32, so it stays separate; in Combat Shoot every SAR21
+// variant scores the same, so they are one option. M16 is out of service.
 export const NON_SAR = new Set(["LMG"]);
 // Combat Shoot detail sizes; ATP (SP) limits how many fire at a time.
 export const DETAIL_RULES = {
@@ -93,7 +94,7 @@ export const PROFILES = [
   ...rules(
     "CS_M",
     "standard",
-    ["SAR21/M203", "SAR21 SS", "LMG"],
+    ["SAR21/SAR21 SS/M203", "LMG"],
     [20, 8, 20],
     24,
     39,
@@ -107,7 +108,7 @@ export const PROFILES = [
   ...rules(
     "CS_SP",
     "standard",
-    ["SAR21", "LMG"],
+    ["SAR21/SAR21 SS", "LMG"],
     [15, 8, 15],
     19,
     31,
