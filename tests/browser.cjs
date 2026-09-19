@@ -196,6 +196,15 @@ async function addNames(page, names) {
       () => document.querySelectorAll("tr.awaiting").length === 2,
     );
 
+    // Skip greys out only while that entry has hits typed in it.
+    const skipAlex = page.getByRole("button", { name: "Skip Alex Tan" });
+    await enterHits(page, "Alex Tan", "9");
+    assert.ok(await skipAlex.isDisabled());
+    await page
+      .getByRole("spinbutton", { name: "Alex Tan hits", exact: true })
+      .fill("");
+    assert.ok(await skipAlex.isEnabled());
+
     // Results show every attempt, and Undo puts a score back.
     await enterHits(page, "Alex Tan", "13");
     await click(page, "Confirm scores");
@@ -296,17 +305,17 @@ async function addNames(page, names) {
 
     // Combat Shoot: paste detail by detail, then auto-detail the rest.
     await newShoot(page, "CS (M)", "Bravo Coy CS");
-    assert.equal(await page.locator("#fill-weapon").count(), 1);
+    assert.equal(await page.locator("#fill-weapon").count(), 0);
     await click(page, "Add participants");
     await click(page, "Paste detail by detail");
     await page.locator("#add-names").fill("Dana Koh\nEvan Lim\nFarah Ali");
-    await click(page, "Confirm and next detail");
+    await click(page, "Save and next detail");
     assert.ok(
       (await page.locator(".add-note").innerText()).includes(
         "Detail 1 has 3 firers",
       ),
     );
-    await click(page, "Done");
+    await click(page, "Save and finish");
     assert.ok((await page.locator(".issues").innerText()).includes("Too few"));
     await addNames(
       page,
@@ -423,9 +432,12 @@ async function addNames(page, names) {
         "Details do not apply",
       ),
     );
+    // The Stage B rifle lives in the ⋯ menu now, off the score row.
+    await page.getByRole("button", { name: "Options for Dana Koh" }).first().click();
     await page
-      .getByRole("combobox", { name: "Dana Koh rifle for Stage B" })
+      .getByRole("combobox", { name: "Rifle for Stage B" })
       .selectOption("SAR21/M203");
+    await click(page, "Close");
     // Tab skips the rifle and Skip, straight to the next score box.
     await page.getByRole("spinbutton", { name: "Dana Koh hits" }).fill("6");
     await page.keyboard.press("Tab");

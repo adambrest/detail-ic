@@ -37,7 +37,6 @@ import {
   addParticipants,
   ensureDetail,
   updateParticipant,
-  fillWeapons,
   removeParticipant,
   clearParticipants,
   compositionErrors,
@@ -334,18 +333,13 @@ function addPanel(c) {
   if (addMode === "choose")
     return `<section class="panel add-panel"><div class="panel-head"><h3>Add participants</h3><button class="icon-button" data-action="add-close" aria-label="Close">✕</button></div><div class="panel-body"><p class="note">Do you already know who is in each detail?</p><div class="actions"><button class="primary" data-action="add-by-detail">Paste detail by detail</button><button data-action="add-list">Paste the whole list</button></div></div></section>`;
   const byDetail = addMode === "detail";
-  return `<section class="panel add-panel"><div class="panel-head"><h3>${byDetail ? `Paste Detail ${pasteDetail}` : "Paste full names"}</h3><button class="icon-button" data-action="add-close" aria-label="Close">✕</button></div><div class="panel-body"><textarea id="add-names" aria-label="${byDetail ? `Full names for Detail ${pasteDetail}` : "Full names"}" placeholder="Alex Tan&#10;Benjamin Lee"></textarea>${rifle}<div class="actions">${byDetail ? '<button class="primary" data-action="add-next">Confirm and next detail</button><button data-action="add-done">Done</button>' : '<button class="primary" data-action="add-save">Add participants</button>'}</div><div class="errors add-note">${esc(addNote)}</div><p class="note">${byDetail ? `Everyone in this box joins Detail ${pasteDetail}.` : cs ? "One full name per line. A detail number after a name puts them straight into it, for example “Alex Tan, 2”." : "One full name per line."}</p></div></section>`;
+  return `<section class="panel add-panel"><div class="panel-head"><h3>${byDetail ? `Paste Detail ${pasteDetail}` : "Paste full names"}</h3><button class="icon-button" data-action="add-close" aria-label="Close">✕</button></div><div class="panel-body"><textarea id="add-names" aria-label="${byDetail ? `Full names for Detail ${pasteDetail}` : "Full names"}" placeholder="Alex Tan&#10;Benjamin Lee"></textarea>${rifle}<div class="actions">${byDetail ? '<button class="primary" data-action="add-next">Save and next detail</button><button data-action="add-done">Save and finish</button>' : '<button class="primary" data-action="add-save">Add participants</button>'}</div><div class="errors add-note">${esc(addNote)}</div><p class="note">${byDetail ? `Everyone in this box joins Detail ${pasteDetail}. Save and finish adds them and closes.` : cs ? "One full name per line. A detail number after a name puts them straight into it, for example “Alex Tan, 2”." : "One full name per line."}</p></div></section>`;
 }
 function renderParticipants() {
   const c = s(),
     cs = isCS(c),
     multi = weapons(c).length > 1,
-    base = baseWeapons(c.program, c.variant),
     locked = c.locked,
-    rifle =
-      base.length > 1 && !locked
-        ? `<label class="muted" for="fill-weapon">Rifle</label><select id="fill-weapon" aria-label="Rifle for fill all">${option(base, c.settings.weapon)}</select><button data-action="fill-all">Fill all</button>`
-        : "",
     matches = (p) => search && filtered(p),
     highest = Math.max(
       0,
@@ -402,17 +396,17 @@ function renderParticipants() {
     body = `<section class="panel">${table(c.participants.filter(filtered))}</section>`;
   const ready = c.participants.length && !rosterIssues(c).length;
   $("#main").innerHTML =
-    shootHead(`<span class="spacer"></span>${rifle}`, true) +
+    shootHead("", true) +
     (hasScores(c)
       ? '<p class="note lock-note">Scores are recorded, so the shoot type is locked. <button class="inline-link" data-action="shoots">Start a new shoot</button> to use a different type.</p>'
       : "") +
     (locked
       ? `<div class="panel confirmed"><span>Participants confirmed and locked.${isCS(c) ? " Stage B rifles can still change on its tab." : ""}</span><div class="actions"><button data-action="unlock">Edit participants</button><button class="primary" data-action="to-stage">Go to ${esc(stageLabel(c, firstStage(c)))}</button></div></div>`
       : "") +
-    (locked ? "" : addPanel(c)) +
     (c.participants.length
       ? `<div class="toolbar">${searchBox()}<span class="count">${c.participants.length} participants</span><span class="spacer"></span>${locked ? "" : `<button class="danger" data-action="clear-participants">Clear participants</button>${ready ? '<button class="primary" data-action="confirm-participants">Confirm participants</button>' : ""}`}</div>`
       : "") +
+    (locked ? "" : addPanel(c)) +
     body;
   if (addMode === "detail" || addMode === "list") $("#add-names")?.focus();
 }
@@ -441,7 +435,7 @@ function renderStage(stage) {
   );
   $("#main").innerHTML =
     shootHead(
-      `<span class="spacer"></span>${searchBox()}${isCS(c) ? '<button data-action="manual-detail">Manual detail</button>' : ""}`,
+      `<span class="spacer"></span>${searchBox()}${detailedStage(c, stage) ? '<button data-action="manual-detail">Manual detail</button>' : ""}`,
     ) +
     issuesPanel(c) +
     `<div class="grid"><div class="score-col">${detailedStage(c, stage) ? detailPanels(c, stage) : individualPanel(c, stage)}</div><div class="side-col">${summaryPanel(c, stage)}${queuePanel(c, stage, q)}</div></div>`;
@@ -481,18 +475,18 @@ function individualPanel(c, stage) {
     const max = p.profile.components.find((x) => x.id === stage).max,
       e = entry.get(p.id),
       typed = entryValue(c, stage, p) !== "";
-    return `<tr data-row="${p.id}" class="${[waiting.has(p.id) && "awaiting", e.n === 0 && !e.skipped && "next", e.skipped && "skipped", search && "match"].filter(Boolean).join(" ")}"><td class="seat">${e.n + 1}</td><td class="name">${esc(p.name)}${weak.has(p.id) ? ` ${badge("Weak")}` : ""}${multi && !cs && p.weapon !== c.settings.weapon ? `<div class="sub">${esc(p.weapon)}</div>` : ""}<div class="attempt ${waiting.has(p.id) ? "on" : ""}">${e.skipped ? "Skipped · " : ""}Attempt ${e.attempt}${waiting.has(p.id) ? " · redetailed" : ""}</div></td>${cs ? `<td><select class="row-weapon" data-stage-rifle="${p.id}" aria-label="${esc(p.name)} rifle for ${esc(stageLabel(c, stage))}">${option(weapons(c), stageRifle(c, p, stage))}</select></td>` : ""}<td><div class="score-input"><input type="number" min="0" max="${max}" step="1" inputmode="numeric" enterkeyhint="next" data-hits="${p.id}" value="${esc(entryValue(c, stage, p))}" aria-label="${esc(p.name)} hits" placeholder="${e.skipped ? "Skipped" : "—"}" ${e.skipped ? "disabled" : ""}><span class="muted">/${max}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell">${order.length > 1 ? skipButton(`person:${p.id}`, p.name, e.skipped, typed) : ""}<button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+    return `<tr data-row="${p.id}" class="${[waiting.has(p.id) && "awaiting", e.n === 0 && !e.skipped && "next", e.skipped && "skipped", search && "match"].filter(Boolean).join(" ")}"><td class="seat">${e.n + 1}</td><td class="name">${esc(p.name)}${weak.has(p.id) ? ` ${badge("Weak")}` : ""}${multi && !cs && p.weapon !== c.settings.weapon ? `<div class="sub">${esc(p.weapon)}</div>` : ""}<div class="attempt ${waiting.has(p.id) ? "on" : ""}">${e.skipped ? "Skipped · " : ""}Attempt ${e.attempt}${waiting.has(p.id) ? " · redetailed" : ""}</div></td>${cs ? `<td class="rifle">${esc(stageRifle(c, p, stage))}</td>` : ""}<td><div class="score-input"><input type="number" min="0" max="${max}" step="1" inputmode="numeric" enterkeyhint="next" data-hits="${p.id}" value="${esc(entryValue(c, stage, p))}" aria-label="${esc(p.name)} hits" placeholder="${e.skipped ? "Skipped" : "—"}" ${e.skipped ? "disabled" : ""}><span class="muted">/${max}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell">${order.length > 1 ? skipButton(`person:${p.id}`, p.name, e.skipped, typed) : ""}<button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
   };
   const scoredRow = (p) =>
     `<tr data-row="${p.id}" class="${search ? "match" : ""}"><td class="name">${esc(p.name)}</td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
   return (
-    `<section class="panel score-panel" data-individual><div class="detail-head"><h3>${esc(stageLabel(c, stage))}</h3><span class="count">${toShoot.length} in the queue</span></div>${cs ? '<p class="note stage-note">Fired individually. Details do not apply to this stage; a firer may use a different rifle for it.</p>' : ""}${
+    `<section class="panel score-panel" data-individual><div class="detail-head"><h3>${esc(stageLabel(c, stage))}</h3><span class="count">${toShoot.length} in the queue</span>${toShoot.length ? `<div class="actions"><span class="draft-summary">${entered} of ${toShoot.length} entered.</span><button class="primary" data-confirm-all="${stage}">Confirm scores</button></div>` : ""}</div>${cs ? '<p class="note stage-note">Fired individually. Details do not apply to this stage; a firer may use a different rifle for it.</p>' : ""}${
       toShoot.length
         ? `<div class="table-wrap"><table><thead><tr><th>#</th><th>Full name</th>${cs ? "<th>Rifle</th>" : ""}<th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${toShoot.map(row).join("")}</tbody></table></div>`
         : `<div class="panel-body note">Everyone has a ${esc(stageLabel(c, stage))} score. Redetail firers to enter more.</div>`
     }<div class="errors draft-errors" role="alert"></div>${
       toShoot.length
-        ? `<div class="score-footer"><span class="draft-summary">${entered} of ${toShoot.length} entered.</span><button class="primary" data-confirm-all="${stage}">Confirm scores</button></div>`
+        ? `<div class="score-footer"><span class="draft-summary">${entered} of ${toShoot.length} entered.</span></div>`
         : ""
     }</section>` +
     (done.length
@@ -575,7 +569,7 @@ function detailPanels(c, stage) {
           draft = getDraft(c, d.id, stage),
           attempt = nextAttempt(c, people, stage),
           e = entry.get(d.id);
-        return `<section class="panel score-panel ${[d.temporary && "temporary", e?.n === 0 && !e.skipped && "next", e?.skipped && "skipped"].filter(Boolean).join(" ")}" data-detail="${d.id}"><div class="detail-head">${e ? `<span class="seat">${e.n + 1}</span>` : ""}<h3>${esc(d.name)}</h3>${e?.n === 0 && !e.skipped ? '<span class="badge blue">Next</span>' : ""}${badge(`Attempt ${attempt}`)}${borrowedNote(c, d, stage)}<span class="count">${people.length} firers</span><div class="actions">${e && order.length > 1 ? skipButton(`detail:${d.id}`, d.name, e.skipped, hasInput(draft)) : ""}<button data-detail-history="${d.id}" aria-label="History for ${esc(d.name)}">History</button><button class="icon-button" data-reset="${d.id}" title="Clear entries" aria-label="Clear entries for ${esc(d.name)}">↺</button></div></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th><th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${people
+        return `<section class="panel score-panel ${[d.temporary && "temporary", e?.n === 0 && !e.skipped && "next", e?.skipped && "skipped"].filter(Boolean).join(" ")}" data-detail="${d.id}"><div class="detail-head">${e ? `<span class="seat">${e.n + 1}</span>` : ""}<h3>${esc(d.name)}</h3>${e?.n === 0 && !e.skipped ? '<span class="badge blue">Next</span>' : ""}${badge(`Attempt ${attempt}`)}${borrowedNote(c, d, stage)}<span class="count">${people.length} firers</span><div class="actions">${e && order.length > 1 ? skipButton(`detail:${d.id}`, d.name, e.skipped, hasInput(draft)) : ""}<button data-detail-history="${d.id}" aria-label="History for ${esc(d.name)}">History</button><button class="icon-button" data-reset="${d.id}" title="Clear entries" aria-label="Clear entries for ${esc(d.name)}">↺</button><button class="primary" data-confirm="${d.id}" aria-label="Confirm scores for ${esc(d.name)}" ${e?.skipped ? "disabled" : ""}>Confirm scores</button></div></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th><th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${people
           .map((p) => {
             const row = draft.rows.find((r) => r.participantId === p.id),
               mine = nextAttempt(c, p, stage);
@@ -583,7 +577,7 @@ function detailPanels(c, stage) {
           })
           .join(
             "",
-          )}</tbody></table></div>${shared ? `<div class="aggregate"><label>Detail total <input type="number" min="0" max="${people.length * cmax}" step="1" data-aggregate="${d.id}" value="${esc(draft.aggregate)}" aria-label="${esc(d.name)} total hits" placeholder="—" ${e?.skipped ? "disabled" : ""}></label><span class="muted">/${people.length * cmax} · fills in from the hits</span></div>` : ""}<div class="errors draft-errors">${esc(draftErrors(c, draft).join("\n"))}</div><div class="score-footer"><span class="draft-summary">${esc(e?.skipped ? "Skipped: it has not fired. Unskip to enter scores." : draftSummary(c, draft))}</span><button class="primary" data-confirm="${d.id}" aria-label="Confirm scores for ${esc(d.name)}" ${e?.skipped ? "disabled" : ""}>Confirm scores</button></div></section>`;
+          )}</tbody></table></div>${shared ? `<div class="aggregate"><label>Detail total <input type="number" min="0" max="${people.length * cmax}" step="1" data-aggregate="${d.id}" value="${esc(draft.aggregate)}" aria-label="${esc(d.name)} total hits" placeholder="—" ${e?.skipped ? "disabled" : ""}></label><span class="muted">/${people.length * cmax} · fills in from the hits</span></div>` : ""}<div class="errors draft-errors">${esc(draftErrors(c, draft).join("\n"))}</div><div class="score-footer"><span class="draft-summary">${esc(e?.skipped ? "Skipped: it has not fired. Unskip to enter scores." : draftSummary(c, draft))}</span></div></section>`;
       })
       .join("") +
     (!shown.length
@@ -713,6 +707,25 @@ function updateRedetailButton(stage) {
   $("#redetail").textContent = `Redetail${count ? ` (${count})` : ""}`;
 }
 // Individual stages hold what is typed until the scores are confirmed.
+// Skip is only blocked while that entry has hits typed into it.
+function syncSkips() {
+  for (const button of document.querySelectorAll("[data-skip]")) {
+    const panel = button.closest(".score-panel"),
+      row = button.closest("tr"),
+      boxes = [
+        ...(row ?? panel ?? document).querySelectorAll(
+          "[data-hits],[data-cs-hits],[data-aggregate]",
+        ),
+      ],
+      typed = boxes.some((x) => x.value !== "");
+    button.disabled = typed;
+    button.title = typed
+      ? "Clear the hits to skip this entry"
+      : button.classList.contains("on")
+        ? "Skipped: tap to put back in its place"
+        : "Skip: move below everyone waiting";
+  }
+}
 function holdHit(input, stage) {
   const c = s();
   c.entries ??= {};
@@ -724,8 +737,9 @@ function holdHit(input, stage) {
     entered = [...panel.querySelectorAll("[data-hits]")].filter(
       (x) => x.value !== "",
     ).length;
-  panel.querySelector(".draft-summary").textContent =
-    `${entered} of ${total} entered.`;
+  for (const label of panel.querySelectorAll(".draft-summary"))
+    label.textContent = `${entered} of ${total} entered.`;
+  syncSkips();
 }
 function confirmScores(stage) {
   const c = s(),
@@ -760,6 +774,7 @@ function confirmScores(stage) {
     panel.querySelector(".draft-errors").textContent = errors.join("\n");
     return;
   }
+  const at = now();
   for (const { p, hits } of pending) {
     saved.push(
       recordIndividual(
@@ -768,6 +783,8 @@ function confirmScores(stage) {
         stage,
         hits,
         isCS(c) ? stageRifle(c, p, stage) : p.weapon,
+        "",
+        at,
       ),
     );
     delete c.entries[`${stage}:${p.id}`];
@@ -1230,16 +1247,27 @@ function manualDetailDialog(stage, around = null) {
 function personDialog(id) {
   const c = s(),
     p = c.participants.find((x) => x.id === id),
-    stage = tab.startsWith("stage:") ? tab.split(":")[1] : null;
+    stage = tab.startsWith("stage:") ? tab.split(":")[1] : null,
+    // Combat Shoot Stage B may be fired on another rifle.
+    swappable = stage && isCS(c) && !detailedStage(c, stage),
+    scored = stage && best(c, p, stage) !== null;
   dialog(
     p.name,
-    `<p class="note">${esc(p.weapon)}${isCS(c) ? "" : ` · ${esc(stages(c).map((x) => `${x.label} ${ratio(best(c, p, x.id), x.max)}`).join(" · "))}`}</p><div class="actions"><button type="button" id="history">History</button>${p.profile.excluded?.length ? '<button type="button" id="sighting">Sighting</button>' : ""}</div>`,
+    `<p class="note">${esc(stage && isCS(c) ? stageRifle(c, p, stage) : p.weapon)}${isCS(c) ? "" : ` · ${esc(stages(c).map((x) => `${x.label} ${ratio(best(c, p, x.id), x.max)}`).join(" · "))}`}</p>${swappable ? `<label class="field inline"><span>Rifle for ${esc(stageLabel(c, stage))}</span><select id="swap-rifle" ${scored ? "disabled" : ""}>${option(weapons(c), stageRifle(c, p, stage))}</select></label>${scored ? '<p class="note">Already scored this stage, so the rifle is fixed. Edit the score in History to change it.</p>' : ""}` : ""}<div class="actions"><button type="button" id="history">History</button>${p.profile.excluded?.length ? '<button type="button" id="sighting">Sighting</button>' : ""}</div>`,
     null,
     null,
     "Close",
   );
   $("#history").onclick = () => historyDialog(p);
   if ($("#sighting")) $("#sighting").onclick = () => sightingDialog(p);
+  if ($("#swap-rifle"))
+    $("#swap-rifle").onchange = (ev) => {
+      c.stageRifles ??= {};
+      c.stageRifles[`${p.id}:${stage}`] = ev.target.value;
+      save();
+      render();
+      toast(`${p.name}: ${ev.target.value} for ${stageLabel(c, stage)}.`);
+    };
 }
 function sightingDialog(p) {
   const c = s();
@@ -1559,8 +1587,6 @@ $("#main").addEventListener("input", (e) => {
   }
   if (t.dataset.hits) {
     holdHit(t, tab.split(":")[1]);
-    const skip = t.closest("tr").querySelector("[data-skip]");
-    if (skip) skip.disabled = t.value !== "";
     return;
   }
   if (t.matches("[data-cs-hits],[data-aggregate]")) {
@@ -1584,8 +1610,7 @@ $("#main").addEventListener("input", (e) => {
     }
     draft.updatedAt = now();
     refreshDraft(panel, c, draft);
-    const skip = panel.querySelector(".detail-head [data-skip]");
-    if (skip) skip.disabled = hasInput(draft);
+    syncSkips();
   }
 });
 $("#main").addEventListener(
@@ -1653,9 +1678,6 @@ $("#main").addEventListener("change", (e) => {
       toast(`Shoot type changed to ${typeLabel(program, variant)}.`);
       if (isCS(c) && c.participants.length && !c.details.length)
         detailPicker(c);
-    } else if (t.id === "fill-weapon") {
-      c.settings.weapon = t.value;
-      save();
     } else if (t.id === "order") {
       c.settings.order = t.value;
       save();
@@ -1896,24 +1918,33 @@ $("#main").addEventListener("click", (e) => {
         render();
         break;
       case "add-close":
-      case "add-done":
         addMode = null;
         addNote = "";
         render();
         break;
+      case "add-done":
       case "add-next":
       case "add-save": {
         const names = $("#add-names").value,
           weapon = $("#add-weapon")?.value || c.settings.weapon,
           byDetail = b.dataset.action === "add-next",
-          people = addParticipants(
-            c,
-            names,
-            weapon,
-            byDetail ? ensureDetail(c, pasteDetail).id : null,
-          );
+          finishing = b.dataset.action === "add-done";
+        // Finishing with an empty box just closes the panel.
+        if (finishing && !names.trim()) {
+          addMode = null;
+          addNote = "";
+          render();
+          break;
+        }
+        const people = addParticipants(
+          c,
+          names,
+          weapon,
+          byDetail || finishing ? ensureDetail(c, pasteDetail).id : null,
+        );
         addNote = "";
-        if (byDetail) {
+        if (finishing) addMode = null;
+        else if (byDetail) {
           const rule = DETAIL_RULES[c.program],
             size = members(c, ensureDetail(c, pasteDetail).id).length;
           if (rule && (size < rule.min || size > rule.max))
@@ -1968,12 +1999,6 @@ $("#main").addEventListener("click", (e) => {
       case "to-stage":
         tab = `stage:${firstStage(c)}`;
         render();
-        break;
-      case "fill-all":
-        fillWeapons(c, $("#fill-weapon").value);
-        save();
-        render();
-        toast("Rifle applied to everyone.");
         break;
       case "select-all": {
         selected = new Set(

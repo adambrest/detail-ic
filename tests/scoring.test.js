@@ -1113,6 +1113,19 @@ test("Thresholds float once the other stages are scored", () => {
   part.s.settings.targets["SAR21:A:marksman"] = 12;
   assert.deepEqual(names(part.s, "A"), []);
 });
+test("Scores confirmed together share one time, so chronological follows confirmations", () => {
+  const { s, people } = setup("BTP", "standard", 3),
+    at = now();
+  // Keyed in back to front, but confirmed in one go.
+  for (const i of [2, 1, 0])
+    recordIndividual(s, people[i], "A", "5", people[i].weapon, "", at);
+  assert.equal(new Set(s.attempts.map((a) => a.recordedAt)).size, 1);
+  s.settings.order = "first";
+  assert.deepEqual(
+    queue(s, "A").map((e) => e.members[0].name),
+    ["Person 1", "Person 2", "Person 3"],
+  );
+});
 test("Redetailing keeps the order the redetailer chose", () => {
   const { s, people } = setup("BTP", "standard", 3);
   [10, 5, 8].forEach((hits, i) =>

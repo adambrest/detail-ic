@@ -784,6 +784,7 @@ export function recordIndividual(
   hits,
   weapon = p.weapon,
   reason = "",
+  at = now(),
 ) {
   if (detailedStage(s, stage))
     throw Error("Enter Combat Shoot Stage A and C scores for the whole detail.");
@@ -808,7 +809,7 @@ export function recordIndividual(
     rawHits: parsed.value,
     score: parsed.value,
     status: "valid",
-    recordedAt: now(),
+    recordedAt: at,
     recorder: "Local device",
     reason,
   };

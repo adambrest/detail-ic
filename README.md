@@ -1,6 +1,6 @@
 # Detail IC
 
-**[Open the app](https://adambrest.github.io/detail-ic/)** in your browser. Turn on your shoot types in Settings, create a shoot, paste in participants, then enter scores.
+**[Open the app](https://adambrest.github.io/detail-ic/)** in your browser. Create a shoot, add participants, then enter scores as they come in.
 
 ## Offline use
 
@@ -14,21 +14,20 @@ Everything works offline. Scores are saved on your device only, so export a back
 ## Supported shoots
 
 - BTP, ATP (M), ATP (SP), CS (M), CS (SP), APS and APS (NS).
-- Pass and Marksman thresholds are under Settings → Scoring rules.
+- Pass and Marksman thresholds are under Settings.
 
 ## Using Detail IC
 
-Each participant keeps their best score per stage. Final scores adds them for Pass, Marksman or Fail.
+**Add participants.** Paste the whole list, or paste it detail by detail for Combat Shoot. Set each firer's rifle, confirm the participants, and scoring opens.
 
-BTP, ATP and APS scores save as you enter them. Combat Shoot is scored by detail: add a detail number after each name or tap the number buttons, then confirm each detail's scores. Enter each firer's hits and the detail total fills itself in; a total typed by hand must tally with the hits. A detail can be confirmed with only its total, but then poor-shooter warnings are off for it. Choose History on a detail to see or edit its scores. A manual detail may include firers who already have the max score or marksman, to help the average, but needs at least one firer who can still improve.
+**Enter scores as they come in.** Each stage tab lists who still has to fire. Type the hits and press Confirm scores. Scored firers drop off the queue into Past scores. Combat Shoot Stages A and C are confirmed one detail at a time; Stage B is fired individually, in any order.
 
-Each firer keeps the rifle set in Participants for the whole shoot. The exception is Combat Shoot Stage B, which can be fired on another rifle, since every Combat Shoot rifle fires the same rounds there. Every row shows which attempt it is, starting at Attempt 1.
+**Redetail.** Tick the firers to send again and choose Redetail. The list can be ordered by:
 
-ATP and Combat Shoot open on Stage B once participants are confirmed, since that is where the range starts. Each stage tab lists who still has to fire, in firing order: everyone's first attempt in detail order, then redetails in the order they were sent. Enter scores straight into it; scored entries drop off and the rest move up. If someone is not ready, Skip moves them below everyone waiting, including later redetails; tap Skipped to put them back. A skipped entry has not fired, so it takes no scores until unskipped, and Skip greys out once hits are typed. Tab moves from score box to score box. Tick firers in Redetailing and choose Redetail to add them to the back of the queue. Tap ↕ to mark a firer high ▲ or low ▼ priority.
+- **Automatic** — anyone at risk of failing first, then whoever is furthest from their threshold.
+- **Highest score first**, **Lowest score first**, or **Chronological**, in the order firers last fired.
 
-The Redetailing list is in Automatic order by default (the ⓘ beside it explains how): anyone at risk of failing first, then everyone else furthest from their threshold first, since they need the most practice. Each row says why it is listed. On Combat Shoot detail stages, firers whose own hits are under what a pass needs in that stage (the pass mark's share of it) are tagged Weak and listed under Redetailing; Build detail puts one of them with the strongest shooters available (those who still need the stage first, then those who have cleared it) and shows the expected average before you create it. It also plans a detail for the rest of the weak firer's detail, so they fire without them; if too few are left, good shooters top them up, those still needing Marksman first.
-
-Redetailing thresholds follow the scores: once any stage is in, each firer's threshold is their share of what they still need for Marksman. Stage B of ATP and Combat Shoot stays at 7/8. Starting thresholds are set per rifle under Settings. Each stage tab has a summary: an overview, who cannot pass or make Marksman on current scores and which stage they would have to reshoot, what each firer needs on their last stage, firers a point or two short, firers not improving, poor shooters, weak details, and who is free to help a weak detail. Priority sorts the Redetailing list only, never the firing queue.
+**Read the summary.** Each stage tab reports who is not improving, who is shooting poorly, who cannot reach Marksman or a pass on their current scores, exactly what each firer needs from their remaining stages, and who is close enough to be worth one more detail.
 
 ## Reproduction
 
