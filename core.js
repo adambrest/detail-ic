@@ -1195,14 +1195,13 @@ export function insights(s, stage = null) {
       "Poor shooters",
       // On a detailed stage the detail carries the recommendation, so a poor
       // shooter line is just who they are, where they fire and what they hit.
-      weakFirers(s, stage).map(({ p, range }) => {
+      // A figure only where one was written down; a detail total is the
+      // detail's business, not a score to hang on a firer.
+      weakFirers(s, stage).map(({ p }) => {
         const d = detailed && s.details.find((x) => x.id === p.detailId),
           a = detailed ? null : advice(s, p, stage),
-          own =
-            range.low === range.high
-              ? `${range.low}`
-              : `${range.low}–${range.high}`;
-        return `${p.name}${d ? ` (${d.name})` : ""}: ${own}/${max(p)}${a ? `, ${a.text}` : ""}`;
+          own = firerHits(s, p, stage);
+        return `${p.name}${d ? ` (${d.name})` : ""}${own !== null ? `: ${own}/${max(p)}` : ""}${a ? `, ${a.text}` : ""}`;
       }),
     );
     // Several tries without getting better: coach them, or stop spending time.
@@ -1247,7 +1246,6 @@ export function insights(s, stage = null) {
               people = members(s, d.id);
             if (!list.length || !people.length) return null;
             const top = list.reduce((a, b) => (b.score > a.score ? b : a));
-            if (top.score >= passPace(people[0], stage)) return null;
             // Aim for the highest Marksman recommendation among its firers, or
             // the highest pass one if nobody can make Marksman.
             const aims = people.map((p) => advice(s, p, stage)).filter(Boolean),
@@ -1255,9 +1253,13 @@ export function insights(s, stage = null) {
               pool = toMarksman.length ? toMarksman : aims,
               shown = pool.length
                 ? pool.reduce((a, b) => (b.score > a.score ? b : a))
-                : null,
-              cmax = people[0].profile.components.find((c) => c.id === stage)
-                .max;
+                : null;
+            // Weak against what its own firers are aiming at, not a bare pass.
+            if (top.score >= (shown ? shown.score : passPace(people[0], stage)))
+              return null;
+            const
+            cmax = people[0].profile.components.find((c) => c.id === stage)
+              .max;
             return `${d.name}: averages ${top.score}/${cmax}${shown ? `, ${shown.text}` : ""}`;
           })
           .filter(Boolean),
@@ -1681,13 +1683,21 @@ export function firerHits(s, p, stage) {
       .filter((v) => v !== null && v !== undefined);
   return raw.length ? Math.max(...raw) : null;
 }
-// This firer's own hits are under what a pass asks of the stage. It says how
+// The score this stage has to give a firer: their threshold for the objective
+// they are still chasing. It is what the detail is aiming at, so it is the bar
+// a firer has to clear before they stop holding one back. A pass pace is the
+// fallback for someone with no objective left.
+export function stageNeed(s, p, stage) {
+  const g = goal(s, p, stage);
+  return g ? target(s, p, stage, g.objective) : passPace(p, stage);
+}
+// This firer's own hits are under what the stage needs from them. It says how
 // they shoot, whatever their detail earned them, so it holds even after their
 // counted score is safe: they are still the wrong person to lend to a detail
 // that needs lifting.
 export function shootsPoorly(s, p, stage) {
   const { high } = hitsRange(s, p, stage);
-  return high !== null && high < passPace(p, stage);
+  return high !== null && high < stageNeed(s, p, stage);
 }
 // This firer has the stage score they need: at their threshold, out of reach of
 // improving it, or already Marksman.
@@ -1722,8 +1732,9 @@ export function buildAround(s, stage, weakId) {
     weak = s.participants.find((p) => p.id === weakId),
     max = (p) => p.profile.components.find((c) => c.id === stage).max,
     pace = (p) => marksmanPace(p, stage),
+    // Poor shots are not kept out of the pool outright: when a whole detail is
+    // struggling they are all there is, and they already sort last.
     skip = new Set([
-      ...s.participants.filter((p) => shootsPoorly(s, p, stage)).map((p) => p.id),
       ...firingQueue(s, stage).flatMap((e) => e.members.map((p) => p.id)),
       ...s.participants.filter((p) => committed(s, stage, p)).map((p) => p.id),
     ]),
@@ -1803,9 +1814,7 @@ export function planRest(s, stage, weakId, picked) {
   if (!home) return null;
   const max = (p) => p.profile.components.find((c) => c.id === stage).max,
     pace = (p) => marksmanPace(p, stage),
-    weakSet = new Set(
-      s.participants.filter((p) => shootsPoorly(s, p, stage)).map((p) => p.id),
-    ),
+    poor = (p) => shootsPoorly(s, p, stage),
     queued = new Set(
       firingQueue(s, stage).flatMap((e) => e.members.map((p) => p.id)),
     ),
@@ -1814,7 +1823,6 @@ export function planRest(s, stage, weakId, picked) {
     rest = members(s, home.id).filter(
       (p) =>
         !picked.includes(p.id) &&
-        !weakSet.has(p.id) &&
         !queued.has(p.id) &&
         best(s, p, stage) !== null &&
         !isCleared(p),
@@ -1837,14 +1845,11 @@ export function planRest(s, stage, weakId, picked) {
   if (chosen.length < rule.min) {
     const pool = s.participants
       .filter(
-        (p) =>
-          !chosen.includes(p) &&
-          !weakSet.has(p.id) &&
-          !queued.has(p.id) &&
-          hits(p) !== null,
+        (p) => !chosen.includes(p) && !queued.has(p.id) && hits(p) !== null,
       )
       .toSorted(
         (a, b) =>
+          poor(a) - poor(b) ||
           (hits(b) >= pace(b)) - (hits(a) >= pace(a)) ||
           picked.includes(a.id) - picked.includes(b.id) ||
           isCleared(a) - isCleared(b) ||

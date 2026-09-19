@@ -91,6 +91,12 @@ Every attempt is kept: the stage, the attempt number, the rifle, the hits or the
 
 Editing a score records a replacement and keeps the original, marked as edited. Voiding one keeps it with its reason. Corrections to a detail score apply to everyone in that detail. Grades already recorded are never changed by later settings.
 
+## Poor shooters and strong shooters
+
+A firer shoots poorly in a stage when their own hits are under what that stage is asked to give them — their threshold, not a bare pass. They shoot strongly when their hits are at or above the share of the stage that keeps them on course for Marksman. Both read a firer's own hits, never their detail's average, so a firer carried by a good detail can still be a poor shot, and is still the wrong person to lend to a detail that needs lifting.
+
+A poor shooter leaves the list once the stage has given them what they need, since there is nothing left to act on, but the caution stays on them wherever a detail is being put together.
+
 ## Redetailing thresholds
 
 Each stage has a threshold that decides who is listed for a reshoot. Once a firer's other stages are scored, the threshold becomes exactly what they still need for Marksman, capped at the stage maximum. Before that, the starting value from Settings applies. A firer drops off the list when they reach Marksman or max the stage, and can still be sent again by hand.

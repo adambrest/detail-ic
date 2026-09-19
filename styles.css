@@ -12,6 +12,11 @@
 * {
   box-sizing: border-box;
 }
+/* Always leave room for the scrollbar, so opening a section cannot shove the
+   whole page sideways. */
+html {
+  scrollbar-gutter: stable;
+}
 body {
   margin: 0;
   background: var(--bg);
@@ -1106,15 +1111,25 @@ dialog .error {
   padding: 9px 12px;
   font-size: 12px;
 }
-.results .own {
-  display: block;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--muted);
+.badge.amber {
+  background: #fef3c7;
+  color: #92400e;
 }
-.manual-row .figures {
-  color: var(--muted);
-  font-weight: 600;
+.badge.red {
+  background: #fee2e2;
+  color: var(--danger);
+}
+.manual-row .manual-pick .badge {
+  margin-left: 4px;
+}
+/* The detail heading already carries the firer count, so an empty summary
+   line leaves no bar behind. */
+.score-footer:has(.draft-summary:empty) {
+  display: none;
+}
+/* A detail whose scores are in reads as a record, not a form. */
+.score-panel.scored .detail-head .count {
+  font-weight: 650;
 }
 .warn-note {
   color: var(--warn);

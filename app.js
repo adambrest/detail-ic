@@ -61,6 +61,8 @@ import {
   weakFirers,
   shootsPoorly,
   cleared,
+  stageNeed,
+  goal,
   passPace,
   marksmanPace,
   committed,
@@ -461,56 +463,26 @@ function awaiting(c, stage) {
       for (const m of d.roster) if (!map.has(m.id)) map.set(m.id, map.size);
   return map;
 }
-// What a firer's own best hits were, as far as they can be known: a figure
-// when it is pinned down, a span when a detail total only narrows it.
-function ownText(range) {
-  return range.low === null
-    ? "—"
-    : range.low === range.high
-      ? String(range.low)
-      : `${range.low}–${range.high}`;
-}
-function ownTitle(c, p, stage, range) {
-  const max = p.profile.components.find((x) => x.id === stage).max;
-  return range.low === null
-    ? `No individual hits recorded for ${p.name}, and their details' totals do not pin down what they shot.`
-    : range.low === range.high
-      ? `${p.name} hit ${range.low}/${max} themselves. The counted score is their detail's average.`
-      : `${p.name} hit between ${range.low} and ${range.high} of ${max} themselves. Their detail was confirmed on its total, which narrows it this far but no further.`;
-}
-// In Stages A and C the counted score is the detail's average, shared by
-// everyone who fired it, so it can sit well above what a firer shot themselves.
-// Where the two differ, both are shown.
+// The counted score for the stage: in Stages A and C the detail's average,
+// shared by everyone who fired it.
 function resultsCell(c, p, stage) {
   const list = scoreHistory(c, p, stage);
   if (!list.length) return '<span class="muted">—</span>';
   const top = Math.max(...list.map((a) => a.score)),
-    rest = list.map((a) => a.score),
-    range = detailedStage(c, stage)
-      ? hitsRange(c, p, stage)
-      : { low: top, high: top };
+    rest = list.map((a) => a.score);
   rest.splice(rest.indexOf(top), 1);
-  return `<b title="Best counted ${esc(stageLabel(c, stage))} score: the detail's hits divided by its firers.">${top}</b>${rest.length ? `<span class="prev">${rest.join(" ")}</span>` : ""}${
-    range.low === top && range.high === top
-      ? ""
-      : `<span class="own" title="${esc(ownTitle(c, p, stage, range))}">own ${ownText(range)}</span>`
-  }`;
+  return `<b>${top}</b>${rest.length ? `<span class="prev">${rest.join(" ")}</span>` : ""}`;
 }
-// Weak and Strong read a firer's own hits, never the detail average in the
-// Results column, so the mark carries the figures it was judged on.
+// Weak and Strong describe how a firer shoots, which in Stages A and C is not
+// the number in the Results column: that is their detail's average.
 function abilityMark(c, p, stage, weak, strong) {
   const low = weak.has(p.id),
     high = !low && strong.has(p.id);
   if (!low && !high) return "";
-  const range = hitsRange(c, p, stage),
-    max = p.profile.components.find((x) => x.id === stage).max,
-    counted = best(c, p, stage),
-    note = `Own best hits ${ownText(range)}/${max}${counted !== null ? `, counted score ${counted}/${max}` : ""}. ${
-      low
-        ? `Under the ${passPace(p, stage)} a pass asks of this stage.`
-        : `At or above the ${marksmanPace(p, stage)} that keeps them on course for Marksman.`
-    }`;
-  return ` <span class="badge ${high ? "green" : ""}" title="${esc(note)}">${low ? "Weak" : "Strong"}</span>`;
+  const note = low
+    ? `Shoots under the ${stageNeed(c, p, stage)} ${stageLabel(c, stage)} is asked to give them, so they pull a detail's average down.`
+    : `At or above the ${marksmanPace(p, stage)} that keeps them on course for Marksman.`;
+  return ` <span class="badge ${high ? "green" : "red"}" title="${esc(note)}">${low ? "Weak" : "Strong"}</span>`;
 }
 function renderStage(stage) {
   const c = s(),
@@ -613,7 +585,7 @@ function draftSummary(c, draft) {
     ? `Average ${v.aggregate}/${v.divisor} → ${v.score}/${max}.`
     : entered
       ? `${entered} of ${v.rows.length} entered.`
-      : `${v.rows.length} firers.`;
+      : "";
 }
 function hasInput(draft) {
   return !!draft && (draft.aggregate !== "" || draft.rows.some((r) => r.hits !== ""));
@@ -626,6 +598,25 @@ function skipButton(key, name, on, typed) {
 // Every CS rifle has the same stage limits and thresholds, so the total holds.
 function stageRifle(c, p, stage) {
   return c.stageRifles?.[`${p.id}:${stage}`] ?? p.weapon;
+}
+// A detail whose scores are in. There is nothing left to type, so it shows
+// what it fired, when it was confirmed, and a menu to correct it.
+function scoredPanel(c, d, stage, weak, strong) {
+  const list = detailAttempts(c, d.id, stage).filter((a) => a.status === "valid"),
+    last = list.at(-1),
+    cmax = stages(c).find((x) => x.id === stage).max;
+  if (!last) return "";
+  const people = members(c, d.id),
+    numbers = detailAttemptNumbers(c, d.id, stage),
+    hitsOf = (p) => last.roster.find((m) => m.id === p.id)?.rawHits;
+  return `<section class="panel score-panel scored" data-detail="${d.id}"><div class="detail-head">${d.temporary ? '<span class="badge">Temporary</span>' : ""}<h3>${esc(d.name)}</h3>${badge(`Attempt ${numbers.get(last.id) ?? list.length}`)}<span class="count">Scored ${ratio(last.score, cmax)} · ${esc(timeLabel(last.recordedAt))}</span>${borrowedNote(c, d, stage)}<div class="actions"><button class="more" data-detail-history="${d.id}" aria-label="Scores for ${esc(d.name)}">⋯</button></div></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th><th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${people
+    .map(
+      (p) =>
+        `<tr data-row="${p.id}" class="${search && filtered(p) ? "match" : ""}"><td class="name">${esc(p.name)}${abilityMark(c, p, stage, weak, strong)}</td><td class="rifle">${esc(rosterWeapon(c, d.id, p))}</td><td class="num">${hitsOf(p) ?? '<span class="muted">—</span>'}</td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`,
+    )
+    .join(
+      "",
+    )}</tbody></table></div>${last.inputMode === "aggregate" ? `<div class="score-footer"><span class="draft-summary">Confirmed on the detail total: ${last.aggregateHits} over ${last.divisor} firers.</span></div>` : ""}</section>`;
 }
 function detailPanels(c, stage) {
   const waiting = awaiting(c, stage),
@@ -671,6 +662,8 @@ function detailPanels(c, stage) {
           draft = getDraft(c, d.id, stage),
           attempt = nextAttempt(c, people, stage),
           e = entry.get(d.id);
+        // Waiting to fire, or part-typed: a form. Otherwise it is a record.
+        if (!e && !hasInput(draft)) return scoredPanel(c, d, stage, weak, strong);
         return `<section class="panel score-panel ${[d.temporary && "temporary", e?.n === 0 && !e.skipped && "next", e?.skipped && "skipped"].filter(Boolean).join(" ")}" data-detail="${d.id}"><div class="detail-head">${e ? `<span class="seat">${e.n + 1}</span>` : ""}<h3>${esc(d.name)}</h3>${e?.n === 0 && !e.skipped ? '<span class="badge blue">Next</span>' : ""}${badge(`Attempt ${attempt}`)}${borrowedNote(c, d, stage)}<span class="count">${people.length} firers</span><div class="actions">${e && order.length > 1 ? skipButton(`detail:${d.id}`, d.name, e.skipped, hasInput(draft)) : ""}<button data-detail-history="${d.id}" aria-label="History for ${esc(d.name)}">History</button><button class="icon-button" data-reset="${d.id}" title="Clear entries" aria-label="Clear entries for ${esc(d.name)}">↺</button><button class="primary" data-confirm="${d.id}" aria-label="Confirm scores for ${esc(d.name)}" ${e?.skipped ? "disabled" : ""}>Confirm scores</button></div></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th><th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${people
           .map((p) => {
             const row = draft.rows.find((r) => r.participantId === p.id),
@@ -765,7 +758,7 @@ function weakPanel(c, stage) {
   const max = stages(c).find((x) => x.id === stage).max,
     label = stageLabel(c, stage);
   return `<details class="reached weak-list" open><summary>${list.length} poor ${list.length === 1 ? "shooter" : "shooters"}</summary><p class="note weak-note">Build detail lifts a poor shooter's ${esc(label)} average by pairing them with the best shooters from other details, firers who still need ${esc(label)} first. It opens once their own detail has fired ${esc(label)} twice.</p>${list
-    .map(({ p, range }) => {
+    .map(({ p }) => {
       const d = c.details.find((x) => x.id === p.detailId),
         booked = committed(c, stage, p),
         tries = homeAttempts(c, p, stage),
@@ -774,7 +767,7 @@ function weakPanel(c, stage) {
           : tries < 2
             ? `${d ? d.name : "their detail"} fires ${tries ? "once more" : "twice"} first`
             : "";
-      return `<div class="reached-row ${search && filtered(p) ? "match" : ""}"><span class="count">!</span><div><strong>${esc(p.name)}</strong><p class="note">${ownText(range)}/${max}${advice(c, p, stage) ? `, ${advice(c, p, stage).text}` : ""}${d ? ` · ${esc(d.name)}` : ""}${why ? ` · ${esc(why)}` : ""}</p></div>${why ? "" : `<button type="button" data-build="${p.id}" aria-label="Build a detail around ${esc(p.name)}">Build detail</button>`}</div>`;
+      return `<div class="reached-row ${search && filtered(p) ? "match" : ""}"><span class="count">!</span><div><strong>${esc(p.name)}</strong><p class="note">${firerHits(c, p, stage) !== null ? `${firerHits(c, p, stage)}/${max}` : "no hits of their own recorded"}${advice(c, p, stage) ? `, ${advice(c, p, stage).text}` : ""}${d ? ` · ${esc(d.name)}` : ""}${why ? ` · ${esc(why)}` : ""}</p></div>${why ? "" : `<button type="button" data-build="${p.id}" aria-label="Build a detail around ${esc(p.name)}">Build detail</button>`}</div>`;
     })
     .join("")}</details>`;
 }
@@ -963,7 +956,8 @@ function refreshDraft(panel, c, draft) {
     c,
     draft,
   ).join("\n");
-  panel.querySelector(".draft-summary").textContent = draftSummary(c, draft);
+  const summary = panel.querySelector(".draft-summary");
+  if (summary) summary.textContent = draftSummary(c, draft);
   save();
 }
 function redetail(stage) {
@@ -1215,6 +1209,98 @@ function detailPicker(c) {
     "Later",
   );
 }
+// How useful a firer is to a detail that needs lifting, best first: a strong
+// shot the reshoot also carries to Marksman, then a strong shot who still needs
+// the stage, then a strong shot with nothing left to gain, then everyone else,
+// and poor shots last. The same order picks the plan and lays out the list.
+const ROLES = [
+  "Best help · a better score here makes Marksman",
+  "Best help · still needs this stage",
+  "Best help · already has what they need",
+  "Everyone else",
+  "Needs a detail built around them",
+  "Marksman already · nothing in it for them, but they can still carry a detail",
+];
+function role(c, p, stage) {
+  // Marksman is the end of the line, so they sit at the bottom whatever else
+  // is true of them. Within that group the best shots still come first.
+  if (result(c, p).status === "Marksman") return 5;
+  if (shootsPoorly(c, p, stage)) return 4;
+  if (!isStrong(c, p, stage)) return 3;
+  if (cleared(c, p, stage)) return 2;
+  return goal(c, p, stage)?.objective === "marksman" ? 0 : 1;
+}
+// Ability and standing are separate things, so they get separate marks: how a
+// firer shoots, and whether this stage still owes them anything.
+function pickMarks(c, p, stage) {
+  const badge = (text, tone, why) =>
+      ` <span class="badge ${tone}" title="${esc(why)}">${text}</span>`,
+    need = stageNeed(c, p, stage),
+    marks = [];
+  if (shootsPoorly(c, p, stage))
+    marks.push(
+      badge(
+        "Weak",
+        "red",
+        `Shoots under the ${need} ${stageLabel(c, stage)} is asked to give them, so they pull a detail's average down.`,
+      ),
+    );
+  else if (isStrong(c, p, stage))
+    marks.push(
+      badge(
+        "Strong",
+        "green",
+        `At or above the ${marksmanPace(p, stage)} that keeps them on course for Marksman.`,
+      ),
+    );
+  if (result(c, p).status === "Marksman")
+    marks.push(badge("Marksman", "blue", "Marksman on their total already."));
+  else if (cleared(c, p, stage))
+    marks.push(
+      badge(
+        "Cleared",
+        "",
+        `${stageLabel(c, stage)} has given them what they need, so they would be firing to help.`,
+      ),
+    );
+  else
+    marks.push(
+      badge(
+        `Needs ${stageLabel(c, stage)}`,
+        "amber",
+        `Still short of the ${need} they need from ${stageLabel(c, stage)}, so a reshoot counts for them too.`,
+      ),
+    );
+  return marks.join("");
+}
+// Swapping the weakest of the chosen poor shots for the best shooters still
+// free, how many can stay before the detail stops reaching what it is aiming
+// at. Returns the sentence to show, or "" when the pick already works.
+function poorAdvice(c, stage, chosen, poorPicked, aim, ids) {
+  const hit = (p) => hitsRange(c, p, stage).low ?? best(c, p, stage) ?? 0,
+    rest = chosen.filter((p) => !poorPicked.includes(p)),
+    free = c.participants
+      .filter(
+        (p) =>
+          !ids.includes(p.id) &&
+          !committed(c, stage, p) &&
+          !shootsPoorly(c, p, stage) &&
+          hitsRange(c, p, stage).low !== null,
+      )
+      .toSorted((a, b) => hit(b) - hit(a)),
+    total = (keep) =>
+      rest.reduce((n, p) => n + hit(p), 0) +
+      poorPicked.slice(0, keep).reduce((n, p) => n + hit(p), 0) +
+      free.slice(0, poorPicked.length - keep).reduce((n, p) => n + hit(p), 0);
+  for (let keep = poorPicked.length; keep >= 0; keep--) {
+    if (poorPicked.length - keep > free.length) continue;
+    if (Math.floor(total(keep) / chosen.length) < aim) continue;
+    if (keep === poorPicked.length) return "";
+    const drop = poorPicked.slice(keep).map((p) => p.name);
+    return `On past scores this detail carries at most ${keep} poor ${keep === 1 ? "shot" : "shots"} and still averages ${aim}. Swapping ${names(drop)} for the best shooters still free would get it there.`;
+  }
+  return `Even with the best shooters still free, this detail cannot average ${aim} while ${names(poorPicked.map((p) => p.name))} ${poorPicked.length === 1 ? "is" : "are"} in it. Run it to give them the practice, or wait for stronger shooters.`;
+}
 // A detail put together on the spot. Around a poor shooter it comes ready
 // built; otherwise it starts empty. Firers already booked to fire this stage
 // are flagged rather than blocked: two details sharing a firer can be done, but
@@ -1226,17 +1312,20 @@ function manualDetailDialog(stage, around = null, picks = null) {
     plan = around ? buildAround(c, stage, around) : null,
     picked = picks ?? new Set(plan?.entries.map((e) => e.participantId) ?? []),
     max = stages(c).find((x) => x.id === stage).max,
-    hits = (p) => firerHits(c, p, stage),
+    // What a firer is expected to put on the target: what they shot, or what
+    // their detail's total proves they must have.
+    hit = (p) => hitsRange(c, p, stage).low ?? best(c, p, stage),
     weakName = around && c.participants.find((p) => p.id === around).name;
   const groups =
     manualSort === "best"
-      ? [
-          [
-            "Best shooters first",
-            c.participants.toSorted((a, b) => (hits(b) ?? -1) - (hits(a) ?? -1)),
-          ],
-        ]
+      ? ROLES.map((name, i) => [
+          name,
+          c.participants
+            .filter((p) => role(c, p, stage) === i)
+            .toSorted((a, b) => (hit(b) ?? -1) - (hit(a) ?? -1)),
+        ]).filter(([, people]) => people.length)
       : [
+          // By detail is the roster as it stands, in its own order.
           ...stageDetails(c, stage)
             .filter((d) => !d.temporary)
             .map((d) => [d.name, members(c, d.id)]),
@@ -1244,50 +1333,8 @@ function manualDetailDialog(stage, around = null, picks = null) {
             ? [["Needs a detail", members(c, null)]]
             : []),
         ];
-  // What each firer brings, so a pick is an informed one.
-  const mark = (text, why, tone = "") =>
-      ` <span class="badge ${tone}" title="${esc(why)}">${text}</span>`,
-    // A poor shot stays flagged even once their own counted score is safe: the
-    // warning here is about lending them to a detail that needs lifting.
-    tag = (p) =>
-      p.id === around || shootsPoorly(c, p, stage)
-        ? mark(
-            "Weak",
-            `Own hits are under the ${passPace(p, stage)} a pass asks of ${label}, so they pull a detail's average down${cleared(c, p, stage) ? ", even though their own counted score is already safe" : ""}.`,
-          )
-        : best(c, p, stage) === max
-          ? mark(
-              "Max score",
-              `Their counted ${label} score is already ${max}/${max}, so firing again cannot improve it. They can still fire to help someone else's average.`,
-            )
-          : result(c, p).status === "Marksman"
-            ? mark(
-                "Marksman",
-                "Marksman on their total already, so another score changes nothing for them.",
-              )
-            : isStrong(c, p, stage)
-              ? mark(
-                  "Strong",
-                  `Own best hits are at or above the ${marksmanPace(p, stage)} that keeps them on course for Marksman.`,
-                  "green",
-                )
-              : "",
-    // Two different numbers: what the firer hit, and what their detail earned
-    // them. They part company when a detail was confirmed on its total alone.
-    figures = (p) => {
-      const range = hitsRange(c, p, stage),
-        counted = best(c, p, stage),
-        parts = [
-          `<span title="${esc(ownTitle(c, p, stage, range))}">own ${ownText(range)}/${max}</span>`,
-        ];
-      if (counted !== null && String(counted) !== ownText(range))
-        parts.push(
-          `<span title="Best counted ${esc(label)} score: the detail's hits divided by its firers.">counted ${counted}/${max}</span>`,
-        );
-      return ` <span class="figures">${parts.join(" · ")}</span>`;
-    },
-    row = (p) =>
-      `<div class="manual-row ${picked.has(p.id) ? "on" : ""}"><label class="manual-pick"><input type="checkbox" name="pick" value="${p.id}" aria-label="Include ${esc(p.name)}" ${picked.has(p.id) ? "checked" : ""}><span>${esc(p.name)}${tag(p)}${figures(p)}${committed(c, stage, p) ? ' <span class="muted">· already booked</span>' : ""}</span></label><span class="rifle">${esc(p.weapon)}</span></div>`;
+  const row = (p) =>
+    `<div class="manual-row ${picked.has(p.id) ? "on" : ""}"><label class="manual-pick"><input type="checkbox" name="pick" value="${p.id}" aria-label="Include ${esc(p.name)}" ${picked.has(p.id) ? "checked" : ""}><span>${esc(p.name)}${pickMarks(c, p, stage)}${committed(c, stage, p) ? ' <span class="muted">· already booked</span>' : ""}</span></label><span class="rifle">${esc(p.weapon)}</span></div>`;
   // Why this plan is what it is, and whether waiting would give a better one.
   const advisories = [];
   if (plan?.short)
@@ -1296,7 +1343,7 @@ function manualDetailDialog(stage, around = null, picks = null) {
     );
   if (plan?.waitFor.length)
     advisories.push(
-      `A stronger detail is possible later. ${names(plan.waitFor.map((x) => x.name))} ${plan.waitFor.length === 1 ? "shoots" : "shoot"} better and still ${plan.waitFor.length === 1 ? "needs" : "need"} ${label}, so ${plan.waitFor.length === 1 ? "they" : "they"} would lift the average more — but ${plan.waitFor.length === 1 ? "they are" : "they are"} already in a detail waiting to fire. Wait for that detail to finish, or go ahead with this one.`,
+      `A stronger detail is possible later. ${names(plan.waitFor.map((x) => x.name))} ${plan.waitFor.length === 1 ? "shoots" : "shoot"} better and still ${plan.waitFor.length === 1 ? "needs" : "need"} ${label}, so they would lift the average more — but they are already in a detail waiting to fire. Wait for that detail to finish, or go ahead with this one.`,
     );
   dialog(
     around ? `Detail around ${weakName} · ${label}` : `Manual detail · ${label}`,
@@ -1314,7 +1361,7 @@ function manualDetailDialog(stage, around = null, picks = null) {
       )
       .join(
         "",
-      )}</div><div class="manual-list">${groups.map(([name, people]) => `<div class="manual-group"><h3>${esc(name)}</h3>${people.map(row).join("")}</div>`).join("")}</div><p class="note manual-summary">No firers chosen.</p><p class="note warn-note manual-warn" hidden></p>${around ? `<div class="rest-plan" hidden><label class="chk"><input type="checkbox" name="rest" checked> <span class="rest-title"></span></label><p class="note rest-text"></p></div>` : ""}<p class="note">A one-off is dropped once its scores are in; a kept detail can be redetailed.</p>`,
+      )}</div><div class="manual-list">${groups.map(([name, people]) => `<div class="manual-group"><h3>${esc(name)}</h3>${people.map(row).join("")}</div>`).join("")}</div><p class="note manual-summary">No firers chosen.</p><p class="note warn-note manual-carry" hidden></p><p class="note warn-note manual-warn" hidden></p>${around ? `<div class="rest-plan" hidden><label class="chk"><input type="checkbox" name="rest" checked> <span class="rest-title"></span></label><p class="note rest-text"></p></div>` : ""}<p class="note">A one-off is dropped once its scores are in; a kept detail can be redetailed.</p>`,
     [
       { label: "Keep as a detail", value: "keep" },
       { label: "One-off detail", value: "once" },
@@ -1375,18 +1422,45 @@ function manualDetailDialog(stage, around = null, picks = null) {
         problems.push(
           "Everyone chosen already has the max score for this stage or is marksman. Include at least one firer who can still improve.",
         );
-      // What the average should come to, from each firer's best hits.
-      const known = ids.map((id) =>
-          hits(c.participants.find((p) => p.id === id)),
-        ),
+      // What this detail has to average to clear whoever still needs the
+      // stage, and what it looks like it will manage.
+      const chosen = ids.map((id) => c.participants.find((p) => p.id === id)),
+        needing = chosen.filter((p) => !cleared(c, p, stage)),
+        aim = needing.length
+          ? Math.max(...needing.map((p) => stageNeed(c, p, stage)))
+          : null,
+        known = chosen.map(hit),
         expected =
           ids.length && known.every((v) => v !== null)
             ? Math.floor(known.reduce((a, b) => a + b, 0) / ids.length)
             : null,
-        room = rule ? rule.max - ids.length : 0;
+        room = rule ? rule.max - ids.length : 0,
+        lines = [`${ids.length} firers chosen.`];
+      if (aim !== null)
+        lines.push(
+          `Aiming for ${aim}/${max}, what ${needing.length === 1 ? `${needing[0].name} still needs` : "the firers who still need it ask for"}.`,
+        );
+      if (expected !== null)
+        lines.push(`Expected average from their best hits: ${expected}/${max}.`);
+      if (room > 0)
+        lines.push(
+          `Room for ${room} more; a fuller detail spreads a poor shot's hits further.`,
+        );
       form.querySelector(".manual-summary").textContent = ids.length
-        ? `${ids.length} firers chosen.${expected !== null ? ` Expected average from their best hits: ${expected}/${max}.` : ""}${room > 0 ? ` Room for ${room} more; a fuller detail spreads a poor shooter's hits further.` : ""}`
+        ? lines.join(" ")
         : "No firers chosen.";
+      // How many of these particular poor shots the detail can carry and still
+      // land on its aim, given who is left to swap them for.
+      const carry = form.querySelector(".manual-carry"),
+        poorPicked = chosen
+          .filter((x) => shootsPoorly(c, x, stage))
+          .toSorted((a, b) => (hit(b) ?? 0) - (hit(a) ?? 0)),
+        message =
+          aim === null || expected === null || !poorPicked.length
+            ? ""
+            : poorAdvice(c, stage, chosen, poorPicked, aim, ids);
+      carry.hidden = !message;
+      carry.textContent = message;
       // Two details cannot put the same firer on the point at once.
       const clash = overlapping(c, stage, ids),
         warn = form.querySelector(".manual-warn");
@@ -1547,13 +1621,13 @@ function historyDialog(p) {
       (b) =>
         (b.onclick = () => {
           const a = c.attempts.find((x) => x.id === b.dataset.correct),
-            affected = a.detailAttemptId
-              ? c.attempts.filter((x) => x.detailAttemptId === a.detailAttemptId)
-                  .length
-              : 1;
+            shared = c.shared.find((x) => x.id === a.detailAttemptId),
+            withThem = shared
+              ? shared.roster.filter((m) => m.id !== p.id).map((m) => m.name)
+              : [];
           dialog(
             "Void score",
-            `${affected > 1 ? `<p class="note">This detail score affects ${affected} firers.</p>` : ""}<label class="field"><span>Reason</span><input name="reason" required autofocus></label>`,
+            `${withThem.length ? `<p class="note warn-note">This is a detail score. Voiding it takes ${esc(stageLabel(c, a.stage))} away from everyone who fired it, not just ${esc(p.name)}: ${esc(names(withThem))} lose it too.</p>` : ""}<label class="field"><span>Reason</span><input name="reason" required autofocus></label>`,
             [{ label: "Void score", danger: true }],
             (f) => {
               voidAttempt(c, a.id, f.get("reason"));
@@ -1646,9 +1720,10 @@ function detailHistoryDialog(detailId, stage) {
         const a = c.attempts.find(
           (x) => x.detailAttemptId === b.dataset.voidDetail,
         );
+        const record = c.shared.find((x) => x.id === b.dataset.voidDetail);
         dialog(
           "Void detail score",
-          `<p class="note">This removes the score from every firer in this record.</p><label class="field"><span>Reason</span><input name="reason" required autofocus></label>`,
+          `<p class="note warn-note">This takes ${esc(stageLabel(c, stage))} away from all ${record.roster.length} firers who fired it: ${esc(names(record.roster.map((m) => m.name)))}.</p><label class="field"><span>Reason</span><input name="reason" required autofocus></label>`,
           [{ label: "Void score", danger: true }],
           (f) => {
             voidAttempt(c, a.id, f.get("reason"));

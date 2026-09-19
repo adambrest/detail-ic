@@ -747,8 +747,11 @@ test("Insights flag results out of reach and the reshoot that fixes them", () =>
   const a = Object.fromEntries(insights(s, "A").map((n) => [n.title, n.items]));
   // Person 2 could still make Marksman by reshooting A: B 0 and C 16 leave 39 to find,
   // shared between A (24) and C (16), so 24 is recommended.
+  // A poor shooter is under what the stage needs from them, not merely under a
+  // pass: Person 3's 12 is well short of the 21 Stage A is asked to give them.
   assert.deepEqual(a["Poor shooters"], [
     "Person 2: 2/24, recommended 24 for Marksman",
+    "Person 3: 12/24, recommended 21 for Marksman",
   ]);
 });
 test("Close to failing says exactly what the last stages must give", () => {
@@ -815,10 +818,16 @@ test("Detail insights say each thing once, and group firers with the same fix", 
   // Before B or C are in, CS (M) Stage A starts at 39 × 20/48 = 17 for Marksman.
   // The detail line carries the recommendation, so a poor shooter line says
   // only who they are, where they fire and what they hit.
+  // CS (M) Stage A is asked for 17, so everyone in this detail is short of it,
+  // weakest first. The detail itself is the real problem, and it is named
+  // separately below.
   assert.deepEqual(a["Poor shooters"], [
     "P6 (Detail 1): 1/20",
     "P5 (Detail 1): 8/20",
     "P4 (Detail 1): 9/20",
+    "P3 (Detail 1): 10/20",
+    "P2 (Detail 1): 11/20",
+    "P1 (Detail 1): 12/20",
   ]);
   assert.deepEqual(a["Weak details"], [
     "Detail 1: averages 8/20, recommended 17 for Marksman",
@@ -869,9 +878,11 @@ test("A weak firer gets a detail of strong shooters, those still needing it firs
   detailScore(s, d1, "A", null, { individuals: [14, 13, 13, 1] });
   detailScore(s, d2, "A", null, { individuals: [15, 15, 15, 15] });
   detailScore(s, d3, "A", null, { individuals: [9, 9, 9, 9] });
+  // Detail 3 averaged 9, under the 13 Stage A is asked to give them, so they
+  // are short of it too. P4 is far and away the worst.
   assert.deepEqual(
     weakFirers(s, "A").map((x) => x.p.name),
-    ["P4"],
+    ["P4", "P9", "P10", "P11", "P12"],
   );
   const plan = buildAround(s, "A", people[3].id);
   // Strong means at least marksman pace, 13/15. P1–P3 still need Stage A
