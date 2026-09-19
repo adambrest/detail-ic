@@ -99,7 +99,7 @@ const previousVersion = {
     (await page.locator("#main").innerText()).includes("Recovery shoot"),
   );
   await page
-    .getByRole("button", { name: "Continue Recovery shoot", exact: true })
+    .getByRole("button", { name: "Open Recovery shoot", exact: true })
     .click();
   assert.equal(
     await page
@@ -146,7 +146,7 @@ const previousVersion = {
       localStorage.setItem("detail-ic-v2", JSON.stringify(saved));
   }, previousVersion);
   await older.goto(server.url);
-  await older.getByRole("button", { name: "Continue ATP (M)" }).click();
+  await older.getByRole("button", { name: "Open ATP (M)" }).click();
   assert.equal(
     await older
       .getByRole("combobox", { name: "Rifle for Earlier Firer" })
