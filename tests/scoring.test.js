@@ -71,6 +71,7 @@ import {
   target,
   now,
   voidAttempt,
+  unvoidAttempt,
   undoAttempt,
   queue,
   dispatch,
@@ -978,6 +979,37 @@ test("Shooting badly means under half the stage, never above a pass", () => {
     const p = { weapon, profile: profileFor(program, variant, weapon) };
     assert.equal(poorPace(p, stage), expected);
   }
+});
+test("A voided score can be put back, unless an edit took its place", () => {
+  const { s, p } = setup("BTP", "standard", 1);
+  const a = recordIndividual(s, p, "A", "12");
+  voidAttempt(s, a.id, "Wrong lane");
+  assert.equal(best(s, p, "A"), null);
+  unvoidAttempt(s, a.id);
+  assert.equal(best(s, p, "A"), 12);
+  assert.equal(s.attempts.find((x) => x.id === a.id).correction, undefined);
+  assert.throws(() => unvoidAttempt(s, a.id), /not voided/);
+  // An edit voids the original and takes its place, so it cannot just return.
+  const fresh = editIndividual(s, a.id, "14");
+  assert.throws(() => unvoidAttempt(s, a.id), /Void the replacement first/);
+  voidAttempt(s, fresh.id, "Edited by mistake");
+  unvoidAttempt(s, a.id);
+  assert.equal(best(s, p, "A"), 12);
+  // A detail score comes back for everyone who fired it.
+  const cs = setup("CS_SP", "standard", 4);
+  detailScore(cs.s, cs.d, "A", 40);
+  const one = cs.s.attempts.find((x) => x.detailAttemptId);
+  voidAttempt(cs.s, one.id, "Wrong sheet");
+  assert.deepEqual(
+    cs.people.map((x) => best(cs.s, x, "A")),
+    [null, null, null, null],
+  );
+  unvoidAttempt(cs.s, one.id);
+  assert.deepEqual(
+    cs.people.map((x) => best(cs.s, x, "A")),
+    [10, 10, 10, 10],
+  );
+  assert.equal(cs.s.shared[0].status, "valid");
 });
 test("A detail total pins down what each firer must have shot", () => {
   const store = newStore(),

@@ -1001,6 +1001,48 @@ export function voidAttempt(s, id, reason) {
     reason,
   });
 }
+// Whether a voided score can be put back right now: it is voided, and nothing
+// valid has taken its place.
+export function restorable(s, id) {
+  const a = s.attempts.find((x) => x.id === id);
+  if (!a || a.status !== "void") return false;
+  const shared = a.detailAttemptId
+      ? s.shared.find((d) => d.id === a.detailAttemptId)
+      : null,
+    replacedBy = a.revisedBy && s.attempts.find((x) => x.id === a.revisedBy),
+    sharedReplacedBy =
+      shared?.revisedBy && s.shared.find((x) => x.id === shared.revisedBy);
+  return !(
+    replacedBy?.status === "valid" || sharedReplacedBy?.status === "valid"
+  );
+}
+// Puts a voided score back. One that an edit replaced cannot simply return:
+// the replacement holds its place in the attempt count, so that goes first.
+export function unvoidAttempt(s, id) {
+  const a = s.attempts.find((x) => x.id === id);
+  if (!a || a.status !== "void") throw Error("That score is not voided.");
+  const shared = a.detailAttemptId
+    ? s.shared.find((d) => d.id === a.detailAttemptId)
+    : null;
+  // A replacement only blocks the original while the replacement itself counts.
+  const replacedBy = a.revisedBy && s.attempts.find((x) => x.id === a.revisedBy),
+    sharedReplacedBy =
+      shared?.revisedBy && s.shared.find((x) => x.id === shared.revisedBy);
+  if (replacedBy?.status === "valid" || sharedReplacedBy?.status === "valid")
+    throw Error(
+      "An edit replaced this score. Void the replacement first, then restore this one.",
+    );
+  const affected = a.detailAttemptId
+    ? s.attempts.filter((x) => x.detailAttemptId === a.detailAttemptId)
+    : [a];
+  for (const x of affected) {
+    x.status = "valid";
+    delete x.correction;
+  }
+  if (shared) shared.status = "valid";
+  audit(s, "Score restored", { attemptIds: affected.map((x) => x.id) });
+  return affected;
+}
 // Reverses a score just entered: voids it and puts its firers back to awaiting scores.
 export function undoAttempt(s, id) {
   const a = s.attempts.find((a) => a.id === id);
@@ -2032,6 +2074,7 @@ export function historyFeed(s) {
   for (const d of s.shared)
     entries.push({
       id: `shared:${d.id}`,
+      recordId: d.id,
       at: d.recordedAt,
       kind: "detail-score",
       stage: d.stage,

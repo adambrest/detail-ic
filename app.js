@@ -83,6 +83,8 @@ import {
   best,
   result,
   voidAttempt,
+  unvoidAttempt,
+  restorable,
   undoAttempt,
   target,
   stageCompositionErrors,
@@ -127,6 +129,7 @@ let store,
   showReached = false,
   closedSummaries = new Set(),
   openEvents = new Set(),
+  historyFilter = null,
   pasteDetail = 1,
   apsView = "standard",
   busy = false,
@@ -1101,15 +1104,27 @@ function renderHistory() {
       `${e.title ?? ""} ${e.stage ? stageName(e.stage) : ""} ${e.summary ?? ""} ${(e.lines ?? []).join(" ")} ${(e.people ?? []).map((x) => x.name).join(" ")}`,
     hit = (e) => !search || text(e).toLowerCase().includes(search.toLowerCase()),
     shown = feed.filter(hit);
+  const KINDS = {
+      "detail-score": ["Scored", "blue"],
+      score: ["Scored", "blue"],
+      redetail: ["Redetailed", "amber"],
+      "temp-detail": ["Detail built", "green"],
+      roster: ["Nominal roll", ""],
+      note: ["Setup", ""],
+    },
+    tags = (e) => {
+      const [label, tone] = KINDS[e.kind] ?? ["", ""];
+      return `<span class="event-tags">${e.stage ? `<span class="badge">${esc(stageName(e.stage))}</span>` : ""}${label ? `<span class="badge ${tone}">${label}</span>` : ""}${e.voided ? '<span class="badge red">Voided</span>' : ""}</span>`;
+    };
   const when = (e) => (e.at ? `${dateLabel(e.at)} · ${timeLabel(e.at)}` : ""),
     who = (e) => (e.people ?? []).map((x) => x.name).join(", "),
     mark = (x) => search && x.toLowerCase().includes(search.toLowerCase());
   // A card is a summary you can open. Whether it is open survives a redraw, so
   // typing in the search box does not keep shutting it.
   const card = (e, head, body = "", menu = "") =>
-    `<details class="panel event ${e.voided ? "void" : ""}" data-event="${esc(e.id)}" ${openEvents.has(e.id) ? "open" : ""}><summary><div class="event-head"><div>${head}</div><span class="when">${esc(when(e))}</span></div></summary>${body}</details>${menu}`;
+    `<details class="panel event ${e.voided ? "void" : ""}" data-event="${esc(e.id)}" ${openEvents.has(e.id) ? "open" : ""}><summary><div class="event-head"><div>${tags(e)}${head}</div><span class="when">${esc(when(e))}</span></div></summary>${body}</details>${menu}`;
   const flat = (e, head, menu = "") =>
-    `<section class="panel event flat ${e.voided ? "void" : ""}"><div class="event-head"><div>${head}</div><span class="when">${esc(when(e))}</span>${menu}</div></section>`;
+    `<section class="panel event flat ${e.voided ? "void" : ""}"><div class="event-head"><div>${tags(e)}${head}</div><span class="when">${esc(when(e))}</span>${menu}</div></section>`;
   const title = (main, note) =>
     `<strong>${main}</strong>${note ? `<p class="note">${note}</p>` : ""}`;
   const voidNote = (e) =>
@@ -1134,7 +1149,7 @@ function renderHistory() {
           `${e.people.length} firers${e.totalOnly ? ` · confirmed on the detail total ${e.aggregate} over ${e.divisor}` : ""} ${voidNote(e)}`,
         ),
         scoreTable(e, rows) +
-          `<div class="event-foot"><button data-score-detail="${e.detailId}|${e.stage}">Edit or void this detail's score</button></div>`,
+          `<div class="event-foot"><button data-detail-score="${esc(e.recordId)}">Edit or void this detail's score</button></div>`,
       );
     }
     if (e.kind === "score") {
@@ -1176,25 +1191,30 @@ function renderHistory() {
       );
     return flat(e, title(esc(e.title), ""));
   };
-  // Setup first, then each stage in the order it is fired.
-  const groups = [
-    ["Setup", shown.filter((e) => !e.stage)],
-    ...stages(c).map((x) => [
-      x.label,
-      shown.filter((e) => e.stage === x.id),
-    ]),
-  ].filter(([, list]) => list.length);
+  // Everything in order by default; the buttons narrow it to one stage.
+  const chips = [
+      ["", "All"],
+      ...(feed.some((e) => !e.stage) ? [["setup", "Setup"]] : []),
+      ...stages(c)
+        .filter((x) => feed.some((e) => e.stage === x.id))
+        .map((x) => [x.id, x.label]),
+    ],
+    picked = historyFilter ?? "",
+    inFilter = (e) =>
+      !historyFilter ||
+      (historyFilter === "setup" ? !e.stage : e.stage === historyFilter),
+    list = shown.filter(inFilter);
   $("#main").innerHTML =
     shootHead(`<span class="spacer"></span>${searchBox()}`) +
-    `<div class="history-feed">${
-      groups.length
-        ? groups
-            .map(
-              ([name, list]) =>
-                `<section class="event-group"><h2>${esc(name)} <span class="count">${list.length}</span></h2>${list.map(entry).join("")}</section>`,
-            )
-            .join("")
-        : empty(search ? "Nothing matches that name" : "Nothing has happened yet")
+    `<div class="history-feed"><div class="seg history-filter">${chips
+      .map(
+        ([key, label]) =>
+          `<button data-history-filter="${esc(key)}" class="${picked === key ? "on" : ""}">${esc(label)}</button>`,
+      )
+      .join("")}</div>${
+      list.length
+        ? list.map(entry).join("")
+        : empty(search ? "Nothing matches that name" : "Nothing here yet")
     }</div>`;
 }
 function renderSettings() {
@@ -1721,7 +1741,7 @@ function historyDialog(p, back) {
                   .map((m) => `${esc(m.name)} (${esc(m.weapon)})`)
                   .join(", ")
               : "";
-          return `<div class="history-row ${a.status === "void" ? "void" : ""}"><div><b>${esc(stageLabel(c, a.stage))} · ${number ? `attempt ${number}` : "not counted"} · ${ratio(a.score, max)}</b> ${a.status === "void" ? badge(a.revisedBy ? "Edited" : "Voided") : ""}<p>${esc(source)}${roster ? `<br>With: ${roster}` : ""}<br>${new Date(a.recordedAt).toLocaleString("en-US")}${a.correction ? `<br>${esc(a.correction.reason)}` : ""}</p></div>${a.status === "valid" ? `<div class="actions"><button type="button" data-edit="${a.id}">Edit</button><button type="button" class="danger" data-correct="${a.id}">Void</button></div>` : ""}</div>`;
+          return `<div class="history-row ${a.status === "void" ? "void" : ""}"><div><b>${esc(stageLabel(c, a.stage))} · ${number ? `attempt ${number}` : "not counted"} · ${ratio(a.score, max)}</b> ${a.status === "void" ? badge(a.revisedBy ? "Edited" : "Voided") : ""}<p>${esc(source)}${roster ? `<br>With: ${roster}` : ""}<br>${new Date(a.recordedAt).toLocaleString("en-US")}${a.correction ? `<br>${esc(a.correction.reason)}` : ""}</p></div>${a.status === "valid" ? `<div class="actions"><button type="button" data-edit="${a.id}">Edit</button><button type="button" class="danger" data-correct="${a.id}">Void</button></div>` : !a.detailAttemptId && restorable(c, a.id) ? `<div class="actions"><button type="button" data-unvoid="${a.id}">Restore</button></div>` : ""}</div>`;
         })
         .join("") +
       (c.sightings || [])
@@ -1773,6 +1793,21 @@ function historyDialog(p, back) {
             "Back",
             () => historyDialog(p),
           );
+        }),
+    );
+  $("#dialog")
+    .querySelectorAll("[data-unvoid]")
+    .forEach(
+      (b) =>
+        (b.onclick = () => {
+          try {
+            unvoidAttempt(c, b.dataset.unvoid);
+            save();
+            render();
+            historyDialog(p, back);
+          } catch (err) {
+            toast(err.message);
+          }
         }),
     );
   $("#dialog")
@@ -1837,11 +1872,22 @@ function scoreEventDialog(attemptId) {
       a.detailAttemptId
         ? '<p class="note warn-note">Fired as part of a detail, so it cannot be corrected on its own. Open the detail\'s score and every firer in it moves together.</p>'
         : ""
-    }${live ? '<div class="actions"><button type="button" id="edit-score">Edit</button><button type="button" class="danger" id="void-score">Void</button></div>' : ""}`,
+    }<div class="actions">${live ? '<button type="button" id="edit-score">Edit</button><button type="button" class="danger" id="void-score">Void</button>' : ""}${restorable(c, a.id) && !a.detailAttemptId ? '<button type="button" id="unvoid-score">Restore this score</button>' : ""}</div>`,
     null,
     null,
     "Close",
   );
+  if (restorable(c, a.id) && !a.detailAttemptId)
+    $("#unvoid-score").onclick = () => {
+      try {
+        unvoidAttempt(c, a.id);
+        save();
+        done();
+        toast(`${p?.name ?? "That score"} restored.`);
+      } catch (err) {
+        toast(err.message);
+      }
+    };
   if (!live) return;
   $("#edit-score").onclick = () => editScoreDialog(p, a, done);
   $("#void-score").onclick = () =>
@@ -1907,7 +1953,7 @@ function detailHistoryDialog(detailId, stage, back) {
           const hits = a.roster
             .map((m) => `${m.name} ${m.rawHits ?? "—"}`)
             .join(", ");
-          return `<div class="history-row ${a.status === "void" ? "void" : ""}"><div><b>${number ? `Attempt ${number}` : "Not counted"} · ${ratio(a.score, max)}</b> ${a.status === "void" ? badge(a.revisedBy || list.some((x) => x.revisionOf === a.id) ? "Edited" : "Voided") : ""}<p>${esc(a.inputMode === "aggregate" ? `Detail total ${a.aggregateHits} over ${a.divisor} firers` : `${hits} · total ${a.aggregateHits} over ${a.divisor} firers`)}<br>${new Date(a.recordedAt).toLocaleString("en-US")}${a.correction ? `<br>${esc(a.correction.reason)}` : ""}</p></div>${a.status === "valid" ? `<div class="actions"><button type="button" data-edit-detail="${a.id}">Edit</button><button type="button" class="danger" data-void-detail="${a.id}">Void</button></div>` : ""}</div>`;
+          return `<div class="history-row ${a.status === "void" ? "void" : ""}"><div><b>${number ? `Attempt ${number}` : "Not counted"} · ${ratio(a.score, max)}</b> ${a.status === "void" ? badge(a.revisedBy || list.some((x) => x.revisionOf === a.id) ? "Edited" : "Voided") : ""}<p>${esc(a.inputMode === "aggregate" ? `Detail total ${a.aggregateHits} over ${a.divisor} firers` : `${hits} · total ${a.aggregateHits} over ${a.divisor} firers`)}<br>${new Date(a.recordedAt).toLocaleString("en-US")}${a.correction ? `<br>${esc(a.correction.reason)}` : ""}</p></div>${a.status === "valid" ? `<div class="actions"><button type="button" data-edit-detail="${a.id}">Edit</button><button type="button" class="danger" data-void-detail="${a.id}">Void</button></div>` : restorable(c, c.attempts.find((x) => x.detailAttemptId === a.id)?.id) ? `<div class="actions"><button type="button" data-unvoid-detail="${a.id}">Restore</button></div>` : ""}</div>`;
         })
         .join("") +
       (!list.length && !waitingOn.length
@@ -1946,6 +1992,23 @@ function detailHistoryDialog(detailId, stage, back) {
         );
       }),
   );
+  box.querySelectorAll("[data-unvoid-detail]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        try {
+          unvoidAttempt(
+            c,
+            c.attempts.find((x) => x.detailAttemptId === b.dataset.unvoidDetail)
+              .id,
+          );
+          save();
+          render();
+          here();
+        } catch (err) {
+          toast(err.message);
+        }
+      }),
+  );
   box.querySelectorAll("[data-cancel]").forEach(
     (b) =>
       (b.onclick = () => {
@@ -1955,6 +2018,62 @@ function detailHistoryDialog(detailId, stage, back) {
         here();
       }),
   );
+}
+// One recorded detail score. The entry in History already said which one, so
+// there is nothing to pick here: edit it, void it, or put it back. Every firer
+// who fired it moves together.
+function detailEventDialog(detailAttemptId) {
+  const c = s(),
+    d = c.shared.find((x) => x.id === detailAttemptId);
+  if (!d) return;
+  const detail = c.details.find((x) => x.id === d.detailId),
+    max = stages(c).find((x) => x.id === d.stage)?.max ?? null,
+    number = detailAttemptNumbers(c, d.detailId, d.stage).get(d.id),
+    reason = c.attempts.find((x) => x.detailAttemptId === d.id)?.correction
+      ?.reason,
+    live = d.status === "valid",
+    done = () => {
+      $("#dialog").close();
+      render();
+    };
+  dialog(
+    `${detail?.name ?? "Detail"} · ${stageLabel(c, d.stage)}`,
+    `<p class="note">${ratio(d.score, max)} over ${d.divisor} firers${number ? ` · attempt ${number}` : ""}<br>${esc(new Date(d.recordedAt).toLocaleString("en-US"))}</p><p class="note">${esc(d.inputMode === "aggregate" ? `Confirmed on the detail total ${d.aggregateHits}.` : d.roster.map((m) => `${m.name} ${m.rawHits ?? "—"}`).join(", "))}</p>${
+      live
+        ? `<p class="note warn-note">Voiding takes ${esc(stageLabel(c, d.stage))} away from all ${d.roster.length} firers who fired it: ${esc(names(d.roster.map((m) => m.name)))}.</p>`
+        : `<p class="note warn-note">Voided${reason ? ` · ${esc(reason)}` : ""}.</p>`
+    }<div class="actions">${live ? '<button type="button" id="edit-detail-score">Edit</button><button type="button" class="danger" id="void-detail-score">Void</button>' : ""}${restorable(c, c.attempts.find((x) => x.detailAttemptId === d.id)?.id) ? '<button type="button" id="unvoid-detail-score">Restore this score</button>' : ""}</div>`,
+    null,
+    null,
+    "Close",
+  );
+  const first = c.attempts.find((x) => x.detailAttemptId === d.id);
+  if (restorable(c, first?.id))
+    $("#unvoid-detail-score").onclick = () => {
+      try {
+        unvoidAttempt(c, first.id);
+        save();
+        done();
+        toast(`${detail?.name ?? "Detail"} score restored.`);
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+  if (!live) return;
+  $("#edit-detail-score").onclick = () => editDetailDialog(d.id, done);
+  $("#void-detail-score").onclick = () =>
+    dialog(
+      `Void ${detail?.name ?? "detail"} · ${stageLabel(c, d.stage)}`,
+      `<p class="note warn-note">All ${d.roster.length} firers lose this score: ${esc(names(d.roster.map((m) => m.name)))}. It stays in History, struck through, and can be put back.</p><label class="field"><span>Reason</span><input name="reason" required autofocus></label>`,
+      [{ label: "Void score", danger: true }],
+      (f) => {
+        voidAttempt(c, first.id, f.get("reason"));
+        save();
+        done();
+      },
+      "Back",
+      () => detailEventDialog(detailAttemptId),
+    );
 }
 // Editing a detail's score: each firer's hits, or the detail total. Clearing a
 // firer's hits takes them out of the record.
@@ -2438,13 +2557,17 @@ $("#main").addEventListener("click", (e) => {
       manualDetailDialog(stage, b.dataset.build);
       return;
     }
+    if ("historyFilter" in b.dataset) {
+      historyFilter = b.dataset.historyFilter || null;
+      render();
+      return;
+    }
     if (b.dataset.attempt) {
       scoreEventDialog(b.dataset.attempt);
       return;
     }
-    if (b.dataset.scoreDetail) {
-      const [id, at] = b.dataset.scoreDetail.split("|");
-      detailHistoryDialog(id, at);
+    if (b.dataset.detailScore) {
+      detailEventDialog(b.dataset.detailScore);
       return;
     }
     if (b.dataset.detailMenu) {

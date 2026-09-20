@@ -12,6 +12,28 @@
 * {
   box-sizing: border-box;
 }
+/* One disclosure marker everywhere: a triangle that turns as it opens. */
+details > summary {
+  list-style: none;
+  cursor: pointer;
+}
+details > summary::-webkit-details-marker {
+  display: none;
+}
+details > summary::before,
+.expand::before {
+  content: "▸";
+  color: var(--muted);
+  font-size: 10px;
+  margin-right: 8px;
+  display: inline-block;
+}
+details[open] > summary::before,
+.preset.open .expand::before,
+.rifle-set.open .expand::before {
+  content: "▾";
+}
+
 /* Always leave room for the scrollbar, so opening a section cannot shove the
    whole page sideways. */
 html {
@@ -883,15 +905,6 @@ tr.drop-before td {
   flex: 1;
   text-align: left;
 }
-.preset-head .expand::before {
-  content: "›";
-  margin-right: 10px;
-  color: var(--muted);
-  display: inline-block;
-}
-.preset.open .expand::before {
-  transform: rotate(90deg);
-}
 .toggle {
   border: 0;
   border-radius: 20px;
@@ -1069,15 +1082,6 @@ dialog .error {
   min-height: 28px;
   font-size: 12px;
 }
-.rifle-set .expand::before {
-  content: "›";
-  margin-right: 8px;
-  color: var(--muted);
-  display: inline-block;
-}
-.rifle-set.open .expand::before {
-  transform: rotate(90deg);
-}
 .rifle-set .expand .muted {
   font-weight: 400;
   margin-left: 6px;
@@ -1099,9 +1103,6 @@ dialog .error {
   padding: 11px 12px;
   cursor: pointer;
   list-style: none;
-}
-.summary > summary::-webkit-details-marker {
-  display: none;
 }
 .summary > summary h3 {
   margin: 0;
@@ -1151,11 +1152,13 @@ dialog .error {
   margin-bottom: 8px;
 }
 details.event > summary {
-  list-style: none;
-  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  padding-left: 12px;
 }
-details.event > summary::-webkit-details-marker {
-  display: none;
+details.event > summary .event-head {
+  flex: 1;
+  padding-left: 0;
 }
 .event-head {
   display: flex;
@@ -1163,14 +1166,17 @@ details.event > summary::-webkit-details-marker {
   gap: 10px;
   padding: 11px 12px;
 }
-details.event > summary .event-head::before {
-  content: "▸";
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.6;
+.event-tags {
+  display: inline-flex;
+  gap: 4px;
+  margin-right: 6px;
 }
-details.event[open] > summary .event-head::before {
-  content: "▾";
+.history-filter {
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.history-filter button {
+  font-size: 12px;
 }
 .event-head > div {
   flex: 1;

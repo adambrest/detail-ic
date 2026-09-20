@@ -585,7 +585,7 @@ async function addNames(page, names) {
     // An individual score is corrected on its own, from its own row.
     const stageB = page
       .locator(".event")
-      .filter({ hasText: /^\s*\d+ scores? confirmed/ })
+      .filter({ hasText: /\d+ scores? confirmed/ })
       .first();
     await stageB.locator("summary").click();
     await stageB.locator("[data-attempt]").first().click();
