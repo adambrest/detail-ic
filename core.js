@@ -1946,6 +1946,119 @@ export function queueKey(s, key, stage) {
     s.manualQueue.push({ key, stage });
   audit(s, "Reshoot queued", { key, stage });
 }
+// Setup steps worth remembering. Scores, redetails and temporary details are
+// read from the records themselves, so their audit lines are left out here to
+// avoid saying everything twice.
+const NOTED = {
+  "Shoot created": "Shoot created",
+  "Shoot type changed": "Shoot type changed",
+  "Participants added": "Participants added",
+  "Participants confirmed": "Participants confirmed",
+  "Participants unlocked": "Participants unlocked",
+  "Participants cleared": "Participants cleared",
+  "Auto-detailed": "Auto-detailed",
+  "Participant corrected": "Participant corrected",
+  "Participant removed": "Participant removed",
+  "Scores corrected": "Score voided",
+  "Score edited": "Score edited",
+  "Detail score edited": "Detail score edited",
+  "Redetail canceled": "De-detailed",
+  "Skipped in the firing order": "Skipped",
+  Unskipped: "Unskipped",
+  "Temporary detail removed": "Temporary detail removed",
+  "Sighting recorded": "Sighting recorded",
+};
+// Everything that happened in a shoot, newest first: what was set up, what was
+// fired, who was sent again and what was corrected. Built from the records
+// themselves, so each score carries the ID needed to open and correct it.
+export function historyFeed(s) {
+  const entries = [],
+    nameOf = (id) =>
+      s.participants.find((p) => p.id === id)?.name ?? "Removed firer",
+    detailOf = (id) => s.details.find((d) => d.id === id);
+  for (const d of s.shared)
+    entries.push({
+      id: `shared:${d.id}`,
+      at: d.recordedAt,
+      kind: "detail-score",
+      stage: d.stage,
+      detailId: d.detailId,
+      title: detailOf(d.detailId)?.name ?? "Detail",
+      voided: d.status !== "valid",
+      score: d.score,
+      divisor: d.divisor,
+      aggregate: d.aggregateHits,
+      totalOnly: d.inputMode === "aggregate",
+      people: d.roster.map((m) => ({
+        id: m.id,
+        name: nameOf(m.id),
+        hits: m.rawHits,
+      })),
+    });
+  // Scores confirmed together share one time, so they are one entry.
+  const batches = new Map();
+  for (const a of s.attempts) {
+    if (a.detailAttemptId) continue;
+    const key = `${a.stage}\u0000${a.recordedAt}`;
+    batches.set(key, [...(batches.get(key) ?? []), a]);
+  }
+  for (const [key, list] of batches)
+    entries.push({
+      id: `score:${key}`,
+      at: list[0].recordedAt,
+      kind: "score",
+      stage: list[0].stage,
+      voided: list.every((a) => a.status !== "valid"),
+      people: list.map((a) => ({
+        id: a.participantId,
+        name: nameOf(a.participantId),
+        hits: a.score,
+        weapon: a.weapon,
+        voided: a.status !== "valid",
+      })),
+    });
+  for (const d of s.dispatches)
+    entries.push({
+      id: `dispatch:${d.id}`,
+      at: d.at,
+      kind: "redetail",
+      stage: d.stage,
+      detailId: d.detailId,
+      status: d.status,
+      title: d.detailId
+        ? (detailOf(d.detailId)?.name ?? "Detail")
+        : nameOf(d.roster[0]?.id),
+      people: d.roster.map((m) => ({ id: m.id, name: nameOf(m.id) })),
+    });
+  for (const d of s.details)
+    if (d.temporary)
+      entries.push({
+        id: `temp:${d.id}`,
+        at: d.createdAt,
+        kind: "temp-detail",
+        stage: d.stage,
+        detailId: d.id,
+        title: d.name,
+        oneOff: !!d.oneOff,
+        retired: !!d.retired,
+        people: (d.memberIds ?? []).map((id) => ({ id, name: nameOf(id) })),
+      });
+  for (const a of s.audit)
+    if (NOTED[a.action])
+      entries.push({
+        id: `audit:${a.id}`,
+        at: a.at,
+        kind: "note",
+        title: NOTED[a.action],
+        note: a.reason || "",
+        people: (a.participants ?? [a.current ?? a.participant])
+          .filter(Boolean)
+          .map((p) => ({ id: p.id, name: p.name })),
+      });
+  return entries.sort(
+    (a, b) => Date.parse(b.at) - Date.parse(a.at) || a.kind.localeCompare(b.kind),
+  );
+}
 export function exportCsv(s) {
   const components = profileFor(s.program, s.variant, s.settings.weapon)
       .components,

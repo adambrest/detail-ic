@@ -1132,6 +1132,59 @@ dialog .error {
   opacity: 1;
   -webkit-text-fill-color: var(--muted);
 }
+/* The History feed: one card per thing that happened. */
+.history-feed {
+  max-width: 760px;
+}
+.event {
+  padding: 0;
+  margin-bottom: 10px;
+}
+.event-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 11px 12px;
+}
+.event-head > div {
+  flex: 1;
+  min-width: 0;
+}
+.event-head strong {
+  font-size: 13px;
+}
+.event-head .note {
+  margin: 3px 0 0;
+}
+.event-head .when {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.event .table-wrap {
+  border-top: 1px solid var(--line);
+}
+.event.void .event-head > div {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+.event tr.void td {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+.note-event .event-head strong {
+  font-weight: 650;
+  color: var(--muted);
+}
+/* A rifle held by a recorded score: greyed, but it still answers a tap. */
+.locked-field {
+  display: block;
+  cursor: not-allowed;
+}
+.locked-field select {
+  pointer-events: none;
+  width: 100%;
+}
 /* A detail whose scores are in reads as a record, not a form. */
 .score-panel.scored .detail-head .count {
   font-weight: 650;

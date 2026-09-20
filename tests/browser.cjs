@@ -244,7 +244,7 @@ async function addNames(page, names) {
 
     // A recorded score can be edited from the history.
     await page.getByRole("button", { name: "Options for Alex Tan" }).first().click();
-    await click(page, "History");
+    await page.locator("#dialog").getByRole("button", { name: "History", exact: true }).click();
     assert.ok((await page.locator("#dialog").innerText()).includes("attempt 2"));
     await page
       .locator("#dialog")
@@ -258,7 +258,7 @@ async function addNames(page, names) {
     await page.locator(".past-scores > summary").first().click();
     assert.equal(await alex.locator(".results b").innerText(), "15");
     await page.getByRole("button", { name: "Options for Alex Tan" }).first().click();
-    await click(page, "History");
+    await page.locator("#dialog").getByRole("button", { name: "History", exact: true }).click();
     await page
       .locator("#dialog")
       .getByRole("button", { name: "Edit" })
@@ -533,6 +533,64 @@ async function addNames(page, names) {
       1,
     );
 
+    // History is the record of the whole shoot, and where scores are corrected.
+    await tab(page, "History");
+    const events = await page.locator(".event").count();
+    assert.ok(events > 4, `expected a full history, saw ${events}`);
+    const feed = await page.locator(".history-feed").innerText();
+    for (const line of [
+      "Participants added",
+      "Participants confirmed",
+      "Temp detail 1 built",
+      "Scored",
+    ])
+      assert.ok(feed.includes(line), `history is missing "${line}"`);
+    // Searching narrows it to one firer, temporary details included.
+    await page.locator("#search").fill("Temp detail");
+    await waitFor(page, () => {
+      const n = document.querySelectorAll(".event").length;
+      return n > 0 && n < 4;
+    });
+    assert.ok(
+      (await page.locator(".history-feed").innerText()).includes("Temp detail 1"),
+    );
+    await page.locator("#search").fill("Dana Koh");
+    const forDana = await page.locator(".event").count();
+    assert.ok(forDana && forDana < events);
+    await page.locator("#search").fill("");
+    await waitFor(
+      page,
+      (n) => document.querySelectorAll(".event").length === n,
+      events,
+    );
+    // A detail's scores open from its entry, and a firer's from their row.
+    await page.getByRole("button", { name: /^Scores for Detail 1$/ }).first().click();
+    assert.ok((await page.locator("#dialog").innerText()).includes("Detail 1"));
+    await click(page, "Close");
+    await page
+      .getByRole("button", { name: "Scores for Dana Koh", exact: true })
+      .first()
+      .click();
+    assert.ok((await page.locator("#dialog").innerText()).includes("History"));
+    await click(page, "Close");
+
+    // The roster keeps temporary details out, and says why a rifle is fixed.
+    await tab(page, "Participants");
+    assert.equal(
+      await page.locator('h3:text-is("Temp detail 1")').count(),
+      0,
+      "temporary details do not belong on the roster",
+    );
+    await page.locator("[data-locked-rifle]").first().click();
+    assert.ok((await page.locator("#toast").innerText()).includes("void those scores"));
+    // Drilling into a detail's scores from the roster offers a way back.
+    await page.getByRole("button", { name: /^Scores for Detail 1$/ }).first().click();
+    await page.getByRole("button", { name: /^Stage A scores$/ }).click();
+    assert.equal(await page.locator("#close-dialog").innerText(), "Back");
+    await click(page, "Back");
+    assert.ok((await page.locator("#dialog").innerText()).includes("Open a stage"));
+    await click(page, "Close");
+
     // Stage C goes back to the original details.
     await tab(page, "Stage C");
     assert.equal(await page.locator(".score-panel").count(), 2);
@@ -594,7 +652,7 @@ async function addNames(page, names) {
     assert.deepEqual(errors, []);
     await browser.close();
     console.log(
-      `${name}: shoots, settings, roster editing, confirm, auto-detail, rifles, scoring, history editing, redetailing, manual details, Stage B, mobile and offline reload passed`,
+      `${name}: shoots, settings, roster editing, confirm, auto-detail, rifles, scoring, history editing, redetailing, manual details, Stage B, History, mobile and offline reload passed`,
     );
   }
 })().catch((e) => {

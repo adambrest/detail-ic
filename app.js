@@ -93,6 +93,7 @@ import {
   entities,
   dispatch,
   cancelDispatch,
+  historyFeed,
   exportCsv,
   migrateStore,
   validateStore,
@@ -281,6 +282,7 @@ function render() {
             ["participants", "Participants"],
             ...stages(current).map((c) => [`stage:${c.id}`, c.label]),
             ["final", "Final scores"],
+            ["history", "History"],
           ]
         : []),
       ["settings", "Settings"],
@@ -303,6 +305,7 @@ function render() {
   else if (tab === "settings") renderSettings();
   else if (tab === "participants") renderParticipants();
   else if (tab === "final") renderFinal();
+  else if (tab === "history") renderHistory();
   else renderStage(tab.split(":")[1]);
 }
 function renderShoots() {
@@ -404,7 +407,7 @@ function renderParticipants() {
     ).join("")}${roomForNew || !n ? '<option value="new">New detail</option>' : ""}</select></td>`;
   };
   const row = (p) =>
-    `<tr class="${matches(p) ? "match" : ""}" ${cs && !locked ? `draggable="true" data-drag="${p.id}" data-drop-row="${p.id}"` : ""}>${cs ? `<td class="grip">${locked ? "" : `<span class="handle" aria-hidden="true">☰</span>`}</td>` : ""}<td class="name"><input class="name-input" type="text" data-name="${p.id}" value="${esc(p.name)}" aria-label="Name for ${esc(p.name)}" ${locked ? "disabled" : ""}></td>${multi ? `<td><select class="row-weapon" data-rifle="${p.id}" aria-label="Rifle for ${esc(p.name)}" ${locked || hasRecords(c, p) ? "disabled" : ""} ${hasRecords(c, p) ? `title="${esc(p.name)} has scores on ${esc(p.weapon)}. Void them to change rifle."` : ""}>${option(weapons(c), p.weapon)}</select></td>` : ""}${cs ? picker(p) : ""}<td class="more-cell">${locked ? `<button class="more" data-person="${p.id}" aria-label="Scores for ${esc(p.name)}">⋯</button>` : `<button class="icon-button danger" data-remove="${p.id}" aria-label="Remove ${esc(p.name)}">✕</button>`}</td></tr>`;
+    `<tr class="${matches(p) ? "match" : ""}" ${cs && !locked ? `draggable="true" data-drag="${p.id}" data-drop-row="${p.id}"` : ""}>${cs ? `<td class="grip">${locked ? "" : `<span class="handle" aria-hidden="true">☰</span>`}</td>` : ""}<td class="name"><input class="name-input" type="text" data-name="${p.id}" value="${esc(p.name)}" aria-label="Name for ${esc(p.name)}" ${locked ? "disabled" : ""}></td>${multi ? `<td>${hasRecords(c, p) ? `<span class="locked-field" data-locked-rifle="${p.id}" title="${esc(p.name)} has scores on ${esc(p.weapon)}. Void them to change rifle."><select class="row-weapon" aria-label="Rifle for ${esc(p.name)}" disabled>${option(weapons(c), p.weapon)}</select></span>` : `<select class="row-weapon" data-rifle="${p.id}" aria-label="Rifle for ${esc(p.name)}" ${locked ? "disabled" : ""}>${option(weapons(c), p.weapon)}</select>`}</td>` : ""}${cs ? picker(p) : ""}<td class="more-cell">${locked ? `<button class="more" data-person="${p.id}" aria-label="Scores for ${esc(p.name)}">⋯</button>` : `<button class="icon-button danger" data-remove="${p.id}" aria-label="Remove ${esc(p.name)}">✕</button>`}</td></tr>`;
   // An empty row on each detail, so a short detail can be filled in place.
   const addRow = (d, people) =>
     locked || !d || people.length >= max
@@ -424,15 +427,15 @@ function renderParticipants() {
     const unassigned = members(c, null),
       groups = [
         ...(unassigned.length ? [[null, unassigned]] : []),
+        // Temporary details belong to a stage, not the roster; they are in History.
         ...sortedDetails(c)
-          .filter((d) => members(c, d.id).length)
+          .filter((d) => !d.temporary && members(c, d.id).length)
           .map((d) => [d, members(c, d.id)]),
       ].filter(([, people]) => !search || people.some(filtered));
     body = groups
-        .map(([d, people]) =>
-          d?.temporary
-            ? `<section class="panel temporary"><div class="detail-head"><h3>${esc(d.name)}</h3><span class="count">${people.length} firers</span></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th></tr></thead><tbody>${people.map((p) => `<tr class="${matches(p) ? "match" : ""}"><td class="name">${esc(p.name)}</td><td>${esc(rosterWeapon(c, d.id, p))}</td></tr>`).join("")}</tbody></table></div></section>`
-            : `<section class="panel ${d ? "" : "unassigned"}" ${d && !locked ? `data-drop="${d.id}"` : 'data-drop=""'}><div class="detail-head"><h3>${d ? esc(d.name) : "Needs a detail"}</h3>${d ? borrowedNote(c, d) : ""}<span class="count">${people.length}${d && max !== Infinity ? ` of ${max}` : ""} firers</span>${d && locked ? `<div class="actions"><button class="more" data-detail-menu="${d.id}" aria-label="Scores for ${esc(d.name)}">⋯</button></div>` : ""}${d || locked ? "" : '<div class="actions"><button class="primary" data-action="auto-detail">Auto-detail</button></div>'}</div>${table(people, d)}</section>`,
+        .map(
+          ([d, people]) =>
+            `<section class="panel ${d ? "" : "unassigned"}" ${d && !locked ? `data-drop="${d.id}"` : 'data-drop=""'}><div class="detail-head"><h3>${d ? esc(d.name) : "Needs a detail"}</h3>${d ? borrowedNote(c, d) : ""}<span class="count">${people.length}${d && max !== Infinity ? ` of ${max}` : ""} firers</span>${d && locked ? `<div class="actions"><button class="more" data-detail-menu="${d.id}" aria-label="Scores for ${esc(d.name)}">⋯</button></div>` : ""}${d || locked ? "" : '<div class="actions"><button class="primary" data-action="auto-detail">Auto-detail</button></div>'}</div>${table(people, d)}</section>`,
         )
         .join("");
   } else
@@ -1085,6 +1088,67 @@ function renderFinal() {
             .join("")
         : `<section class="panel">${table(c.participants)}</section>`);
 }
+// Everything that happened, newest first: what was set up, what was fired, who
+// was sent again and what was corrected. Scores are corrected from here, which
+// is where the roster sends you once a rifle or a detail is held by one.
+function renderHistory() {
+  const c = s(),
+    feed = historyFeed(c),
+    stageName = (id) => stages(c).find((x) => x.id === id)?.label ?? id,
+    text = (e) =>
+      `${e.title ?? ""} ${e.stage ? stageName(e.stage) : ""} ${e.note ?? ""} ${e.people.map((x) => x.name).join(" ")}`,
+    shown = feed.filter(
+      (e) => !search || text(e).toLowerCase().includes(search.toLowerCase()),
+    );
+  const when = (e) => `${dateLabel(e.at)} · ${timeLabel(e.at)}`,
+    who = (e) => e.people.map((x) => x.name).join(", "),
+    scoreRows = (e, max) =>
+      `<div class="table-wrap"><table><tbody>${e.people
+        .map(
+          (x) =>
+            `<tr class="${x.voided ? "void" : ""} ${search && x.name.toLowerCase().includes(search.toLowerCase()) ? "match" : ""}"><td class="name">${esc(x.name)}</td><td class="num">${x.hits ?? '<span class="muted">—</span>'}${max ? `<span class="muted">/${max}</span>` : ""}</td><td class="more-cell"><button class="more" data-person="${x.id}" aria-label="Scores for ${esc(x.name)}">⋯</button></td></tr>`,
+        )
+        .join("")}</tbody></table></div>`;
+  const card = (e) => {
+    const max = e.stage
+        ? (stages(c).find((x) => x.id === e.stage)?.max ?? null)
+        : null,
+      head = (title, note, menu = "") =>
+        `<div class="event-head"><div><strong>${title}</strong>${note ? `<p class="note">${note}</p>` : ""}</div><span class="when">${esc(when(e))}</span>${menu}</div>`;
+    if (e.kind === "detail-score")
+      return `<section class="panel event ${e.voided ? "void" : ""}">${head(
+        `${esc(e.title)} · ${esc(stageName(e.stage))}`,
+        `Scored ${e.score}/${max}${e.totalOnly ? ` from the detail total ${e.aggregate} over ${e.divisor} firers` : ""}${e.voided ? " · voided" : ""}`,
+        `<button class="more" data-score-detail="${e.detailId}|${e.stage}" aria-label="Scores for ${esc(e.title)}">⋯</button>`,
+      )}${scoreRows(e, max)}</section>`;
+    if (e.kind === "score")
+      return `<section class="panel event ${e.voided ? "void" : ""}">${head(
+        `${esc(stageName(e.stage))} · ${e.people.length} ${e.people.length === 1 ? "score" : "scores"} confirmed`,
+        e.voided ? "Voided" : "",
+      )}${scoreRows(e, max)}</section>`;
+    if (e.kind === "redetail")
+      return `<section class="panel event ${e.status === "canceled" ? "void" : ""}">${head(
+        `${esc(e.title)} redetailed · ${esc(stageName(e.stage))}`,
+        `${esc(who(e))}${e.status === "canceled" ? " · de-detailed" : e.status === "scored" ? " · scored since" : " · waiting to fire"}`,
+      )}</section>`;
+    if (e.kind === "temp-detail")
+      return `<section class="panel event ${e.retired ? "void" : ""}">${head(
+        `${esc(e.title)} built · ${esc(stageName(e.stage))}`,
+        `${e.oneOff ? "One-off" : "Kept"} detail · ${esc(who(e))}${e.retired ? " · finished and dropped" : ""}`,
+      )}</section>`;
+    return `<section class="panel event note-event">${head(
+      esc(e.title),
+      [who(e), e.note].filter(Boolean).map(esc).join(" · "),
+    )}</section>`;
+  };
+  $("#main").innerHTML =
+    shootHead(`<span class="spacer"></span>${searchBox()}`) +
+    `<div class="history-feed"><div class="toolbar"><span class="count">${shown.length} of ${feed.length} ${feed.length === 1 ? "entry" : "entries"}</span></div>${
+      shown.length
+        ? shown.map(card).join("")
+        : empty(search ? "Nothing matches that name" : "Nothing has happened yet")
+    }</div>`;
+}
 function renderSettings() {
   $("#main").innerHTML =
     `<div class="settings"><div class="heading"><h2>Settings</h2></div>${Object.entries(
@@ -1584,7 +1648,7 @@ function attemptRows(c, p) {
     })
     .toReversed();
 }
-function historyDialog(p) {
+function historyDialog(p, back) {
   const c = s(),
     rows = attemptRows(c, p),
     pendingList = c.dispatches.filter(
@@ -1623,6 +1687,9 @@ function historyDialog(p) {
         ? '<p class="note">No scored attempts.</p>'
         : ""),
     null,
+    null,
+    back ? "Back" : "Close",
+    back,
   );
   $("#dialog")
     .querySelectorAll("[data-edit]")
@@ -1692,7 +1759,10 @@ function detailMenu(detailId) {
     "Close",
   );
   for (const b of $("#dialog").querySelectorAll("[data-stage-scores]"))
-    b.onclick = () => detailHistoryDialog(detailId, b.dataset.stageScores);
+    b.onclick = () =>
+      detailHistoryDialog(detailId, b.dataset.stageScores, () =>
+        detailMenu(detailId),
+      );
 }
 // Editing an individual score, including the rifle where a stage allows a change.
 function editScoreDialog(p, a) {
@@ -1714,13 +1784,13 @@ function editScoreDialog(p, a) {
 }
 // A detail's own history: every score confirmed for it, newest first, each one
 // editable or voidable the way an individual's attempts are.
-function detailHistoryDialog(detailId, stage) {
+function detailHistoryDialog(detailId, stage, back) {
   const c = s(),
     d = c.details.find((x) => x.id === detailId),
     list = detailAttempts(c, detailId, stage),
     numbers = detailAttemptNumbers(c, detailId, stage),
     max = stages(c).find((x) => x.id === stage).max,
-    back = () => detailHistoryDialog(detailId, stage),
+    here = () => detailHistoryDialog(detailId, stage, back),
     waitingOn = c.dispatches.filter(
       (x) =>
         x.key === `detail:${detailId}` &&
@@ -1749,12 +1819,15 @@ function detailHistoryDialog(detailId, stage) {
         ? '<p class="note">No scores confirmed for this detail yet.</p>'
         : ""),
     null,
+    null,
+    back ? "Back" : "Close",
+    back,
   );
   const box = $("#dialog");
   box
     .querySelectorAll("[data-edit-detail]")
     .forEach(
-      (b) => (b.onclick = () => editDetailDialog(b.dataset.editDetail, back)),
+      (b) => (b.onclick = () => editDetailDialog(b.dataset.editDetail, here)),
     );
   box.querySelectorAll("[data-void-detail]").forEach(
     (b) =>
@@ -1771,10 +1844,10 @@ function detailHistoryDialog(detailId, stage) {
             voidAttempt(c, a.id, f.get("reason"));
             save();
             render();
-            back();
+            here();
           },
           "Back",
-          back,
+          here,
         );
       }),
   );
@@ -1784,7 +1857,7 @@ function detailHistoryDialog(detailId, stage) {
         cancelDispatch(c, b.dataset.cancel);
         save();
         render();
-        back();
+        here();
       }),
   );
 }
@@ -2141,6 +2214,16 @@ $("#main").addEventListener("submit", (e) => {
   }
 });
 $("#main").addEventListener("click", (e) => {
+  // A rifle held by a recorded score is greyed out; saying why beats silence.
+  const held = e.target.closest("[data-locked-rifle]");
+  if (held) {
+    const p = s().participants.find((x) => x.id === held.dataset.lockedRifle);
+    if (p)
+      toast(
+        `${p.name} has scores recorded on ${p.weapon}. Rifles are held to different standards, so void those scores in History before changing it.`,
+      );
+    return;
+  }
   const b = e.target.closest("button");
   if (!b) return;
   const c = s(),
@@ -2214,7 +2297,7 @@ $("#main").addEventListener("click", (e) => {
     }
     if (b.dataset.person) {
       const person = c.participants.find((x) => x.id === b.dataset.person);
-      if (tab === "final") historyDialog(person);
+      if (tab === "final" || tab === "history") historyDialog(person);
       else personDialog(b.dataset.person);
       return;
     }
@@ -2252,6 +2335,11 @@ $("#main").addEventListener("click", (e) => {
     }
     if (b.dataset.build) {
       manualDetailDialog(stage, b.dataset.build);
+      return;
+    }
+    if (b.dataset.scoreDetail) {
+      const [id, at] = b.dataset.scoreDetail.split("|");
+      detailHistoryDialog(id, at);
       return;
     }
     if (b.dataset.detailMenu) {
