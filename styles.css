@@ -143,7 +143,8 @@ header {
   align-items: center;
   gap: 12px;
   flex: 0 0 auto;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   line-height: 1.35;
 }
 header h1 {
@@ -639,7 +640,7 @@ td {
 .queue-list[hidden] {
   display: none;
 }
-/* The stage tab is the firing order: a place number, the entry up next, Skip. */
+/* Queue positions retain lane order when search matches move visually. */
 span.seat {
   display: inline-grid;
   place-items: center;
@@ -661,16 +662,7 @@ td.seat {
   font-size: 11px;
   font-weight: 650;
 }
-.score-panel.next {
-  border-left: 3px solid var(--accent);
-}
-.score-panel.next .seat,
-tr.next td.seat {
-  color: var(--accent);
-}
-tr.next td {
-  background: #f5f9ff;
-}
+
 .skip {
   font-size: 11px;
   padding: 4px 8px;
@@ -977,6 +969,12 @@ tr.drop-before td {
 }
 .target-row input {
   width: 65px;
+}
+/* A stage with no sub-stage layout cannot be scored while breakdowns are
+   required, so it is marked rather than looking the same as a configured one. */
+.target-row button.unset {
+  border-color: #b42318;
+  color: #b42318;
 }
 .settings-section {
   border-top: 1px solid var(--line);
@@ -1640,4 +1638,62 @@ select.assign {
     min-width: 105px;
   }
 }
-@media(max-width:550px){.score-panel th,.score-panel td{padding:7px 5px}.score-panel .name{min-width:76px;max-width:110px}.score-panel .more{padding:4px 2px}}
+@media (max-width: 550px) {
+  .score-panel th,
+  .score-panel td {
+    padding: 7px 5px;
+  }
+  .score-panel .name {
+    min-width: 76px;
+    max-width: 110px;
+  }
+  .score-panel .more {
+    padding: 4px 2px;
+  }
+}
+
+/* Search retains all records; matching records rise to the top. */
+.panel.match,
+.shoot-row.match {
+  background: #fff5c2;
+  outline: 2px solid #d6a600;
+}
+tr.duplicate-name td {
+  background: #fff0ef;
+}
+tr.duplicate-name input {
+  border: 2px solid #b42318;
+}
+.insight > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.subscores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.subscores label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+}
+.subscores input {
+  width: 55px;
+  min-height: 40px;
+}
+.score-breakdown {
+  font-size: 12px;
+  white-space: normal;
+  text-align: left;
+  max-width: 200px;
+}
+.breakdown-toggle {
+  display: flex;
+  gap: 10px;
+  padding: 14px;
+  margin-bottom: 16px;
+}

@@ -1,6 +1,5 @@
 import {
   PROGRAMS,
-  VERSION,
   DETAIL_RULES,
   NON_SAR,
   isCS,
@@ -10,18 +9,21 @@ import {
   weaponGroup,
   typeLabel,
   stages,
+  defaultBreakdowns,
 } from "./profiles.js";
 export const uid = () => crypto.randomUUID();
 export const now = () => new Date().toISOString();
 // Stages A and C are fired as a detail; everything else is individual.
-export const detailedStage = (s, stage) => isCS(s) && ["A", "C"].includes(stage);
+export const detailedStage = (s, stage) =>
+  isCS(s) && ["A", "C"].includes(stage);
 export const typeKey = (program, variant = "standard") =>
   program === "APS" ? `APS:${variant}` : program;
 export function newStore() {
   return {
-    schema: 3,
+    schema: 4,
     active: null,
     presets: {},
+    requireBreakdown: true,
     shoots: [],
   };
 }
@@ -30,6 +32,7 @@ export function preset(store, program, variant = "standard") {
     weapon: baseWeapons(program, variant)[0],
     objective: "marksman",
     targets: {},
+    breakdowns: defaultBreakdowns(program, variant),
   });
 }
 export function newShoot(program, variant = "standard", name = "") {
@@ -39,6 +42,8 @@ export function newShoot(program, variant = "standard", name = "") {
     id: uid(),
     name: name.trim() || typeLabel(program, variant),
     createdAt: now(),
+    updatedAt: now(),
+    activeStage: null,
     program,
     variant,
     participants: [],
@@ -56,6 +61,8 @@ export function newShoot(program, variant = "standard", name = "") {
       objective: "marksman",
       order: "smart",
       targets: {},
+      requireBreakdown: true,
+      breakdowns: defaultBreakdowns(program, variant),
     },
   };
 }
@@ -63,6 +70,14 @@ export function applyPreset(store, s) {
   const p = preset(store, s.program, s.variant);
   s.settings.objective = p.objective;
   s.settings.targets = structuredClone(p.targets);
+  s.settings.requireBreakdown = store.requireBreakdown !== false;
+  // Settings is where a layout is edited, so the preset wins over the shipped
+  // default. Keys the preset does not define are left as the shoot has them,
+  // and each attempt keeps its own breakdown, so history is unaffected.
+  s.settings.breakdowns = structuredClone({
+    ...(s.settings.breakdowns ?? {}),
+    ...(p.breakdowns ?? {}),
+  });
   if (!weaponsFor(s.program, s.variant).includes(s.settings.weapon))
     s.settings.weapon = p.weapon;
 }
@@ -81,12 +96,95 @@ export function createShoot(store, program, variant = "standard", name = "") {
 export function getShoot(store, id = store.active) {
   return store.shoots.find((s) => s.id === id) || null;
 }
+export function activateStage(s, stage) {
+  if (!stages(s).some((c) => c.id === stage)) throw Error("Unknown stage.");
+  if (s.activeStage === stage) return;
+  s.activeStage = stage;
+  audit(s, "Stage unlocked", { stage });
+}
+export function requireActiveStage(s, stage) {
+  if (s.activeStage && s.activeStage !== stage)
+    throw Error("This stage is locked. Unlock it before entering scores.");
+  if (!s.activeStage) activateStage(s, stage);
+}
+export function availableMembers(s, detailId) {
+  return members(s, detailId).filter((p) => !p.skipped);
+}
+export function replacementPlan(s, detailId, stage) {
+  const picked = availableMembers(s, detailId).slice(),
+    rule = DETAIL_RULES[s.program];
+  const pool = s.participants
+    .filter((p) => !p.skipped && !picked.includes(p) && !committed(s, stage, p))
+    .toSorted(
+      (a, b) =>
+        Number(nothingToGain(s, a, stage)) -
+          Number(nothingToGain(s, b, stage)) ||
+        (firerHits(s, b, stage) ?? -1) - (firerHits(s, a, stage) ?? -1),
+    );
+  for (const p of pool) {
+    if (picked.length >= rule.min) break;
+    if (!compositionErrors(s, [...picked, p], { checkMinimum: false }).length)
+      picked.push(p);
+  }
+  return picked;
+}
+// A draft counts as started once anything has been typed into it. With
+// sub-stage entry a row's total stays blank until every one of its parts is
+// filled, so parts have to count too — otherwise a half-entered table looks
+// empty and is thrown away underneath the recorder.
+export function draftStarted(draft) {
+  return (
+    draft.aggregate !== "" ||
+    draft.rows.some(
+      (r) => r.hits !== "" || r.parts?.some((v) => v !== "" && v != null),
+    )
+  );
+}
+export function setPersonSkipped(s, id, on) {
+  const p = s.participants.find((p) => p.id === id);
+  if (!p) throw Error("Participant not found.");
+  p.skipped = !!on;
+  // An unconfirmed draft must never silently acquire a different divisor.
+  for (const [key, draft] of Object.entries(s.drafts)) {
+    if (!members(s, draft.detailId).some((x) => x.id === id)) continue;
+    if (!draftStarted(draft)) delete s.drafts[key];
+  }
+  audit(s, on ? "Firer skipped" : "Firer unskipped", { participantId: id });
+}
+// A backup can replace a local shoot only when its audit contains every local
+// event. Divergent copies are never silently treated as newer by wall-clock time.
+export function importBackup(store, incoming) {
+  validateStore(incoming);
+  const report = { added: 0, updated: 0, kept: 0 };
+  for (const shoot of incoming.shoots) {
+    const index = store.shoots.findIndex((s) => s.id === shoot.id);
+    if (index < 0) {
+      store.shoots.push(structuredClone(shoot));
+      report.added++;
+      continue;
+    }
+    const local = store.shoots[index],
+      events = new Set(shoot.audit.map((a) => a.id));
+    const extendsLocal =
+      shoot.audit.length > local.audit.length &&
+      local.audit.every((a) => events.has(a.id)) &&
+      local.attempts.every((a) => shoot.attempts.some((b) => b.id === a.id));
+    if (extendsLocal) {
+      store.shoots[index] = structuredClone(shoot);
+      report.updated++;
+    } else report.kept++;
+  }
+  store.active =
+    store.shoots.toSorted((a, b) =>
+      (b.updatedAt ?? b.createdAt).localeCompare(a.updatedAt ?? a.createdAt),
+    )[0]?.id ?? null;
+  return report;
+}
 export const hasScores = (s) => s.attempts.length > 0;
 // Locking says the roster and details are settled, so scoring can start.
 export function setRosterLock(s, on) {
   if (on && !s.participants.length) throw Error("Add participants first.");
-  if (on && rosterIssues(s).length)
-    throw Error(rosterIssues(s).join("\n"));
+  if (on && rosterIssues(s).length) throw Error(rosterIssues(s).join("\n"));
   s.locked = !!on;
   audit(s, on ? "Participants confirmed" : "Participants unlocked");
 }
@@ -143,11 +241,23 @@ export function changeShootType(s, program, variant = "standard") {
   s.dispatches = [];
   s.manualQueue = [];
   s.priorities = {};
+  // Stage ids differ between types, so nothing keyed by the old stages can
+  // carry over. A stale active stage is the dangerous one: it belongs to no
+  // stage of the new type, which leaves every stage tab unable to render and
+  // the saved store invalid on the next load.
+  s.activeStage = null;
+  s.entries = {};
+  s.entryParts = {};
+  // Layouts are keyed by rifle and stage, so the old type's leave the shoot
+  // unloadable, or quietly score a stage against the wrong number of rounds
+  // where a rifle and stage id happen to be shared.
+  s.settings.breakdowns = defaultBreakdowns(program, variant);
   if (s.name === oldLabel || s.name.startsWith(`${oldLabel} · `))
     s.name = typeLabel(program, variant) + s.name.slice(oldLabel.length);
   audit(s, "Shoot type changed", { previous, program, variant });
 }
 export function audit(s, action, data = {}) {
+  s.updatedAt = now();
   s.audit.push({
     id: uid(),
     at: now(),
@@ -179,13 +289,34 @@ export function rosterWeapon(s, detailId, p) {
 }
 export const detailNumber = (d) => Number(d.name.match(/\d+$/)?.[0]) || 0;
 // A temporary detail replaces a firer's usual one for a single stage.
-export function createTempDetail(s, stage, entries, { oneOff = false } = {}) {
+export function createTempDetail(
+  s,
+  stage,
+  entries,
+  { oneOff = false, replacing = null } = {},
+) {
   if (!detailedStage(s, stage))
     throw Error("Temporary details are for Combat Shoot Stages A and C.");
+  const bookingView = replacing
+    ? {
+        ...s,
+        dispatches: s.dispatches.filter((d) => d.key !== `detail:${replacing}`),
+      }
+    : s;
+  if (
+    overlapping(
+      bookingView,
+      stage,
+      entries.map((e) => e.participantId),
+    ).length
+  )
+    throw Error("A chosen firer is skipped or already booked for this stage.");
   const rows = entries.map((e) => ({
     person: s.participants.find((p) => p.id === e.participantId),
     weapon: e.weapon,
   }));
+  if (rows.some((r) => r.person?.skipped))
+    throw Error("Unskip firers before adding them to a detail.");
   if (!rows.length || rows.some((r) => !r.person))
     throw Error("Choose the firers in this detail.");
   const errors = compositionErrors(
@@ -208,6 +339,14 @@ export function createTempDetail(s, stage, entries, { oneOff = false } = {}) {
     memberIds: rows.map((r) => r.person.id),
     weapons: Object.fromEntries(rows.map((r) => [r.person.id, r.weapon])),
   };
+  if (replacing)
+    for (const pending of s.dispatches.filter(
+      (x) =>
+        x.key === `detail:${replacing}` &&
+        x.stage === stage &&
+        x.status === "awaiting",
+    ))
+      cancelDispatch(s, pending.id);
   s.details.push(d);
   audit(s, "Temporary detail added", { detail: structuredClone(d), stage });
   return d;
@@ -266,11 +405,7 @@ export function assignDetail(s, id, number) {
     d = number === null ? null : ensureDetail(s, number);
   p.detailId = d?.id ?? null;
   for (const [key, draft] of Object.entries(s.drafts))
-    if (
-      [previous, d?.id].includes(draft.detailId) &&
-      draft.rows.every((r) => r.hits === "") &&
-      draft.aggregate === ""
-    )
+    if ([previous, d?.id].includes(draft.detailId) && !draftStarted(draft))
       delete s.drafts[key];
   audit(s, "Detail assigned", { participantId: id, detail: d?.name ?? null });
 }
@@ -512,8 +647,11 @@ export function getDraft(s, detailId, stage) {
     detailId,
     stage,
     createdAt: now(),
-    rosterIds: members(s, detailId).map((p) => p.id),
-    rows: members(s, detailId).map((p) => ({ participantId: p.id, hits: "" })),
+    rosterIds: availableMembers(s, detailId).map((p) => p.id),
+    rows: availableMembers(s, detailId).map((p) => ({
+      participantId: p.id,
+      hits: "",
+    })),
     aggregate: "",
   });
 }
@@ -533,12 +671,62 @@ export function parseHits(input, max) {
   if (value > max) return { error: `Hits must be 0–${max}.` };
   return { value };
 }
+export function breakdownFor(s, weapon, stage) {
+  return s.settings.breakdowns?.[`${weapon}:${stage}`] ?? [];
+}
+export function validateBreakdownLayout(parts, max) {
+  if (
+    !Array.isArray(parts) ||
+    !parts.length ||
+    parts.length > 30 ||
+    parts.some(
+      (p) => !p.label?.trim() || !Number.isInteger(p.max) || p.max < 1,
+    ) ||
+    parts.reduce((n, p) => n + p.max, 0) !== max
+  )
+    throw Error(
+      `Sub-stage maximums must add up to ${max}. Give each part a name and a positive whole-number maximum.`,
+    );
+  return parts;
+}
+export function parseBreakdown(s, weapon, stage, values) {
+  const parts = breakdownFor(s, weapon, stage);
+  if (!parts.length)
+    throw Error(
+      "Set this stage's sub-stage breakdown in Settings before entering scores.",
+    );
+  // Parts add up to what is fired, not what can be credited: a rifle issued more
+  // rounds than the stage counts (CS LMG) breaks down over the rounds it fires.
+  // The credited cap is applied later, when the detail's hits are summed.
+  const component = profileFor(s.program, s.variant, weapon).components.find(
+    (c) => c.id === stage,
+  );
+  validateBreakdownLayout(parts, component.inputMax ?? component.max);
+  if (!Array.isArray(values) || values.length !== parts.length)
+    throw Error("Enter every sub-stage score.");
+  const scores = parts.map((part, i) => {
+    const parsed = parseHits(values[i], part.max);
+    if (parsed.error) throw Error(`${part.label}: ${parsed.error}`);
+    return { ...part, hits: parsed.value };
+  });
+  return { scores, total: scores.reduce((n, p) => n + p.hits, 0) };
+}
 // Shared checks for a detail's scores, whether from its entry table or a manual detail.
 // A detail is confirmed whole: every firer's hits, or the detail total alone.
 function scoreRows(s, stage, input, aggregateInput, errors) {
   const shared = isCS(s) && ["A", "C"].includes(stage);
   const rows = input.map((row) => {
     let profile, component;
+    row = { ...row };
+    if (s.settings.requireBreakdown || row.parts?.length) {
+      try {
+        const parsed = parseBreakdown(s, row.weapon, stage, row.parts);
+        row.hits = String(parsed.total);
+        row.breakdown = parsed.scores;
+      } catch (e) {
+        errors.push(`${row.person?.name ?? "Firer"}: ${e.message}`);
+      }
+    }
     try {
       profile = profileFor(s.program, s.variant, row.weapon);
       component = profile.components.find((c) => c.id === stage);
@@ -547,7 +735,7 @@ function scoreRows(s, stage, input, aggregateInput, errors) {
       errors.push(e.message);
     }
     const parsed = component
-      ? parseHits(row.hits, component.max)
+      ? parseHits(row.hits, component.inputMax ?? component.max)
       : { error: "Unsupported weapon." };
     return { ...row, profile, component, parsed };
   });
@@ -586,7 +774,10 @@ function scoreRows(s, stage, input, aggregateInput, errors) {
           `${r.person?.name || "Unknown participant"}: ${r.parsed.error}`,
         );
     if (rows.every((r) => !r.parsed.error)) {
-      const sum = rows.reduce((n, r) => n + r.parsed.value, 0);
+      const sum = rows.reduce(
+        (n, r) => n + Math.min(r.parsed.value, r.component.max),
+        0,
+      );
       if (shared && hasAggregate && aggregate !== null && sum !== aggregate)
         errors.push(
           `Totals do not tally: the hits add up to ${sum}, the detail total is ${aggregate} (difference ${Math.abs(sum - aggregate)}).`,
@@ -613,7 +804,7 @@ function scoreRows(s, stage, input, aggregateInput, errors) {
   };
 }
 export function validateDraft(s, draft) {
-  const roster = members(s, draft.detailId),
+  const roster = availableMembers(s, draft.detailId),
     errors = [];
   const ids = roster.map((p) => p.id),
     rowIds = draft.rows.map((r) => r.participantId);
@@ -634,6 +825,7 @@ export function validateDraft(s, draft) {
       person,
       weapon: person ? rosterWeapon(s, draft.detailId, person) : "",
       hits: row.hits,
+      parts: row.parts,
     };
   });
   const v = scoreRows(s, draft.stage, rows, draft.aggregate, errors);
@@ -652,6 +844,7 @@ export function validateManual(s, stage, entries, aggregate = "") {
     person: s.participants.find((p) => p.id === e.participantId),
     weapon: e.weapon,
     hits: e.hits ?? "",
+    parts: e.parts,
   }));
   if (rows.some((r) => !r.person))
     errors.push("Unexpected participant in score entry.");
@@ -666,7 +859,7 @@ export function sameIds(a, b) {
   );
 }
 function recordDetailAttempt(s, stage, detailId, v, extra = {}) {
-  const at = now(),
+  const at = extra.recordedAt ?? now(),
     detailAttemptId = uid(),
     roster = v.rows.map((r) => ({
       id: r.person.id,
@@ -675,6 +868,9 @@ function recordDetailAttempt(s, stage, detailId, v, extra = {}) {
       weapon: r.weapon,
       profile: structuredClone(r.profile),
       rawHits: r.hits === "" ? null : r.parsed.value,
+      creditedHits:
+        r.hits === "" ? null : Math.min(r.parsed.value, r.component.max),
+      breakdown: r.breakdown ?? null,
       accounted: true,
     }));
   const detailAttempt = {
@@ -685,6 +881,9 @@ function recordDetailAttempt(s, stage, detailId, v, extra = {}) {
     program: s.program,
     variant: s.variant,
     aggregateHits: v.aggregate,
+    rawAggregateHits: v.rows.every((r) => !r.parsed.error)
+      ? v.rows.reduce((n, r) => n + r.parsed.value, 0)
+      : null,
     divisor: v.divisor,
     score: v.score,
     inputMode: v.mode,
@@ -706,6 +905,8 @@ function recordDetailAttempt(s, stage, detailId, v, extra = {}) {
       weapon: row.weapon,
       profile: row.profile,
       rawHits: row.rawHits,
+      creditedHits: row.creditedHits,
+      breakdown: row.breakdown,
       score: v.shared ? v.score : row.rawHits,
       detailAttemptId,
       status: "valid",
@@ -725,9 +926,18 @@ function recordDetailAttempt(s, stage, detailId, v, extra = {}) {
   return detailAttempt;
 }
 export function saveDetail(s, draft) {
+  requireActiveStage(s, draft.stage);
   if (isSkipped(s, draft.stage, `detail:${draft.detailId}`))
-    throw Error("This detail is skipped, so it has not fired. Unskip it to enter scores.");
+    throw Error(
+      "This detail is skipped, so it has not fired. Unskip it to enter scores.",
+    );
   const v = validateDraft(s, draft);
+  const bookings = stageCompositionErrors(
+    s,
+    draft.detailId,
+    draft.stage,
+  ).filter((e) => e.includes("booked in another"));
+  v.errors.push(...bookings);
   if (v.errors.length) throw Error(v.errors.join("\n"));
   const a = recordDetailAttempt(s, draft.stage, draft.detailId, v);
   const detail = s.details.find((d) => d.id === draft.detailId);
@@ -737,13 +947,17 @@ export function saveDetail(s, draft) {
   return a;
 }
 // Replaces a recorded individual score, keeping the original in the history.
-export function editIndividual(s, attemptId, hits, weapon) {
+export function editIndividual(s, attemptId, hits, weapon, parts) {
   const a = s.attempts.find((x) => x.id === attemptId && x.status === "valid");
   if (!a) throw Error("Score not found.");
   if (a.detailAttemptId)
     throw Error("Edit the detail's scores to change this one.");
   const p = s.participants.find((x) => x.id === a.participantId),
     rifle = weapon ?? a.weapon;
+  if (s.settings.requireBreakdown || parts?.length) {
+    const v = parseBreakdown(s, rifle, a.stage, parts);
+    hits = String(v.total);
+  }
   // Check the new score before touching the old one, so a bad edit loses nothing.
   const component = profileFor(s.program, s.variant, rifle).components.find(
       (c) => c.id === a.stage,
@@ -756,7 +970,16 @@ export function editIndividual(s, attemptId, hits, weapon) {
     );
   const listed = s.manualQueue.slice();
   voidAttempt(s, attemptId, "Replaced by an edit");
-  const fresh = recordIndividual(s, p, a.stage, hits, rifle, "Edited");
+  const fresh = recordIndividual(
+    s,
+    p,
+    a.stage,
+    hits,
+    rifle,
+    "Edited",
+    now(),
+    parts,
+  );
   // An edit corrects a past score; it does not answer a redetail still waiting.
   for (const d of s.dispatches)
     if (fresh.closedDispatches.includes(d.id)) d.status = "awaiting";
@@ -764,6 +987,8 @@ export function editIndividual(s, attemptId, hits, weapon) {
   s.manualQueue = listed;
   fresh.revisionOf = attemptId;
   fresh.recordedAt = a.recordedAt;
+  fresh.batchId = a.batchId;
+  fresh.lane = a.lane;
   a.revisedBy = fresh.id;
   audit(s, "Score edited", { attemptId, replacementId: fresh.id });
   return fresh;
@@ -778,11 +1003,16 @@ export function editDetailAttempt(s, detailAttemptId, entries, aggregate = "") {
   if (v.errors.length) throw Error(v.errors.join("\n"));
   const first = s.attempts.find((x) => x.detailAttemptId === detailAttemptId);
   if (first) voidAttempt(s, first.id, "Replaced by an edit");
+  const listed = s.manualQueue.slice();
   const fresh = recordDetailAttempt(s, old.stage, old.detailId, v, {
     manual: old.manual,
     revisionOf: detailAttemptId,
     recordedAt: old.recordedAt,
   });
+  for (const d of s.dispatches)
+    if (fresh.closedDispatches?.includes(d.id)) d.status = "awaiting";
+  fresh.closedDispatches = [];
+  s.manualQueue = listed;
   old.revisedBy = fresh.id;
   for (const x of s.attempts)
     if (x.detailAttemptId === detailAttemptId) x.revisedBy = fresh.id;
@@ -798,7 +1028,9 @@ export function dropTemporaryDetail(s, id) {
   if (
     !d ||
     s.shared.some((a) => a.detailId === id && a.status === "valid") ||
-    s.dispatches.some((x) => x.key === `detail:${id}` && x.status === "awaiting")
+    s.dispatches.some(
+      (x) => x.key === `detail:${id}` && x.status === "awaiting",
+    )
   )
     return false;
   s.details = s.details.filter((x) => x.id !== id);
@@ -815,12 +1047,26 @@ export function recordIndividual(
   weapon = p.weapon,
   reason = "",
   at = now(),
+  parts,
+  batchId = at,
 ) {
   if (detailedStage(s, stage))
-    throw Error("Enter Combat Shoot Stage A and C scores for the whole detail.");
+    throw Error(
+      "Enter Combat Shoot Stage A and C scores for the whole detail.",
+    );
+  if (!reason) {
+    requireActiveStage(s, stage);
+    if (p.skipped) throw Error("Unskip this firer before recording scores.");
+  }
   const profile = profileFor(s.program, s.variant, weapon);
   const component = profile.components.find((c) => c.id === stage);
   if (!component) throw Error("Unknown stage.");
+  let breakdown = null;
+  if (s.settings.requireBreakdown || parts?.length) {
+    const v = parseBreakdown(s, weapon, stage, parts);
+    hits = String(v.total);
+    breakdown = v.scores;
+  }
   const parsed = parseHits(hits, component.max);
   if (parsed.error) throw Error(parsed.error);
   if (weapon !== p.weapon && !isCS(s))
@@ -837,11 +1083,17 @@ export function recordIndividual(
     weapon,
     profile,
     rawHits: parsed.value,
+    breakdown,
     score: parsed.value,
     status: "valid",
     recordedAt: at,
     recorder: "Local device",
     reason,
+    batchId,
+    lane:
+      s.attempts.filter(
+        (x) => x.stage === stage && x.batchId === batchId && !x.revisionOf,
+      ).length + 1,
   };
   s.attempts.push(a);
   a.closedDispatches = closeDispatch(s, stage, `person:${p.id}`);
@@ -1026,7 +1278,8 @@ export function unvoidAttempt(s, id, reason) {
     ? s.shared.find((d) => d.id === a.detailAttemptId)
     : null;
   // A replacement only blocks the original while the replacement itself counts.
-  const replacedBy = a.revisedBy && s.attempts.find((x) => x.id === a.revisedBy),
+  const replacedBy =
+      a.revisedBy && s.attempts.find((x) => x.id === a.revisedBy),
     sharedReplacedBy =
       shared?.revisedBy && s.shared.find((x) => x.id === shared.revisedBy);
   if (replacedBy?.status === "valid" || sharedReplacedBy?.status === "valid")
@@ -1060,7 +1313,7 @@ export function undoAttempt(s, id) {
   for (const d of s.dispatches)
     if (closed?.includes(d.id) && d.status === "scored") d.status = "awaiting";
 }
-// Stage B of ATP and Combat Shoot is 8 rounds and easy, so everyone chases 7/8.
+// Stage B starts at 7/8 before other stages provide a more precise target.
 export const EASY_B = 7;
 export const easyB = (s, stage) =>
   stage === "B" && (isCS(s) || s.program.startsWith("ATP_"));
@@ -1071,17 +1324,22 @@ export const easyB = (s, stage) =>
 export function target(s, p, stage, objective = s.settings.objective) {
   const c = p.profile.components.find((c) => c.id === stage),
     set = s.settings.targets[`${p.weapon}:${stage}:${objective}`];
-  if (easyB(s, stage)) return Math.min(c.max, set ?? EASY_B);
   const others = p.profile.components.filter((x) => x.id !== stage),
     scored = others.filter((x) => best(s, p, x.id) !== null),
     open = others.filter((x) => best(s, p, x.id) === null);
   if (!scored.length)
-    return set ?? Math.ceil((p.profile[objective] * c.max) / p.profile.total);
+    return (
+      set ??
+      (easyB(s, stage)
+        ? EASY_B
+        : Math.ceil((p.profile[objective] * c.max) / p.profile.total))
+    );
   const need =
-      p.profile[objective] -
-      scored.reduce((n, x) => n + best(s, p, x.id), 0),
+      p.profile[objective] - scored.reduce((n, x) => n + best(s, p, x.id), 0),
     share = open.length
-      ? Math.ceil((need * c.max) / (c.max + open.reduce((n, x) => n + x.max, 0)))
+      ? Math.ceil(
+          (need * c.max) / (c.max + open.reduce((n, x) => n + x.max, 0)),
+        )
       : need;
   return Math.min(c.max, Math.max(0, share));
 }
@@ -1090,7 +1348,10 @@ export function target(s, p, stage, objective = s.settings.objective) {
 export function standing(s, p) {
   const r = result(s, p),
     open = p.profile.components.filter((c) => best(s, p, c.id) === null),
-    known = p.profile.components.reduce((n, c) => n + (best(s, p, c.id) ?? 0), 0),
+    known = p.profile.components.reduce(
+      (n, c) => n + (best(s, p, c.id) ?? 0),
+      0,
+    ),
     potential = known + open.reduce((n, c) => n + c.max, 0),
     reach = (level) =>
       r.total !== null
@@ -1137,20 +1398,32 @@ export function advice(s, p, stage) {
 // results out of reach on current scores and the reshoot that would fix them,
 // firers close to failing, poor shooters, weak details, and firers not improving.
 export function insights(s, stage = null) {
-  const people = s.participants.map((p) => ({ p, st: standing(s, p) })),
+  const people = s.participants
+      .filter((p) => !p.skipped)
+      .map((p) => ({ p, st: standing(s, p) })),
     notes = [];
   const add = (level, title, items) =>
     items.length && notes.push({ level, title, items });
   const count = (fn) => people.filter(fn).length;
   add("info", "Overview", [
+    ...(s.participants.some((p) => p.skipped)
+      ? [
+          `${s.participants.filter((p) => p.skipped).length} skipped; ${people.length} available`,
+        ]
+      : []),
     `Marksman: ${count(({ st }) => st.marksman === "made")} made, ${count(({ st }) => st.marksman === "possible")} still possible, ${count(({ st }) => st.marksman === "missed")} not possible on current scores`,
     ...(stage
       ? [
           (() => {
             const q = firingQueue(s, stage),
-              scored = s.participants.filter((p) => best(s, p, stage) !== null)
-                .length,
-              waiting = q.reduce((n, e) => n + e.members.length, 0),
+              scored = s.participants.filter(
+                (p) => best(s, p, stage) !== null,
+              ).length,
+              waiting = new Set(
+                q.flatMap((e) =>
+                  e.members.filter((p) => !p.skipped).map((p) => p.id),
+                ),
+              ).size,
               skipped = q
                 .filter((e) => e.skipped)
                 .reduce((n, e) => n + e.members.length, 0);
@@ -1209,9 +1482,7 @@ export function insights(s, stage = null) {
     for (const x of list) by.set(x.how, [...(by.get(x.how) ?? []), x.name]);
     return [...by].flatMap(([how, who]) =>
       who.length >= 3
-        ? [
-            `${who.length} firers need ${how}: ${who.slice(0, 3).join(", ")}${who.length > 3 ? ` and ${who.length - 3} more` : ""}`,
-          ]
+        ? [`${who.length} firers need ${how}: ${who.join(", ")}`]
         : who.map((n) => `${n}: needs ${how}`),
     );
   };
@@ -1263,18 +1534,21 @@ export function insights(s, stage = null) {
       // shooter line is just who they are, where they fire and what they hit.
       // A figure only where one was written down; a detail total is the
       // detail's business, not a score to hang on a firer.
-      weakFirers(s, stage).map(({ p }) => {
-        const d = detailed && s.details.find((x) => x.id === p.detailId),
-          a = detailed ? null : advice(s, p, stage),
-          own = firerHits(s, p, stage);
-        return `${p.name}${d ? ` (${d.name})` : ""}${own !== null ? `: ${own}/${max(p)}` : ""}${a ? `, ${a.text}` : ""}`;
-      }),
+      weakFirers(s, stage)
+        .filter(({ p }) => !p.skipped)
+        .map(({ p }) => {
+          const d = detailed && s.details.find((x) => x.id === p.detailId),
+            a = detailed ? null : advice(s, p, stage),
+            own = firerHits(s, p, stage);
+          return `${p.name}${d ? ` (${d.name})` : ""}${own !== null ? `: ${own}/${max(p)}` : ""}${a ? `, ${a.text}` : ""}`;
+        }),
     );
     // Several tries without getting better: coach them, or stop spending time.
     add(
       "warn",
       "Not improving",
       s.participants
+        .filter((p) => !p.skipped)
         .map((p) => ({
           p,
           vals: s.attempts
@@ -1285,7 +1559,16 @@ export function insights(s, stage = null) {
                 a.status === "valid" &&
                 eligible(s, p, a),
             )
-            .map((a) => (detailed ? a.rawHits : a.score))
+            .map((a) =>
+              detailed
+                ? a.rawHits === null
+                  ? null
+                  : Math.min(
+                      a.rawHits,
+                      a.profile.components.find((c) => c.id === stage).max,
+                    )
+                : a.score,
+            )
             .filter((v) => v !== null && v !== undefined),
         }))
         .filter(
@@ -1294,12 +1577,16 @@ export function insights(s, stage = null) {
             Math.max(...vals.slice(-2)) <= Math.max(...vals.slice(0, -2)) &&
             !nothingToGain(s, p, stage),
         )
-        .map(({ p, vals }) => `${p.name}: ${vals.length} tries (${vals.join(", ")})`),
+        .map(
+          ({ p, vals }) =>
+            `${p.name}: ${vals.length} tries (${vals.join(", ")})`,
+        ),
     );
     if (detailed) {
       const records = (d) =>
         s.shared.filter(
-          (a) => a.detailId === d.id && a.stage === stage && a.status === "valid",
+          (a) =>
+            a.detailId === d.id && a.stage === stage && a.status === "valid",
         );
       // A detail is weak when its best average is under what a pass asks of
       // the stage; the advice is what its members are aiming for.
@@ -1309,7 +1596,9 @@ export function insights(s, stage = null) {
         stageDetails(s, stage)
           .map((d) => {
             const list = records(d),
-              people = members(s, d.id);
+              // Only the firers who will actually fire it again; a skipped
+              // firer's requirement must not drive the detail's advice.
+              people = availableMembers(s, d.id);
             if (!list.length || !people.length) return null;
             const top = list.reduce((a, b) => (b.score > a.score ? b : a));
             // Aim for the highest Marksman recommendation among its firers, or
@@ -1323,15 +1612,26 @@ export function insights(s, stage = null) {
             // Weak against what its own firers are aiming at, not a bare pass.
             if (top.score >= (shown ? shown.score : passPace(people[0], stage)))
               return null;
-            const
-            cmax = people[0].profile.components.find((c) => c.id === stage)
-              .max;
+            const cmax = people[0].profile.components.find(
+              (c) => c.id === stage,
+            ).max;
             return `${d.name}: averages ${top.score}/${cmax}${shown ? `, ${shown.text}` : ""}`;
           })
           .filter(Boolean),
       );
     }
   }
+  if (!stage)
+    add(
+      "info",
+      "Still to complete",
+      people
+        .filter(({ st }) => st.open.length)
+        .map(
+          ({ p, st }) =>
+            `${p.name}: ${st.open.map((c) => c.label).join(", ")}; ${st.known} hits recorded so far`,
+        ),
+    );
   return notes;
 }
 export function goal(s, p, stage) {
@@ -1359,7 +1659,7 @@ export function entities(s, stage) {
     ? stageDetails(s, stage).map((d) => ({
         key: `detail:${d.id}`,
         detail: d,
-        members: members(s, d.id),
+        members: availableMembers(s, d.id),
       }))
     : s.participants.map((p) => ({
         key: `person:${p.id}`,
@@ -1377,7 +1677,7 @@ export function stageDetails(s, stage) {
   );
 }
 export function stageMembers(s, detailId) {
-  return members(s, detailId).map((p) => ({
+  return availableMembers(s, detailId).map((p) => ({
     ...p,
     weapon: rosterWeapon(s, detailId, p),
   }));
@@ -1385,8 +1685,34 @@ export function stageMembers(s, detailId) {
 export function stageCompositionErrors(s, detailId, stage) {
   if (!isCS(s)) return [];
   const draft = s.drafts[draftKey(detailId, stage)],
-    roster = members(s, detailId);
+    roster = availableMembers(s, detailId);
   if (!roster.length) return ["Detail has no participants."];
+  const booked = roster.filter(
+    (p) =>
+      s.dispatches.some(
+        (d) =>
+          d.status === "awaiting" &&
+          d.stage === stage &&
+          d.detailId !== detailId &&
+          d.roster.some((m) => m.id === p.id),
+      ) ||
+      s.details.some(
+        (d) =>
+          d.id !== detailId &&
+          d.temporary &&
+          !d.retired &&
+          d.stage === stage &&
+          d.memberIds.includes(p.id) &&
+          !s.shared.some(
+            (a) =>
+              a.detailId === d.id && a.stage === stage && a.status === "valid",
+          ),
+      ),
+  );
+  if (booked.length)
+    return [
+      `${booked.map((p) => p.name).join(", ")} booked in another detail. Finish or cancel that detail first.`,
+    ];
   if (
     draft &&
     !sameIds(
@@ -1409,6 +1735,7 @@ export function setPriority(s, key, tag) {
 // Priority and the chosen order sort this list only, never the firing queue.
 export function queue(s, stage) {
   const rows = entities(s, stage)
+    .filter((e) => e.members.length && e.members.some((p) => !p.skipped))
     .filter(
       (e) =>
         !s.dispatches.some(
@@ -1500,7 +1827,7 @@ export function queue(s, stage) {
             ].join("; ")
           : `${risk.length ? "at risk of failing: " : ""}best ${furthest.v}, ${say(furthest)}`;
     // A permanent detail that has had its second go and still carries a poor
-    // shooter: it may fire again, but a detail built around them clears faster.
+    // shooter: offer an optional different mix without promising a faster result.
     e.holdingBack =
       e.detail && !e.detail.temporary
         ? weakFirers(s, stage)
@@ -1512,6 +1839,15 @@ export function queue(s, stage) {
             )
             .map((x) => x.p)
         : [];
+    e.lastLane =
+      s.attempts
+        .filter(
+          (a) =>
+            a.status === "valid" &&
+            a.stage === stage &&
+            e.members.some((p) => p.id === a.participantId),
+        )
+        .at(-1)?.lane ?? 0;
     e.last = Math.max(
       0,
       ...s.attempts
@@ -1535,20 +1871,32 @@ export function queue(s, stage) {
       (s.settings.order === "smart"
         ? a.smart - b.smart || b.gap - a.gap
         : s.settings.order === "highest"
-        ? fraction(b) - fraction(a)
-        : s.settings.order === "first"
-          ? a.last - b.last
-          : fraction(a) - fraction(b)),
+          ? fraction(b) - fraction(a)
+          : s.settings.order === "first"
+            ? a.last - b.last || (a.lastLane ?? 0) - (b.lastLane ?? 0)
+            : fraction(a) - fraction(b)),
   );
 }
 export function dispatch(s, stage, keys) {
+  requireActiveStage(s, stage);
   // Keep the order the redetailer chose, so the score table follows it.
   const all = entities(s, stage),
-    selected = keys.map((key) => all.find((e) => e.key === key)).filter(Boolean);
+    selected = keys
+      .map((key) => all.find((e) => e.key === key))
+      .filter(Boolean);
   if (!selected.length) throw Error("Select firers to redetail.");
   for (const e of selected) {
-    const errors = e.detail ? stageCompositionErrors(s, e.detail.id, stage) : [];
-    if (errors.length) throw Error(`${e.detail.name}: ${errors.join(" ")}`);
+    const errors = e.detail
+      ? stageCompositionErrors(s, e.detail.id, stage)
+      : [];
+    if (e.members.some((p) => p.skipped))
+      errors.push("Unskip the firer first.");
+    // An individual entity has no detail, and a skipped firer is exactly the
+    // case that reaches here, so name the firer rather than a detail.
+    if (errors.length)
+      throw Error(
+        `${e.detail?.name ?? e.members[0]?.name ?? "This entry"}: ${errors.join(" ")}`,
+      );
     if (
       s.dispatches.some(
         (d) => d.key === e.key && d.stage === stage && d.status === "awaiting",
@@ -1647,7 +1995,9 @@ export function owesFirst(s, stage, e) {
   return e.detail?.temporary
     ? !s.shared.some(
         (a) =>
-          a.detailId === e.detail.id && a.stage === stage && a.status === "valid",
+          a.detailId === e.detail.id &&
+          a.stage === stage &&
+          a.status === "valid",
       )
     : e.members.some((p) => best(s, p, stage) === null);
 }
@@ -1655,6 +2005,7 @@ export function owesFirst(s, stage, e) {
 // temporary detail that has not put its scores in yet. Building another detail
 // around them would double-book them on the range.
 export function committed(s, stage, p) {
+  if (p.skipped) return true;
   if (
     s.dispatches.some(
       (d) =>
@@ -1677,7 +2028,9 @@ export function committed(s, stage, p) {
 }
 // Firers in a proposed detail who are already booked elsewhere for this stage.
 export function overlapping(s, stage, ids) {
-  return s.participants.filter((p) => ids.includes(p.id) && committed(s, stage, p));
+  return s.participants.filter(
+    (p) => ids.includes(p.id) && committed(s, stage, p),
+  );
 }
 // How many times a firer's own permanent detail has scored this stage. The
 // detail gets a second go before it is worth breaking up.
@@ -1720,7 +2073,13 @@ export function hitsRange(s, p, stage) {
     high = null;
   for (const a of scoreHistory(s, p, stage)) {
     let lo, hi;
-    if (!detailed || a.rawHits !== null) lo = hi = detailed ? a.rawHits : a.score;
+    if (!detailed || a.rawHits !== null)
+      lo = hi = detailed
+        ? Math.min(
+            a.rawHits,
+            a.profile.components.find((c) => c.id === stage).max,
+          )
+        : a.score;
     else {
       const d = s.shared.find((x) => x.id === a.detailAttemptId),
         m = a.profile.components.find((c) => c.id === stage).max;
@@ -1745,7 +2104,16 @@ export function firerHits(s, p, stage) {
           a.status === "valid" &&
           eligible(s, p, a),
       )
-      .map((a) => (detailed ? a.rawHits : a.score))
+      .map((a) =>
+        detailed
+          ? a.rawHits === null
+            ? null
+            : Math.min(
+                a.rawHits,
+                a.profile.components.find((c) => c.id === stage).max,
+              )
+          : a.score,
+      )
       .filter((v) => v !== null && v !== undefined);
   return raw.length ? Math.max(...raw) : null;
 }
@@ -1814,7 +2182,7 @@ export function buildAround(s, stage, weakId) {
       ...s.participants.filter((p) => committed(s, stage, p)).map((p) => p.id),
     ]),
     pool = s.participants
-      .filter((p) => p.id !== weakId && !skip.has(p.id))
+      .filter((p) => !p.skipped && p.id !== weakId && !skip.has(p.id))
       .map((p) => ({
         p,
         hits: hitsRange(s, p, stage).low ?? best(s, p, stage),
@@ -1832,7 +2200,9 @@ export function buildAround(s, stage, weakId) {
     rest = pool
       .filter((x) => x.hits < pace(x.p))
       .toSorted((a, b) => own(a) - own(b) || b.hits - a.hits),
-    chosen = [{ p: weak, hits: firerHits(s, weak, stage) ?? 0, cleared: false }];
+    chosen = [
+      { p: weak, hits: firerHits(s, weak, stage) ?? 0, cleared: false },
+    ];
   let nonSAR = NON_SAR.has(weak.weapon) ? 1 : 0;
   const take = (list, upTo) => {
     for (const x of list) {
@@ -1849,7 +2219,10 @@ export function buildAround(s, stage, weakId) {
   // divides the weak firer's hits across more people, so fill it right up
   // from other details. Their own detail only tops it up to the minimum,
   // since taking more just rebuilds the detail they already fire in.
-  take(rest.filter((x) => !own(x)), rule.max);
+  take(
+    rest.filter((x) => !own(x)),
+    rule.max,
+  );
   take(rest.filter(own), rule.min);
   const known = chosen.every((x) => x.hits !== null),
     // Good shooters who still need this stage are the best partners, so say
@@ -1858,6 +2231,7 @@ export function buildAround(s, stage, weakId) {
     borrowed = chosen.filter((x) => x.p.id !== weakId && x.cleared),
     held = s.participants.filter(
       (p) =>
+        !p.skipped &&
         p.id !== weakId &&
         skip.has(p.id) &&
         isStrong(s, p, stage) &&
@@ -1897,6 +2271,7 @@ export function planRest(s, stage, weakId, picked) {
     hits = (p) => hitsRange(s, p, stage).low ?? best(s, p, stage),
     rest = members(s, home.id).filter(
       (p) =>
+        !p.skipped &&
         !picked.includes(p.id) &&
         !queued.has(p.id) &&
         best(s, p, stage) !== null &&
@@ -1955,6 +2330,8 @@ export function isSkipped(s, stage, key) {
 // A skip holds only for the attempt it was made on, so it clears itself once
 // that entry is scored.
 function skipOf(s, stage, e) {
+  if (!e.detail && e.members[0]?.skipped)
+    return { at: s.updatedAt, attempt: nextAttempt(s, e.members, stage) };
   const skip = s.skips?.[`${stage}:${e.key}`];
   return skip?.attempt === nextAttempt(s, e.members, stage) ? skip : null;
 }
@@ -2019,6 +2396,40 @@ export function historyFeed(s) {
         lines: [],
         people: [],
       });
+  for (const a of s.audit) {
+    if (
+      ![
+        "Firer skipped",
+        "Firer unskipped",
+        "Stage unlocked",
+        "Priority changed",
+        "Skipped in the firing order",
+        "Unskipped",
+        "Redetail canceled",
+      ].includes(a.action)
+    )
+      continue;
+    const ids = a.participantId
+      ? [a.participantId]
+      : a.key?.startsWith("person:")
+        ? [a.key.slice(7)]
+        : a.key?.startsWith("detail:")
+          ? members(s, a.key.slice(7)).map((p) => p.id)
+          : a.dispatchId
+            ? (s.dispatches
+                .find((d) => d.id === a.dispatchId)
+                ?.roster.map((p) => p.id) ?? [])
+            : [];
+    entries.push({
+      id: `audit:${a.id}`,
+      at: a.at,
+      kind: "operation",
+      stage: a.stage ?? null,
+      title: a.action,
+      lines: [a.tag ? `Priority: ${a.tag}` : ""],
+      people: ids.map((id) => ({ id, name: nameOf(id) })),
+    });
+  }
   // The nominal roll: who is on it, and every change made to it.
   const changes = [];
   let added = 0,
@@ -2097,13 +2508,18 @@ export function historyFeed(s) {
         id: m.id,
         name: nameOf(m.id),
         hits: m.rawHits,
+        creditedHits: m.creditedHits,
+        max:
+          m.profile.components.find((c) => c.id === d.stage)?.inputMax ??
+          m.profile.components.find((c) => c.id === d.stage)?.max,
+        breakdown: m.breakdown,
       })),
     });
   // Scores confirmed together share one time, so they are one entry.
   const batches = new Map();
   for (const a of s.attempts) {
     if (a.detailAttemptId) continue;
-    const key = `${a.stage}\u0000${a.recordedAt}`;
+    const key = `${a.stage}\u0000${a.batchId ?? a.recordedAt}`;
     batches.set(key, [...(batches.get(key) ?? []), a]);
   }
   for (const [key, list] of batches)
@@ -2118,6 +2534,9 @@ export function historyFeed(s) {
         attemptId: a.id,
         name: nameOf(a.participantId),
         hits: a.score,
+        max: a.profile.components.find((c) => c.id === a.stage)?.max,
+        lane: a.lane,
+        breakdown: a.breakdown,
         voided: a.status !== "valid",
         reason: a.correction?.reason ?? "",
       })),
@@ -2153,6 +2572,7 @@ export function historyFeed(s) {
         attemptId: a.id,
         title: nameOf(a.participantId),
         score: a.score,
+        max: a.profile.components.find((c) => c.id === a.stage)?.max,
         reason: a.correction.reason,
         people: [{ id: a.participantId, name: nameOf(a.participantId) }],
       });
@@ -2206,8 +2626,11 @@ export function historyFeed(s) {
   return entries.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
 }
 export function exportCsv(s) {
-  const components = profileFor(s.program, s.variant, s.settings.weapon)
-      .components,
+  const components = profileFor(
+      s.program,
+      s.variant,
+      s.settings.weapon,
+    ).components,
     cs = isCS(s);
   const rows = [
     [
@@ -2219,6 +2642,7 @@ export function exportCsv(s) {
       "Out of",
       "Result",
       ...components.map((c) => `${c.label} attempt ID`),
+      ...components.map((c) => `${c.label} individual breakdown`),
     ],
   ];
   for (const p of s.participants) {
@@ -2232,6 +2656,13 @@ export function exportCsv(s) {
       p.profile.total,
       r.status,
       ...r.bestAttemptIds,
+      ...r.bestAttemptIds.map(
+        (id) =>
+          s.attempts
+            .find((a) => a.id === id)
+            ?.breakdown?.map((p) => `${p.label}: ${p.hits}/${p.max}`)
+            .join("; ") ?? "",
+      ),
     ]);
   }
   return rows
@@ -2249,119 +2680,22 @@ export function exportCsv(s) {
     )
     .join("\r\n");
 }
-// Upgrades saved data from earlier app versions. Schema 2 kept one roster per
-// shoot type and listed rifles individually; rifles are now grouped.
-export function migrateStore(data) {
-  if (data?.schema === 3) return repairWeapons(data);
-  if (data?.schema !== 2 || !data.shoots) throw Error("Invalid Detail IC backup.");
-  const store = newStore();
-  const old = [
-    ...Object.values(data.shoots),
-    ...(data.archives || [])
-      .filter((a) => a.shoot)
-      .map((a) => ({ ...a.shoot, name: a.label })),
-  ];
-  for (const s of old) {
-    if (!s.participants?.length && !s.attempts?.length) continue;
-    const variant = s.variant || "standard",
-      map = (w) => weaponGroup(s.program, variant, w),
-      profile = (w) => profileFor(s.program, variant, w);
-    s.id ||= uid();
-    s.variant = variant;
-    s.name ||= typeLabel(s.program, variant);
-    s.createdAt ||= s.audit?.[0]?.at || now();
-    s.priorities ||= {};
-    for (const p of s.participants) {
-      p.weapon = map(p.weapon);
-      p.profile = profile(p.weapon);
-      if (!isCS(s)) p.detailId = null;
-    }
-    for (const a of s.attempts) {
-      a.weapon = map(a.weapon);
-      a.profile = profile(a.weapon);
-    }
-    for (const d of s.shared)
-      for (const m of d.roster) {
-        m.weapon = map(m.weapon);
-        m.profile = profile(m.weapon);
-      }
-    for (const d of s.dispatches)
-      for (const m of d.roster) m.weapon = map(m.weapon);
-    if (isCS(s))
-      for (const d of Object.values(s.drafts))
-        for (const r of d.rows) r.weapon = map(r.weapon);
-    else s.drafts = {};
-    s.settings.weapon = map(s.settings.weapon);
-    s.settings.targets = Object.fromEntries(
-      Object.entries(s.settings.targets || {}).map(([key, value]) => {
-        const [w, ...rest] = key.split(":");
-        return [[map(w), ...rest].join(":"), value];
-      }),
-    );
-    store.presets[typeKey(s.program, variant)] ??= {
-      weapon: s.settings.weapon,
-      objective: s.settings.objective,
-      targets: structuredClone(s.settings.targets),
-    };
-    store.shoots.push(s);
-  }
-  store.active = store.shoots[0]?.id ?? null;
-  return store;
-}
-// Maps rifles that are no longer offered onto the option that replaces them.
-export function repairWeapons(store) {
-  // A preset names a rifle and keys its thresholds by it. Left behind, it
-  // makes Settings ask for a profile that no longer exists.
-  for (const [key, pr] of Object.entries(store.presets ?? {})) {
-    const [program, variant = "standard"] = key.split(":"),
-      options = PROGRAMS[program] ? weaponsFor(program, variant) : [];
-    if (!options.length) continue;
-    const map = (w) =>
-      options.includes(w) ? w : weaponGroup(program, variant, w);
-    pr.weapon = map(pr.weapon);
-    pr.targets = Object.fromEntries(
-      Object.entries(pr.targets ?? {}).map(([slot, value]) => {
-        const [w, ...rest] = slot.split(":");
-        return [[map(w), ...rest].join(":"), value];
-      }),
-    );
-  }
-  for (const s of store.shoots ?? []) {
-    const options = weaponsFor(s.program, s.variant),
-      map = (w) =>
-        options.includes(w) ? w : weaponGroup(s.program, s.variant, w),
-      profile = (w) => profileFor(s.program, s.variant, w);
-    for (const p of s.participants) {
-      p.weapon = map(p.weapon);
-      if (p.profile?.version !== VERSION) p.profile = profile(p.weapon);
-    }
-    for (const a of s.attempts) {
-      a.weapon = map(a.weapon);
-      if (a.profile?.version !== VERSION) a.profile = profile(a.weapon);
-    }
-    for (const d of s.shared ?? [])
-      for (const m of d.roster) {
-        m.weapon = map(m.weapon);
-        if (m.profile?.version !== VERSION) m.profile = profile(m.weapon);
-      }
-    for (const d of s.dispatches ?? [])
-      for (const m of d.roster) m.weapon = map(m.weapon);
-    for (const d of s.details ?? [])
-      if (d.weapons)
-        for (const key of Object.keys(d.weapons))
-          d.weapons[key] = map(d.weapons[key]);
-    s.settings.weapon = map(s.settings.weapon);
-  }
-  return store;
-}
 export function validateStore(store) {
   if (
-    store?.schema !== 3 ||
+    store?.schema !== 4 ||
     !Array.isArray(store.shoots) ||
     !store.presets ||
     typeof store.presets !== "object"
   )
-    throw Error("Invalid Detail IC backup.");
+    throw Error("Use a V2 backup. Earlier backup formats are not supported.");
+  const unique = (rows, label) => {
+    if (
+      rows.some((x) => typeof x.id !== "string" || !x.id) ||
+      new Set(rows.map((x) => x.id)).size !== rows.length
+    )
+      throw Error(`Invalid or duplicate ${label} IDs.`);
+  };
+  unique(store.shoots, "shoot");
   for (const s of store.shoots) {
     if (
       typeof s.id !== "string" ||
@@ -2382,6 +2716,25 @@ export function validateStore(store) {
       !s.settings.targets
     )
       throw Error("Invalid shoot data.");
+    unique(s.participants, "participant");
+    unique(s.attempts, "attempt");
+    unique(s.shared, "detail attempt");
+    unique(s.details, "detail");
+    unique(s.audit, "audit");
+    if (s.activeStage && !stages(s).some((c) => c.id === s.activeStage))
+      throw Error("Invalid active stage.");
+    for (const [key, parts] of Object.entries(s.settings.breakdowns ?? {})) {
+      const split = key.lastIndexOf(":"),
+        weapon = key.slice(0, split),
+        stage = key.slice(split + 1);
+      const component = profileFor(
+        s.program,
+        s.variant,
+        weapon,
+      ).components.find((c) => c.id === stage);
+      if (!component) throw Error("Invalid breakdown stage.");
+      validateBreakdownLayout(parts, component.inputMax ?? component.max);
+    }
     for (const p of s.participants) {
       const profile = profileFor(s.program, s.variant, p.weapon);
       if (
@@ -2391,20 +2744,67 @@ export function validateStore(store) {
         (isCS(s) &&
           p.detailId !== null &&
           !s.details.some((d) => d.id === p.detailId)) ||
-        p.profile?.version !== VERSION ||
+        typeof p.profile?.version !== "string" ||
+        !p.profile.components?.length ||
         p.profile.id !== profile.id
       )
         throw Error("Invalid participant or profile.");
     }
     for (const a of s.attempts) {
-      profileFor(s.program, s.variant, a.weapon);
+      const profile = profileFor(s.program, s.variant, a.weapon),
+        component = profile.components.find((c) => c.id === a.stage);
       if (
         !Number.isInteger(a.score) ||
         a.score < 0 ||
-        !["valid", "void"].includes(a.status) ||
-        !a.profile
+        !component ||
+        a.score > component.max ||
+        !s.participants.some((p) => p.id === a.participantId) ||
+        a.profile?.id !== profile.id ||
+        typeof a.profile?.version !== "string" ||
+        !["valid", "void"].includes(a.status)
       )
         throw Error("Invalid score record.");
+      if (a.breakdown?.length) {
+        validateBreakdownLayout(
+          a.breakdown,
+          component.inputMax ?? component.max,
+        );
+        if (
+          a.breakdown.some((p) => parseHits(p.hits, p.max).error) ||
+          a.breakdown.reduce((n, p) => n + p.hits, 0) !== a.rawHits
+        )
+          throw Error("Invalid sub-stage score record.");
+      }
+      if (
+        a.detailAttemptId &&
+        !s.shared.some(
+          (d) =>
+            d.id === a.detailAttemptId &&
+            d.roster.some((p) => p.id === a.participantId),
+        )
+      )
+        throw Error("Score has no matching detail attempt.");
+    }
+    for (const d of s.shared) {
+      if (
+        !Array.isArray(d.roster) ||
+        !d.roster.length ||
+        d.divisor !== d.roster.length ||
+        !Number.isInteger(d.aggregateHits) ||
+        d.aggregateHits < 0 ||
+        d.score !== Math.floor(d.aggregateHits / d.divisor)
+      )
+        throw Error("Invalid detail score.");
+      unique(d.roster, "detail roster");
+      const max = d.roster.reduce(
+        (n, p) =>
+          n +
+          profileFor(s.program, s.variant, p.weapon).components.find(
+            (c) => c.id === d.stage,
+          ).max,
+        0,
+      );
+      if (d.aggregateHits > max) throw Error("Detail score exceeds maximum.");
     }
   }
   if (store.active !== null && !store.shoots.some((s) => s.id === store.active))

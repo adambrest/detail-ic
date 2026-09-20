@@ -1,14 +1,20 @@
 const { chromium, webkit } = require("playwright");
 const assert = require("node:assert/strict");
 const { startServer } = require("./server.cjs");
-const tab = (page, name) =>
-  page.locator("#tabs").getByRole("button", { name, exact: true }).click();
+const tab = async (page, name) => {
+  await page
+    .locator("#tabs")
+    .getByRole("button", { name, exact: true })
+    .click();
+  const unlock = page.locator("[data-unlock-stage]");
+  if (await unlock.count()) await unlock.click();
+};
 const click = (page, name) =>
   page.getByRole("button", { name, exact: true }).click();
 const waitFor = (page, fn, arg = null) =>
   page.waitForFunction(fn, arg, { timeout: 5000 });
 const stored = (page) =>
-  page.evaluate(() => JSON.parse(localStorage.getItem("detail-ic-v2")));
+  page.evaluate(() => JSON.parse(localStorage.getItem("detail-ic-v2-store")));
 async function inViewport(page, locator) {
   const box = await locator.boundingBox(),
     size = page.viewportSize();
@@ -65,6 +71,7 @@ async function addNames(page, names) {
 
     // Settings: no switches, no rifle choice for BTP, thresholds save as typed.
     await tab(page, "Settings");
+    await page.locator("#require-breakdown").uncheck();
     assert.equal(await page.getByRole("switch").count(), 0);
     assert.ok(!(await page.locator("#main").innerText()).includes("Version"));
     await page.locator("[data-expand=BTP]").click();
@@ -86,9 +93,8 @@ async function addNames(page, names) {
     await waitFor(
       page,
       () =>
-        JSON.parse(localStorage.getItem("detail-ic-v2")).presets.BTP.targets[
-          "SAR21:A:marksman"
-        ] === 14,
+        JSON.parse(localStorage.getItem("detail-ic-v2-store")).presets.BTP
+          .targets["SAR21:A:marksman"] === 14,
     );
     await click(page, "Reset");
     assert.equal(await threshold.inputValue(), "13");
@@ -118,7 +124,7 @@ async function addNames(page, names) {
     await nameBox.press("Tab");
     await waitFor(page, () =>
       JSON.parse(
-        localStorage.getItem("detail-ic-v2"),
+        localStorage.getItem("detail-ic-v2-store"),
       ).shoots[0].participants.some((p) => p.name === "Chris Wong Jr"),
     );
     const renamed = page.getByRole("textbox", {
@@ -140,7 +146,10 @@ async function addNames(page, names) {
       (await page.locator("#tabs .on").innerText()).includes("Participants"),
     );
     assert.ok(
-      await page.getByRole("textbox", { name: /^Name for / }).first().isDisabled(),
+      await page
+        .getByRole("textbox", { name: /^Name for / })
+        .first()
+        .isDisabled(),
     );
     assert.equal(
       await page.getByRole("button", { name: /^Go to / }).count(),
@@ -155,10 +164,20 @@ async function addNames(page, names) {
         "Opens once the first Stage A · Day scores are in.",
       ),
     );
-    // The stage tab is the firing order, starting as the roster.
+    // The display starts in roster order without implying who must fire next.
     assert.equal(await page.locator("[data-individual] td.seat").count(), 3);
     assert.ok(
-      (await page.locator("tr.next").innerText()).includes("Alex Tan"),
+      (
+        await page.locator("[data-individual] tbody tr").first().innerText()
+      ).includes("Alex Tan"),
+    );
+    assert.equal(await page.locator(".next").count(), 0);
+    assert.equal(
+      await page
+        .locator(".badge")
+        .filter({ hasText: /^Next$/ })
+        .count(),
+      0,
     );
     await enterHits(page, "Alex Tan", "8");
     await click(page, "Confirm scores");
@@ -167,9 +186,7 @@ async function addNames(page, names) {
       page,
       () => document.querySelectorAll(".queue-row").length === 1,
     );
-    const firing = await page
-      .locator("[data-individual] tbody")
-      .innerText();
+    const firing = await page.locator("[data-individual] tbody").innerText();
     assert.ok(/Benjamin Lee[\s\S]*Chris Wong/.test(firing), firing);
     assert.ok(!firing.includes("Alex Tan"), firing);
     await enterHits(page, "Benjamin Lee", "11");
@@ -192,9 +209,7 @@ async function addNames(page, names) {
       .getByRole("button", { name: "Benjamin Lee priority: normal" })
       .click();
     await waitFor(page, () =>
-      document
-        .querySelector(".queue-row")
-        ?.innerText.includes("Benjamin Lee"),
+      document.querySelector(".queue-row")?.innerText.includes("Benjamin Lee"),
     );
     await page.screenshot({
       path: `tests/${name}-desktop.png`,
@@ -243,9 +258,17 @@ async function addNames(page, names) {
     await page.locator(".past-scores > summary").first().click();
 
     // A recorded score can be edited from the history.
-    await page.getByRole("button", { name: "Options for Alex Tan" }).first().click();
-    await page.locator("#dialog").getByRole("button", { name: "History", exact: true }).click();
-    assert.ok((await page.locator("#dialog").innerText()).includes("attempt 2"));
+    await page
+      .getByRole("button", { name: "Options for Alex Tan" })
+      .first()
+      .click();
+    await page
+      .locator("#dialog")
+      .getByRole("button", { name: "History", exact: true })
+      .click();
+    assert.ok(
+      (await page.locator("#dialog").innerText()).includes("attempt 2"),
+    );
     await page
       .locator("#dialog")
       .getByRole("button", { name: "Edit" })
@@ -257,8 +280,14 @@ async function addNames(page, names) {
     await click(page, "Close");
     await page.locator(".past-scores > summary").first().click();
     assert.equal(await alex.locator(".results b").innerText(), "15");
-    await page.getByRole("button", { name: "Options for Alex Tan" }).first().click();
-    await page.locator("#dialog").getByRole("button", { name: "History", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Options for Alex Tan" })
+      .first()
+      .click();
+    await page
+      .locator("#dialog")
+      .getByRole("button", { name: "History", exact: true })
+      .click();
     await page
       .locator("#dialog")
       .getByRole("button", { name: "Edit" })
@@ -349,7 +378,9 @@ async function addNames(page, names) {
     await page
       .getByRole("combobox", { name: "Rifle for Farah Ali" })
       .selectOption("LMG");
-    assert.ok((await page.locator(".issues").innerText()).includes("non-SAR21"));
+    assert.ok(
+      (await page.locator(".issues").innerText()).includes("non-SAR21"),
+    );
     await page
       .getByRole("combobox", { name: "Rifle for Farah Ali" })
       .selectOption("SAR21/SAR21 SS/M203");
@@ -362,9 +393,9 @@ async function addNames(page, names) {
       .getByRole("textbox", { name: /Add a firer to Detail 1/ })
       .press("Tab");
     await waitFor(page, () =>
-      JSON.parse(localStorage.getItem("detail-ic-v2")).shoots[1].participants.some(
-        (p) => p.name === "Nadia Goh",
-      ),
+      JSON.parse(
+        localStorage.getItem("detail-ic-v2-store"),
+      ).shoots[1].participants.some((p) => p.name === "Nadia Goh"),
     );
     const options = await page
       .getByRole("combobox", { name: "Detail for Nadia Goh" })
@@ -375,35 +406,44 @@ async function addNames(page, names) {
     await page.getByRole("button", { name: "Remove Nadia Goh" }).click();
     await waitFor(page, () =>
       JSON.parse(
-        localStorage.getItem("detail-ic-v2"),
+        localStorage.getItem("detail-ic-v2-store"),
       ).shoots[1].participants.every((p) => p.name !== "Nadia Goh"),
     );
 
     // A firer can be dragged onto another to set the order inside a detail.
     const detailOne = () =>
       page.evaluate(() => {
-        const shoot = JSON.parse(localStorage.getItem("detail-ic-v2")).shoots[1],
+        const shoot = JSON.parse(localStorage.getItem("detail-ic-v2-store"))
+            .shoots[1],
           detail = shoot.details.find((d) => d.name === "Detail 1");
         return shoot.participants
           .filter((p) => p.detailId === detail.id)
           .map((p) => ({ id: p.id, name: p.name }));
       });
     const seats = await detailOne();
-    await page.evaluate(([from, onto]) => {
-      const dt = new DataTransfer(),
-        fire = (el, type) =>
-          el.dispatchEvent(
-            new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }),
-          );
-      fire(document.querySelector(`[data-drag="${from}"]`), "dragstart");
-      const target = document.querySelector(`[data-drop-row="${onto}"]`);
-      fire(target, "dragover");
-      fire(target, "drop");
-    }, [seats.at(-1).id, seats[0].id]);
+    await page.evaluate(
+      ([from, onto]) => {
+        const dt = new DataTransfer(),
+          fire = (el, type) =>
+            el.dispatchEvent(
+              new DragEvent(type, {
+                bubbles: true,
+                cancelable: true,
+                dataTransfer: dt,
+              }),
+            );
+        fire(document.querySelector(`[data-drag="${from}"]`), "dragstart");
+        const target = document.querySelector(`[data-drop-row="${onto}"]`);
+        fire(target, "dragover");
+        fire(target, "drop");
+      },
+      [seats.at(-1).id, seats[0].id],
+    );
     await waitFor(
       page,
       ([first, moved]) => {
-        const shoot = JSON.parse(localStorage.getItem("detail-ic-v2")).shoots[1],
+        const shoot = JSON.parse(localStorage.getItem("detail-ic-v2-store"))
+            .shoots[1],
           names = shoot.participants.map((p) => p.name);
         return names.indexOf(moved) < names.indexOf(first);
       },
@@ -442,7 +482,9 @@ async function addNames(page, names) {
       () => document.querySelectorAll(".score-panel").length === 1,
     );
     assert.ok(
-      (await page.locator("#main").innerText()).includes("Show 1 scored detail"),
+      (await page.locator("#main").innerText()).includes(
+        "Show 1 scored detail",
+      ),
     );
     assert.equal(
       (await stored(page)).shoots[1].attempts.filter((a) => a.stage === "A")[0]
@@ -477,9 +519,9 @@ async function addNames(page, names) {
     await click(page, "Confirm scores for Temp detail 1");
     await click(page, "Confirm total only");
     await waitFor(page, () =>
-      JSON.parse(localStorage.getItem("detail-ic-v2")).shoots[1].attempts.some(
-        (a) => a.score === 12,
-      ),
+      JSON.parse(
+        localStorage.getItem("detail-ic-v2-store"),
+      ).shoots[1].attempts.some((a) => a.score === 12),
     );
     await waitFor(page, () =>
       [...document.querySelectorAll(".queue-row")].some((r) =>
@@ -488,7 +530,10 @@ async function addNames(page, names) {
     );
     // Changing the order reshuffles the list.
     await page.locator("#order").selectOption("highest");
-    await waitFor(page, () => document.querySelectorAll(".queue-row").length > 0);
+    await waitFor(
+      page,
+      () => document.querySelectorAll(".queue-row").length > 0,
+    );
 
     // Stage B has no details at all, and can be fired on another rifle: LMG
     // fires the same rounds as a rifle in Stage B.
@@ -505,7 +550,10 @@ async function addNames(page, names) {
       ),
     );
     // The Stage B rifle lives in the ⋯ menu now, off the score row.
-    await page.getByRole("button", { name: "Options for Dana Koh" }).first().click();
+    await page
+      .getByRole("button", { name: "Options for Dana Koh" })
+      .first()
+      .click();
     await page
       .getByRole("combobox", { name: "Rifle for Stage B" })
       .selectOption("SAR21/SAR21 SS/M203");
@@ -514,12 +562,16 @@ async function addNames(page, names) {
     await page.getByRole("spinbutton", { name: "Dana Koh hits" }).fill("6");
     await page.keyboard.press("Tab");
     assert.equal(
-      await page.evaluate(() => document.activeElement.getAttribute("aria-label")),
+      await page.evaluate(() =>
+        document.activeElement.getAttribute("aria-label"),
+      ),
       "Evan Lim hits",
     );
     await click(page, "Confirm scores");
     await waitFor(page, () =>
-      JSON.parse(localStorage.getItem("detail-ic-v2")).shoots[1].attempts.some(
+      JSON.parse(
+        localStorage.getItem("detail-ic-v2-store"),
+      ).shoots[1].attempts.some(
         (a) => a.stage === "B" && a.weapon === "SAR21/SAR21 SS/M203",
       ),
     );
@@ -555,18 +607,21 @@ async function addNames(page, names) {
     assert.equal(await roll.getAttribute("open"), null);
     await roll.locator("summary").click();
     assert.ok((await roll.innerText()).includes("Detail 1:"));
-    // Searching narrows it, and temporary details are findable by name.
+    // Searching ranks and opens matches without hiding other records.
     await page.locator("#search").fill("Temp detail");
     await waitFor(page, () => {
       const n = document.querySelectorAll(".event").length;
-      return n > 0 && n < 4;
+      return n > 0 && document.querySelectorAll(".event.match").length > 0;
     });
     assert.ok(
-      (await page.locator(".history-feed").innerText()).includes("Temp detail 1"),
+      (await page.locator(".history-feed").innerText()).includes(
+        "Temp detail 1",
+      ),
     );
     await page.locator("#search").fill("Dana Koh");
     const forDana = await page.locator(".event").count();
-    assert.ok(forDana && forDana < events);
+    assert.equal(forDana, events);
+    assert.ok(await page.locator(".event.match").count());
     await page.locator("#search").fill("");
     await waitFor(
       page,
@@ -600,7 +655,9 @@ async function addNames(page, names) {
       );
     await openAll();
     assert.ok(
-      (await page.locator(".history-feed").innerText()).includes("Wrong target"),
+      (await page.locator(".history-feed").innerText()).includes(
+        "Wrong target",
+      ),
     );
     assert.equal(
       await page
@@ -619,7 +676,9 @@ async function addNames(page, names) {
     );
     await click(page, "Restore this score");
     // Restoring is confirmed, recalls why it was voided, and wants a reason.
-    assert.ok((await page.locator("#dialog").innerText()).includes("Wrong target"));
+    assert.ok(
+      (await page.locator("#dialog").innerText()).includes("Wrong target"),
+    );
     await page.getByLabel("Reason for restoring").fill("Target was right");
     await click(page, "Restore score");
     await waitFor(page, () =>
@@ -629,9 +688,9 @@ async function addNames(page, names) {
     );
     assert.ok(
       await page.evaluate(() =>
-        JSON.parse(localStorage.getItem("detail-ic-v2")).shoots[1].shared.every(
-          (d) => d.status === "valid",
-        ),
+        JSON.parse(
+          localStorage.getItem("detail-ic-v2-store"),
+        ).shoots[1].shared.every((d) => d.status === "valid"),
       ),
       "restoring puts the detail score back for everyone",
     );
@@ -656,13 +715,20 @@ async function addNames(page, names) {
       "temporary details do not belong on the roster",
     );
     await page.locator("[data-locked-rifle]").first().click();
-    assert.ok((await page.locator("#toast").innerText()).includes("void those scores"));
+    assert.ok(
+      (await page.locator("#toast").innerText()).includes("void those scores"),
+    );
     // Drilling into a detail's scores from the roster offers a way back.
-    await page.getByRole("button", { name: /^Scores for Detail 1$/ }).first().click();
+    await page
+      .getByRole("button", { name: /^Scores for Detail 1$/ })
+      .first()
+      .click();
     await page.getByRole("button", { name: /^Stage A scores$/ }).click();
     assert.equal(await page.locator("#close-dialog").innerText(), "Back");
     await click(page, "Back");
-    assert.ok((await page.locator("#dialog").innerText()).includes("Open a stage"));
+    assert.ok(
+      (await page.locator("#dialog").innerText()).includes("Open a stage"),
+    );
     await click(page, "Close");
 
     // Stage C goes back to the original details.
@@ -716,7 +782,8 @@ async function addNames(page, names) {
       false,
     );
     // On a phone the score table comes first, then Redetailing.
-    const top = async (sel) => (await page.locator(sel).first().boundingBox()).y;
+    const top = async (sel) =>
+      (await page.locator(sel).first().boundingBox()).y;
     assert.ok((await top(".score-panel")) < (await top(".queue")));
     await tab(page, "Final scores");
     assert.ok(

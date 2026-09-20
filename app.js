@@ -12,6 +12,12 @@ import {
 } from "./profiles.js";
 import {
   uid,
+  activateStage,
+  requireActiveStage,
+  availableMembers,
+  replacementPlan,
+  setPersonSkipped,
+  importBackup,
   now,
   newStore,
   preset,
@@ -52,6 +58,9 @@ import {
   editDetailAttempt,
   recordIndividual,
   parseHits,
+  breakdownFor,
+  parseBreakdown,
+  validateBreakdownLayout,
   scoreHistory,
   nextAttempt,
   detailAttempts,
@@ -97,7 +106,6 @@ import {
   cancelDispatch,
   historyFeed,
   exportCsv,
-  migrateStore,
   validateStore,
 } from "./core.js";
 const $ = (q) => document.querySelector(q),
@@ -113,10 +121,11 @@ const $ = (q) => document.querySelector(q),
           "'": "&#39;",
         })[c],
     );
-const KEY = "detail-ic-v2";
+const KEY = "detail-ic-v2-store";
 let store,
   lastSaved = null,
   storageError = false,
+  unsaved = false,
   tab = "shoots",
   search = "",
   selected = new Set(),
@@ -137,9 +146,7 @@ let store,
   pending = null;
 try {
   lastSaved = localStorage.getItem(KEY);
-  store = lastSaved
-    ? validateStore(migrateStore(JSON.parse(lastSaved)))
-    : newStore();
+  store = lastSaved ? validateStore(JSON.parse(lastSaved)) : newStore();
   applyPresets(store);
 } catch (e) {
   store = newStore();
@@ -191,7 +198,13 @@ function badge(text) {
   return `<span class="badge ${text === "Marksman" ? "blue" : text === "Pass" ? "green" : text === "Fail" ? "red" : ""}">${esc(text)}</span>`;
 }
 function warning(message) {
-  $("#storage-warning").textContent = message;
+  $("#storage-warning").innerHTML =
+    `${esc(message)} <button id="export-unsaved">Export backup</button> <button id="retry-save">Retry save</button>`;
+  $("#export-unsaved").onclick = () =>
+    download(`detail-ic-unsaved-${Date.now()}.json`, JSON.stringify(store));
+  $("#retry-save").onclick = () => {
+    if (save()) toast("Saved on this device.");
+  };
   $("#storage-warning").hidden = false;
 }
 function save() {
@@ -205,10 +218,14 @@ function save() {
     const data = JSON.stringify(store);
     localStorage.setItem(KEY, data);
     lastSaved = data;
+    unsaved = false;
     $("#storage-warning").hidden = true;
     return true;
   } catch (e) {
-    warning(e.message || "Storage is full. Export a backup.");
+    unsaved = true;
+    warning(
+      `Not saved on this device. ${e.message || "Storage is full. Export a backup."}`,
+    );
     return false;
   }
 }
@@ -231,6 +248,8 @@ function fieldError(t, message) {
   else home.after(note);
 }
 function toast(text, undo) {
+  if (unsaved)
+    text = "Changes are only in memory. Export a backup before reloading.";
   const t = $("#toast");
   t.innerHTML = `<span>${esc(text)}</span>${undo ? '<button type="button" id="undo">Undo</button>' : ""}`;
   t.classList.add("show");
@@ -257,8 +276,21 @@ function info(text) {
 function empty(text, button = "") {
   return `<div class="empty"><h2>${esc(text)}</h2>${button}</div>`;
 }
+function textMatches(text) {
+  const tokens = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  return tokens.every((token) => String(text).toLowerCase().includes(token));
+}
 function filtered(p) {
-  return `${p.name} ${p.weapon}`.toLowerCase().includes(search.toLowerCase());
+  const detail = s()?.details.find((d) => d.id === p.detailId)?.name ?? "";
+  const r = s() ? result(s(), p) : null;
+  return textMatches(
+    `${p.name} ${p.weapon} ${detail} ${p.profile.components.map((c, i) => `${r?.scores[i] ?? ""}/${c.max}`).join(" ")} ${r?.total ?? ""} ${r?.status ?? ""}`,
+  );
+}
+function matchFirst(items, matches = filtered) {
+  return search.trim()
+    ? items.toSorted((a, b) => Number(matches(b)) - Number(matches(a)))
+    : items;
 }
 function shootHead(extra = "", editable = false) {
   const c = s(),
@@ -275,7 +307,7 @@ function borrowedNote(c, d, stage) {
   return `<button class="info warn" type="button" aria-label="${esc(text)}">⚠<span class="tooltip">${esc(text)}</span></button>`;
 }
 function searchBox() {
-  return `<input type="search" id="search" placeholder="Find a participant" aria-label="Find a participant" value="${esc(search)}">`;
+  return `<input type="search" id="search" placeholder="Find a name, detail or score" aria-label="Find a name, detail or score" value="${esc(search)}">`;
 }
 function render() {
   const current = s(),
@@ -316,8 +348,19 @@ function renderShoots() {
   const types = TYPES,
     list = store.shoots.toSorted(
       (a, b) =>
-        (b.id === store.active) - (a.id === store.active) ||
-        b.createdAt.localeCompare(a.createdAt),
+        Number(
+          search &&
+            textMatches(
+              `${b.name} ${b.participants.map((p) => p.name).join(" ")}`,
+            ),
+        ) -
+          Number(
+            search &&
+              textMatches(
+                `${a.name} ${a.participants.map((p) => p.name).join(" ")}`,
+              ),
+          ) ||
+        (b.updatedAt ?? b.createdAt).localeCompare(a.updatedAt ?? a.createdAt),
     );
   $("#main").innerHTML =
     `<div class="shoots"><section class="panel"><div class="panel-head"><h2>New shoot</h2></div><div class="panel-body">${
@@ -326,10 +369,10 @@ function renderShoots() {
         : ""
     }</div></section>${
       list.length
-        ? `<section class="panel"><div class="panel-head"><h3>Shoots <span class="count">${list.length}</span></h3></div>${list
+        ? `<section class="panel"><div class="panel-head"><h3>Shoots <span class="count">${list.length}</span></h3>${searchBox()}</div>${list
             .map(
               (x) =>
-                `<div class="shoot-row"><div><strong>${esc(x.name)}</strong><p class="note">${esc(typeLabel(x.program, x.variant))} · ${esc(dateLabel(x.createdAt))} · ${x.participants.length} participants · ${hasScores(x) ? "Scores recorded" : "No scores yet"}</p></div><div class="actions"><button class="danger" data-delete-shoot="${x.id}" aria-label="Delete ${esc(x.name)}">Delete</button><button class="primary" data-open-shoot="${x.id}" aria-label="Open ${esc(x.name)}">Open</button></div></div>`,
+                `<div class="shoot-row ${search && textMatches(`${x.name} ${x.participants.map((p) => p.name).join(" ")}`) ? "match" : ""}"><div><strong>${esc(x.name)}</strong><p class="note">${esc(typeLabel(x.program, x.variant))} · ${esc(dateLabel(x.createdAt))} · ${x.participants.length} participants · ${hasScores(x) ? "Scores recorded" : "No scores yet"}</p></div><div class="actions"><button class="danger" data-delete-shoot="${x.id}" aria-label="Delete ${esc(x.name)}">Delete</button><button class="primary" data-open-shoot="${x.id}" aria-label="Open ${esc(x.name)}">Open</button></div></div>`,
             )
             .join("")}</section>`
         : ""
@@ -380,6 +423,10 @@ function renderParticipants() {
     cs = isCS(c),
     multi = weapons(c).length > 1,
     locked = c.locked,
+    duplicate = (p) =>
+      c.participants.filter(
+        (x) => x.name.trim().toLowerCase() === p.name.trim().toLowerCase(),
+      ).length > 1,
     matches = (p) => search && filtered(p),
     highest = Math.max(
       0,
@@ -408,17 +455,19 @@ function renderParticipants() {
       { length: Math.max(highest, n) },
       (_, i) =>
         `<option value="${i + 1}" ${i + 1 === n ? "selected" : ""} ${full(i + 1) >= max && i + 1 !== n ? "disabled" : ""}>Detail ${i + 1}${full(i + 1) >= max && i + 1 !== n ? " · full" : ""}</option>`,
-    ).join("")}${roomForNew || !n ? '<option value="new">New detail</option>' : ""}</select></td>`;
+    ).join(
+      "",
+    )}${roomForNew || !n ? '<option value="new">New detail</option>' : ""}</select></td>`;
   };
   const row = (p) =>
-    `<tr class="${matches(p) ? "match" : ""}" ${cs && !locked ? `draggable="true" data-drag="${p.id}" data-drop-row="${p.id}"` : ""}>${cs ? `<td class="grip">${locked ? "" : `<span class="handle" aria-hidden="true">☰</span>`}</td>` : ""}<td class="name"><input class="name-input" type="text" data-name="${p.id}" value="${esc(p.name)}" aria-label="Name for ${esc(p.name)}" ${locked ? "disabled" : ""}></td>${multi ? `<td>${hasRecords(c, p) ? `<span class="locked-field" data-locked-rifle="${p.id}" title="${esc(p.name)} has scores on ${esc(p.weapon)}. Void them to change rifle."><select class="row-weapon" aria-label="Rifle for ${esc(p.name)}" disabled>${option(weapons(c), p.weapon)}</select></span>` : `<select class="row-weapon" data-rifle="${p.id}" aria-label="Rifle for ${esc(p.name)}" ${locked ? "disabled" : ""}>${option(weapons(c), p.weapon)}</select>`}</td>` : ""}${cs ? picker(p) : ""}<td class="more-cell">${locked ? `<button class="more" data-person="${p.id}" aria-label="Scores for ${esc(p.name)}">⋯</button>` : `<button class="icon-button danger" data-remove="${p.id}" aria-label="Remove ${esc(p.name)}">✕</button>`}</td></tr>`;
+    `<tr class="${matches(p) ? "match" : ""} ${duplicate(p) ? "duplicate-name" : ""}" ${cs && !locked ? `draggable="true" data-drag="${p.id}" data-drop-row="${p.id}"` : ""}>${cs ? `<td class="grip">${locked ? "" : `<span class="handle" aria-hidden="true">☰</span>`}</td>` : ""}<td class="name"><input class="name-input" type="text" data-name="${p.id}" value="${esc(p.name)}" aria-label="Name for ${esc(p.name)}" aria-invalid="${duplicate(p)}" ${locked ? "disabled" : ""}></td>${multi ? `<td>${hasRecords(c, p) ? `<span class="locked-field" data-locked-rifle="${p.id}" title="${esc(p.name)} has scores on ${esc(p.weapon)}. Void them to change rifle."><select class="row-weapon" aria-label="Rifle for ${esc(p.name)}" disabled>${option(weapons(c), p.weapon)}</select></span>` : `<select class="row-weapon" data-rifle="${p.id}" aria-label="Rifle for ${esc(p.name)}" ${locked ? "disabled" : ""}>${option(weapons(c), p.weapon)}</select>`}</td>` : ""}${cs ? picker(p) : ""}<td class="more-cell">${locked ? `<button class="more" data-person="${p.id}" aria-label="Scores for ${esc(p.name)}">⋯</button>` : `<button class="icon-button danger" data-remove="${p.id}" aria-label="Remove ${esc(p.name)}">✕</button>`}</td></tr>`;
   // An empty row on each detail, so a short detail can be filled in place.
   const addRow = (d, people) =>
     locked || !d || people.length >= max
       ? ""
       : `<tr class="add-row"><td class="grip"></td><td class="name" colspan="${1 + (multi ? 1 : 0) + 1}"><input class="name-input" type="text" enterkeyhint="done" data-add-to="${d.id}" placeholder="Add a firer to ${esc(d.name)}" aria-label="Add a firer to ${esc(d.name)}"></td><td></td></tr>`;
   const table = (people, d) =>
-    `<div class="table-wrap"><table><thead><tr>${cs ? "<th></th>" : ""}<th>Full name</th>${multi ? "<th>Rifle</th>" : ""}${cs ? "<th>Detail</th>" : ""}<th></th></tr></thead><tbody>${people.map(row).join("")}${cs ? addRow(d, people) : ""}</tbody></table></div>`;
+    `<div class="table-wrap"><table><thead><tr>${cs ? "<th></th>" : ""}<th>Full name</th>${multi ? "<th>Rifle</th>" : ""}${cs ? "<th>Detail</th>" : ""}<th></th></tr></thead><tbody>${matchFirst(people).map(row).join("")}${cs ? addRow(d, people) : ""}</tbody></table></div>`;
   let body = "";
   if (!c.participants.length)
     body = addMode
@@ -435,15 +484,18 @@ function renderParticipants() {
         ...sortedDetails(c)
           .filter((d) => !d.temporary && members(c, d.id).length)
           .map((d) => [d, members(c, d.id)]),
-      ].filter(([, people]) => !search || people.some(filtered));
-    body = groups
-        .map(
-          ([d, people]) =>
-            `<section class="panel ${d ? "" : "unassigned"}" ${d && !locked ? `data-drop="${d.id}"` : 'data-drop=""'}><div class="detail-head"><h3>${d ? esc(d.name) : "Needs a detail"}</h3>${d ? borrowedNote(c, d) : ""}<span class="count">${people.length}${d && max !== Infinity ? ` of ${max}` : ""} firers</span>${d && locked ? `<div class="actions"><button class="more" data-detail-menu="${d.id}" aria-label="Scores for ${esc(d.name)}">⋯</button></div>` : ""}${d || locked ? "" : '<div class="actions"><button class="primary" data-action="auto-detail">Auto-detail</button></div>'}</div>${table(people, d)}</section>`,
-        )
-        .join("");
+      ];
+    const orderedGroups = matchFirst(groups, ([, people]) =>
+      people.some(filtered),
+    );
+    body = orderedGroups
+      .map(
+        ([d, people]) =>
+          `<section class="panel ${d ? "" : "unassigned"}" ${d && !locked ? `data-drop="${d.id}"` : 'data-drop=""'}><div class="detail-head"><h3>${d ? esc(d.name) : "Needs a detail"}</h3>${d ? borrowedNote(c, d) : ""}<span class="count">${people.length}${d && max !== Infinity ? ` of ${max}` : ""} firers</span>${d && locked ? `<div class="actions"><button class="more" data-detail-menu="${d.id}" aria-label="Scores for ${esc(d.name)}">⋯</button></div>` : ""}${d || locked ? "" : '<div class="actions"><button class="primary" data-action="auto-detail">Auto-detail</button></div>'}</div>${table(people, d)}</section>`,
+      )
+      .join("");
   } else
-    body = `<section class="panel">${table(c.participants.filter(filtered), null)}</section>`;
+    body = `<section class="panel">${table(c.participants, null)}</section>`;
   const ready = c.participants.length && !rosterIssues(c).length;
   $("#main").innerHTML =
     shootHead("", true) +
@@ -498,11 +550,28 @@ function renderStage(stage) {
     ),
   );
   $("#main").innerHTML =
-    shootHead(
-      `<span class="spacer"></span>${searchBox()}`,
-    ) +
+    shootHead(`<span class="spacer"></span>${searchBox()}`) +
     issuesPanel(c) +
+    (c.participants.some((p) => p.skipped)
+      ? `<details class="panel skipped-list"><summary>${c.participants.filter((p) => p.skipped).length} skipped</summary>${c.participants
+          .filter((p) => p.skipped)
+          .map(
+            (p) =>
+              `<button data-person-skip="${p.id}">Unskip ${esc(p.name)}</button>`,
+          )
+          .join(" ")}</details>`
+      : "") +
+    (c.activeStage && c.activeStage !== stage
+      ? `<div class="panel confirmed"><span>${esc(stageLabel(c, stage))} is locked. ${esc(stageLabel(c, c.activeStage))} is active.</span><button data-unlock-stage="${stage}">Unlock ${esc(stageLabel(c, stage))}</button></div>`
+      : "") +
     `<div class="grid"><div class="score-col">${detailedStage(c, stage) ? detailPanels(c, stage) : individualPanel(c, stage)}</div><div class="side-col">${summaryPanel(c, stage)}${queuePanel(c, stage, q)}</div></div>`;
+  if (c.activeStage && c.activeStage !== stage) {
+    document
+      .querySelectorAll(
+        "[data-part-person], [data-hits], [data-cs-hits], [data-aggregate], [data-confirm], [data-confirm-all], [data-reset], [data-skip], [data-person-skip], [data-queue], #redetail, [data-action=manual-detail], [data-replace-detail], [data-build], [data-requeue]",
+      )
+      .forEach((el) => (el.disabled = true));
+  }
 }
 // Roster problems that will block scoring. On other tabs it carries a link back.
 function issuesPanel(c, link = true) {
@@ -521,6 +590,107 @@ function timeLabel(iso) {
 function entryValue(c, stage, p) {
   return c.entries?.[`${stage}:${p.id}`] ?? "";
 }
+function breakdownText(parts) {
+  return parts?.length
+    ? parts.map((p) => `${p.label}: ${p.hits}/${p.max}`).join(" · ")
+    : "";
+}
+// What one firer's hits contribute to their detail's total: their real score,
+// capped at what the stage credits for the rifle they fired it on.
+function creditedHits(c, detailId, stage, row) {
+  const p = c.participants.find((x) => x.id === row.participantId);
+  if (!p) return 0;
+  const max = profileFor(
+    c.program,
+    c.variant,
+    rosterWeapon(c, detailId, p),
+  ).components.find((x) => x.id === stage).max;
+  return Math.min(Number(row.hits), max);
+}
+// Some rifles are issued more rounds than the stage can credit. The real score
+// is recorded and shown; only the arithmetic uses the lower figure.
+function creditNote(weapon, fired, max, label) {
+  return `${weapon} fires ${fired} rounds in ${label}. Enter the hits actually scored: up to ${max} count towards this firer's ${label} score, and anything above that is kept on record but not added in.`;
+}
+function scoreEditor(c, p, stage, detailId = null, disabled = false) {
+  const weapon = detailId
+      ? rosterWeapon(c, detailId, p)
+      : stageRifle(c, p, stage),
+    // The rifle used for this stage, which in Combat Shoot need not be the one
+    // on the participant's own profile.
+    component = profileFor(c.program, c.variant, weapon).components.find(
+      (x) => x.id === stage,
+    ),
+    max = component.max,
+    // What this rifle actually fires. Entry accepts all of it; only `max` is
+    // credited, and the note below says so.
+    fired = component.inputMax ?? max,
+    row = detailId
+      ? getDraft(c, detailId, stage).rows.find((r) => r.participantId === p.id)
+      : null,
+    value = detailId ? (row?.hits ?? "") : entryValue(c, stage, p),
+    parts = breakdownFor(c, weapon, stage),
+    values = detailId
+      ? (row?.parts ?? [])
+      : (c.entryParts?.[`${stage}:${p.id}`] ?? []),
+    required = c.settings.requireBreakdown,
+    attr = detailId ? `data-cs-hits="${p.id}"` : `data-hits="${p.id}"`;
+  return `${required ? (parts.length ? `<div class="subscores">${parts.map((part, i) => `<label><span>${esc(part.label)} /${part.max}</span><input type="number" min="0" max="${part.max}" step="1" inputmode="numeric" data-part-person="${p.id}" data-part-index="${i}" ${detailId ? `data-part-detail="${detailId}"` : ""} value="${esc(values[i] ?? "")}" aria-label="${esc(p.name)} ${esc(part.label)} hits" ${disabled ? "disabled" : ""}></label>`).join("")}</div>` : `<button data-configure-parts="${esc(weapon)}" data-configure-stage="${stage}">Set sub-stages</button>`) : ""}<div class="score-input"><input type="number" min="0" max="${fired}" step="1" inputmode="numeric" ${attr} value="${esc(value)}" aria-label="${esc(p.name)} hits" placeholder="—" ${required ? "readonly" : ""} ${disabled || (required && !parts.length) ? "disabled" : ""}><span class="muted">/${fired}</span>${fired !== max ? info(creditNote(weapon, fired, max, stageLabel(c, stage))) : ""}</div>`;
+}
+function layoutDialog(program, variant, weapon, stage) {
+  const pr = preset(store, program, variant),
+    component = profileFor(program, variant, weapon).components.find(
+      (c) => c.id === stage,
+    ),
+    parts = pr.breakdowns?.[`${weapon}:${stage}`] ?? [],
+    // Parts cover the rounds fired. Where a rifle is issued more than the stage
+    // credits, say so, or the figure looks like a mistake.
+    fired = component.inputMax ?? component.max;
+  dialog(
+    `${component.label} sub-stages · ${weapon}`,
+    `<p>One part per line: name, maximum hits. Maximums must total ${fired}.${fired !== component.max ? ` ${weapon} fires ${fired} rounds here; at most ${component.max} can be credited.` : ""}</p><label class="field"><span>Sub-stages</span><textarea name="layout" rows="8" placeholder="Part 1, 2">${esc(parts.map((p) => `${p.label}, ${p.max}`).join("\n"))}</textarea></label>`,
+    "Save breakdown",
+    (f) => {
+      const layout = String(f.get("layout"))
+        .split(/\n/)
+        .filter((l) => l.trim())
+        .map((line) => {
+          const m = line.match(/^(.+),\s*(\d+)\s*$/);
+          if (!m) throw Error("Use name, maximum hits on each line.");
+          return { label: m[1].trim(), max: Number(m[2]) };
+        });
+      validateBreakdownLayout(layout, fired);
+      if (
+        store.shoots.some(
+          (s) =>
+            s.program === program &&
+            s.variant === variant &&
+            s.attempts.some(
+              (a) =>
+                a.stage === stage && a.weapon === weapon && a.breakdown?.length,
+            ),
+        ) &&
+        JSON.stringify(parts) !== JSON.stringify(layout)
+      )
+        throw Error(
+          "This breakdown already has recorded scores. Its definitions are fixed for this version.",
+        );
+      pr.breakdowns ??= {};
+      pr.breakdowns[`${weapon}:${stage}`] = layout;
+      for (const shoot of store.shoots.filter(
+        (s) => s.program === program && s.variant === variant,
+      )) {
+        shoot.settings.breakdowns ??= {};
+        shoot.settings.breakdowns[`${weapon}:${stage}`] =
+          structuredClone(layout);
+      }
+      applyPresets(store);
+      save();
+      $("#dialog").close();
+      render();
+    },
+  );
+}
 function individualPanel(c, stage) {
   if (!c.participants.length)
     return empty(
@@ -536,9 +706,9 @@ function individualPanel(c, stage) {
     },
     order = firingQueue(c, stage),
     entry = new Map(order.map((e, i) => [e.members[0].id, { ...e, n: i }])),
-    toShoot = order.map((e) => e.members[0]).filter(filtered),
+    toShoot = matchFirst(order.map((e) => e.members[0])),
     done = c.participants
-      .filter((p) => filtered(p) && !toShoot.includes(p))
+      .filter((p) => !toShoot.includes(p))
       .toSorted((a, b) => detailOf(a) - detailOf(b)),
     entered = toShoot.filter((p) => entryValue(c, stage, p) !== "").length,
     weak = new Set(weakFirers(c, stage).map((x) => x.p.id)),
@@ -549,25 +719,24 @@ function individualPanel(c, stage) {
     const max = p.profile.components.find((x) => x.id === stage).max,
       e = entry.get(p.id),
       typed = entryValue(c, stage, p) !== "";
-    return `<tr data-row="${p.id}" class="${[waiting.has(p.id) && "awaiting", e.n === 0 && !e.skipped && "next", e.skipped && "skipped", search && "match"].filter(Boolean).join(" ")}"><td class="seat">${e.n + 1}</td><td class="name">${esc(p.name)}${e.n === 0 && !e.skipped ? ' <span class="badge blue">Next</span>' : ""}${abilityMark(c, p, stage, weak, strong)}${multi && !cs && p.weapon !== c.settings.weapon ? `<div class="sub">${esc(p.weapon)}</div>` : ""}<div class="attempt ${waiting.has(p.id) ? "on" : ""}">${e.skipped ? "Skipped · " : ""}Attempt ${e.attempt}${waiting.has(p.id) ? " · redetailed" : ""}</div></td>${cs ? `<td class="rifle">${esc(stageRifle(c, p, stage))}</td>` : ""}<td><div class="score-input"><input type="number" min="0" max="${max}" step="1" inputmode="numeric" enterkeyhint="next" data-hits="${p.id}" value="${esc(entryValue(c, stage, p))}" aria-label="${esc(p.name)} hits" placeholder="${e.skipped ? "Skipped" : "—"}" ${e.skipped ? "disabled" : ""}><span class="muted">/${max}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell">${order.length > 1 ? skipButton(`person:${p.id}`, p.name, e.skipped, typed) : ""}<button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+    return `<tr data-row="${p.id}" class="${[waiting.has(p.id) && "awaiting", e.skipped && "skipped", search && filtered(p) && "match"].filter(Boolean).join(" ")}"><td class="seat">${e.n + 1}</td><td class="name">${esc(p.name)}${abilityMark(c, p, stage, weak, strong)}${multi && !cs && p.weapon !== c.settings.weapon ? `<div class="sub">${esc(p.weapon)}</div>` : ""}<div class="attempt ${waiting.has(p.id) ? "on" : ""}">${e.skipped ? "Skipped · " : ""}Attempt ${e.attempt}${waiting.has(p.id) ? " · redetailed" : ""}</div></td>${cs ? `<td class="rifle">${esc(stageRifle(c, p, stage))}</td>` : ""}<td>${scoreEditor(c, p, stage, null, e.skipped)}</td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell">${skipButton(`person:${p.id}`, p.name, e.skipped, typed)}<button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
   };
   const scoredRow = (p) => {
     const last = scoreHistory(c, p, stage).at(-1);
-    return `<tr data-row="${p.id}" class="${search ? "match" : ""}"><td class="name">${esc(p.name)}</td><td class="num results">${resultsCell(c, p, stage)}</td><td class="muted when">${last ? esc(timeLabel(last.recordedAt)) : ""}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+    return `<tr data-row="${p.id}" class="${search && filtered(p) ? "match" : ""}"><td class="name">${esc(p.name)}</td><td class="num results">${resultsCell(c, p, stage)}</td><td class="muted when">${last ? esc(timeLabel(last.recordedAt)) : ""}</td><td class="more-cell"><button data-person-skip="${p.id}" aria-label="${p.skipped ? "Unskip" : "Skip"} ${esc(p.name)}">${p.skipped ? "Unskip" : "Skip"}</button><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
   };
+  const past = done.length
+    ? `<details class="panel past-scores"${search ? " open" : ""}><summary>Past scores · ${done.length} ${done.length === 1 ? "firer" : "firers"}</summary><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Results</th><th>Confirmed</th><th></th></tr></thead><tbody>${matchFirst(done).map(scoredRow).join("")}</tbody></table></div></details>`
+    : "";
+  const pastFirst = search && done.some(filtered);
   return (
+    (pastFirst ? past : "") +
     `<section class="panel score-panel" data-individual><div class="detail-head"><h3>${esc(stageLabel(c, stage))}</h3><span class="count">${toShoot.length} in the queue</span>${toShoot.length ? `<div class="actions"><span class="draft-summary">${entered} of ${toShoot.length} entered.</span><button class="primary" data-confirm-all="${stage}">Confirm scores</button></div>` : ""}</div>${cs ? '<p class="note stage-note">Fired individually. Details do not apply to this stage; a firer may use a different rifle for it.</p>' : ""}${
       toShoot.length
         ? `<div class="table-wrap"><table><thead><tr><th>#</th><th>Full name</th>${cs ? "<th>Rifle</th>" : ""}<th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${toShoot.map(row).join("")}</tbody></table></div>`
         : `<div class="panel-body note">Everyone has a ${esc(stageLabel(c, stage))} score. Redetail firers to enter more.</div>`
-    }<div class="errors draft-errors" role="alert"></div>${
-      toShoot.length
-        ? `<div class="score-footer"><span class="draft-summary">${entered} of ${toShoot.length} entered.</span></div>`
-        : ""
-    }</section>` +
-    (done.length
-      ? `<details class="panel past-scores"${search ? " open" : ""}><summary>Past scores · ${done.length} ${done.length === 1 ? "firer" : "firers"}</summary><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Results</th><th>Confirmed</th><th></th></tr></thead><tbody>${done.map(scoredRow).join("")}</tbody></table></div></details>`
-      : "")
+    }<div class="errors draft-errors" role="alert"></div></section>` +
+    (pastFirst ? "" : past)
   );
 }
 // Composition problems belong to the roster and are reported at the top of the
@@ -592,7 +761,9 @@ function draftSummary(c, draft) {
     : `${entered} of ${v.rows.length} entered.`;
 }
 function hasInput(draft) {
-  return !!draft && (draft.aggregate !== "" || draft.rows.some((r) => r.hits !== ""));
+  return (
+    !!draft && (draft.aggregate !== "" || draft.rows.some((r) => r.hits !== ""))
+  );
 }
 // Skip toggles; it greys out once hits are typed, since that entry is firing.
 function skipButton(key, name, on, typed) {
@@ -606,7 +777,9 @@ function stageRifle(c, p, stage) {
 // A detail whose scores are in. There is nothing left to type, so it shows
 // what it fired, when it was confirmed, and a menu to correct it.
 function scoredPanel(c, d, stage, weak, strong) {
-  const list = detailAttempts(c, d.id, stage).filter((a) => a.status === "valid"),
+  const list = detailAttempts(c, d.id, stage).filter(
+      (a) => a.status === "valid",
+    ),
     last = list.at(-1),
     cmax = stages(c).find((x) => x.id === stage).max;
   if (!last) return "";
@@ -616,7 +789,7 @@ function scoredPanel(c, d, stage, weak, strong) {
   return `<section class="panel score-panel scored" data-detail="${d.id}"><div class="detail-head">${d.temporary ? '<span class="badge">Temporary</span>' : ""}<h3>${esc(d.name)}</h3>${badge(`Attempt ${numbers.get(last.id) ?? list.length}`)}<span class="count">Scored ${ratio(last.score, cmax)} · ${esc(timeLabel(last.recordedAt))}</span>${borrowedNote(c, d, stage)}<div class="actions"><button class="more" data-detail-history="${d.id}" aria-label="Scores for ${esc(d.name)}">⋯</button></div></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th><th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${people
     .map(
       (p) =>
-        `<tr data-row="${p.id}" class="${search && filtered(p) ? "match" : ""}"><td class="name">${esc(p.name)}${abilityMark(c, p, stage, weak, strong)}</td><td class="rifle">${esc(rosterWeapon(c, d.id, p))}</td><td class="num">${hitsOf(p) ?? '<span class="muted">—</span>'}</td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`,
+        `<tr data-row="${p.id}" class="${search && filtered(p) ? "match" : ""}"><td class="name">${esc(p.name)}${abilityMark(c, p, stage, weak, strong)}</td><td class="rifle">${esc(rosterWeapon(c, d.id, p))}</td><td class="num">${hitsOf(p) ?? '<span class="muted">—</span>'}</td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button data-person-skip="${p.id}" aria-label="${p.skipped ? "Unskip" : "Skip"} ${esc(p.name)}">${p.skipped ? "Unskip" : "Skip"}</button><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`,
     )
     .join(
       "",
@@ -641,7 +814,7 @@ function detailPanels(c, stage) {
         ? `<p class="note scored-toggle"><button class="inline-link" data-action="toggle-scored">${showScored ? "Hide scored details" : `Show ${scored} scored ${scored === 1 ? "detail" : "details"}`}</button></p>`
         : "",
     shown = search
-      ? all.filter((d) => members(c, d.id).some(filtered))
+      ? matchFirst(all, (d) => members(c, d.id).some(filtered))
       : showScored
         ? [...open, null, ...all.filter((d) => !open.includes(d))]
         : [...open, null],
@@ -665,18 +838,24 @@ function detailPanels(c, stage) {
         const people = members(c, d.id),
           draft = getDraft(c, d.id, stage),
           attempt = nextAttempt(c, people, stage),
-          e = entry.get(d.id);
+          e = entry.get(d.id),
+          available = availableMembers(c, d.id),
+          absent = people.filter((p) => p.skipped),
+          short = available.length < DETAIL_RULES[c.program].min;
         // Waiting to fire, or part-typed: a form. Otherwise it is a record.
-        if (!e && !hasInput(draft)) return scoredPanel(c, d, stage, weak, strong);
-        return `<section class="panel score-panel ${[d.temporary && "temporary", e?.n === 0 && !e.skipped && "next", e?.skipped && "skipped"].filter(Boolean).join(" ")}" data-detail="${d.id}"><div class="detail-head">${e ? `<span class="seat">${e.n + 1}</span>` : ""}<h3>${esc(d.name)}</h3>${e?.n === 0 && !e.skipped ? '<span class="badge blue">Next</span>' : ""}${badge(`Attempt ${attempt}`)}${borrowedNote(c, d, stage)}<span class="count">${people.length} firers</span><div class="actions">${e && order.length > 1 ? skipButton(`detail:${d.id}`, d.name, e.skipped, hasInput(draft)) : ""}${e?.dispatch ? `<button data-undetail="${e.dispatch.id}" title="Cancel this redetail and put the detail back in the Redetailing list" aria-label="De-detail ${esc(d.name)}">De-detail</button>` : ""}<button data-detail-history="${d.id}" aria-label="History for ${esc(d.name)}">History</button><button class="icon-button" data-reset="${d.id}" title="Clear entries" aria-label="Clear entries for ${esc(d.name)}">↺</button><button class="primary" data-confirm="${d.id}" aria-label="Confirm scores for ${esc(d.name)}" ${e?.skipped ? "disabled" : ""}>Confirm scores</button></div></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th><th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${people
+        if (!e && !hasInput(draft))
+          return scoredPanel(c, d, stage, weak, strong);
+        return `<section class="panel score-panel ${[d.temporary && "temporary", e?.skipped && "skipped"].filter(Boolean).join(" ")}" data-detail="${d.id}"><div class="detail-head">${e ? `<span class="seat">${e.n + 1}</span>` : ""}<h3>${esc(d.name)}</h3>${badge(`Attempt ${attempt}`)}${borrowedNote(c, d, stage)}<span class="count">${available.length} available${absent.length ? ` · ${absent.length} skipped` : ""}</span><div class="actions">${e && order.length > 1 ? skipButton(`detail:${d.id}`, d.name, e.skipped, hasInput(draft)) : ""}${e?.dispatch ? `<button data-undetail="${e.dispatch.id}" title="Cancel this redetail and put the detail back in the Redetailing list" aria-label="Cancel redetail ${esc(d.name)}">Cancel redetail</button>` : ""}<button data-detail-history="${d.id}" aria-label="History for ${esc(d.name)}">History</button><button class="icon-button" data-reset="${d.id}" title="Clear entries" aria-label="Clear entries for ${esc(d.name)}">↺</button><button class="primary" data-confirm="${d.id}" aria-label="Confirm scores for ${esc(d.name)}" ${e?.skipped || short ? "disabled" : ""}>Confirm scores</button></div></div>${absent.length ? `<div class="issues" role="status">${short ? `Too few available firers: ${available.length}/${DETAIL_RULES[c.program].min}.` : `${absent.length} skipped; this attempt will include ${available.length} firers.`} ${absent.map((p) => `<button data-person-skip="${p.id}">Unskip ${esc(p.name)}</button>`).join(" ")} ${short ? `<button data-replace-detail="${d.id}">Build replacement detail</button>` : ""}</div>` : ""}<div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th><th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${matchFirst(
+          people,
+        )
           .map((p) => {
             const row = draft.rows.find((r) => r.participantId === p.id),
               mine = nextAttempt(c, p, stage);
-            return `<tr data-row="${p.id}" class="${[waiting.has(p.id) && "awaiting", search && filtered(p) && "match"].filter(Boolean).join(" ")}"><td class="name">${esc(p.name)}${abilityMark(c, p, stage, weak, strong)}${mine !== attempt || waiting.has(p.id) ? `<div class="attempt ${waiting.has(p.id) ? "on" : ""}">Attempt ${mine}${waiting.has(p.id) ? " · redetailed" : ""}</div>` : ""}</td><td class="rifle">${esc(rosterWeapon(c, d.id, p))}</td><td><div class="score-input"><input type="number" min="0" max="${cmax}" step="1" inputmode="numeric" enterkeyhint="next" data-cs-hits="${p.id}" value="${esc(row?.hits || "")}" aria-label="${esc(p.name)} hits" placeholder="—" ${e?.skipped ? "disabled" : ""}><span class="muted">/${cmax}</span></div></td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+            return `<tr data-row="${p.id}" class="${[p.skipped && "skipped", waiting.has(p.id) && "awaiting", search && filtered(p) && "match"].filter(Boolean).join(" ")}"><td class="name">${esc(p.name)}${abilityMark(c, p, stage, weak, strong)}${mine !== attempt || waiting.has(p.id) ? `<div class="attempt ${waiting.has(p.id) ? "on" : ""}">Attempt ${mine}${waiting.has(p.id) ? " · redetailed" : ""}</div>` : ""}</td><td class="rifle">${esc(rosterWeapon(c, d.id, p))}</td><td>${scoreEditor(c, p, stage, d.id, e?.skipped || p.skipped)}</td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button data-person-skip="${p.id}" aria-label="${p.skipped ? "Unskip" : "Skip"} ${esc(p.name)}">${p.skipped ? "Unskip" : "Skip"}</button><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
           })
           .join(
             "",
-          )}</tbody></table></div>${shared ? `<div class="aggregate"><label>Detail total <input type="number" min="0" max="${people.length * cmax}" step="1" data-aggregate="${d.id}" value="${esc(draft.aggregate)}" aria-label="${esc(d.name)} total hits" placeholder="—" ${e?.skipped ? "disabled" : ""}></label><span class="muted">/${people.length * cmax} · fills in from the hits</span></div>` : ""}<div class="errors draft-errors">${esc(draftErrors(c, draft).join("\n"))}</div><div class="score-footer"><span class="draft-summary">${esc(e?.skipped ? "Skipped: it has not fired. Unskip to enter scores." : draftSummary(c, draft))}</span></div></section>`;
+          )}</tbody></table></div>${shared && !c.settings.requireBreakdown ? `<div class="aggregate"><label>Detail total <input type="number" min="0" max="${available.length * cmax}" step="1" data-aggregate="${d.id}" value="${esc(draft.aggregate)}" aria-label="${esc(d.name)} total hits" placeholder="—" ${e?.skipped ? "disabled" : ""}></label><span class="muted">/${available.length * cmax} · fills in from the hits</span></div>` : ""}<div class="errors draft-errors">${esc(draftErrors(c, draft).join("\n"))}</div><div class="score-footer"><span class="draft-summary">${esc(e?.skipped ? "Skipped: it has not fired. Unskip to enter scores." : draftSummary(c, draft))}</span></div></section>`;
       })
       .join("") +
     (!shown.length
@@ -688,14 +867,17 @@ function methodInfo(c) {
   return `Only firers below their threshold are listed; each row says why. ${
     {
       smart:
-        "Automatic: 1. Firers at risk of failing, who cannot pass without a better score here. 2. Everyone else, furthest from their threshold first, since they need the most attempts and practice. A firer's threshold is their share of what they still need for Marksman, worked out from the scores already in; Stage B aims for 7/8.",
+        "Automatic: 1. Firers at risk of failing, who cannot pass without a better score here. 2. Everyone else, furthest from their threshold first, since they need the most attempts and practice. A firer's threshold is their share of what they still need for Marksman, worked out from the scores already in; Stage B starts at 7/8 and adjusts as other stage scores arrive.",
       highest: "Highest best score first.",
-      first: "Chronological order: whoever shot longest ago goes again first.",
+      first:
+        "Confirmation order: earliest confirmed group first, then lane order within that group. Search does not change lane order.",
     }[c.settings.order] ?? "Lowest best score first."
   } ▲ High priority firers go first and ▼ low priority firers go last.`;
 }
 function queuePanel(c, stage, q) {
-  const started = c.attempts.some((a) => a.stage === stage && a.status === "valid"),
+  const started = c.attempts.some(
+      (a) => a.stage === stage && a.status === "valid",
+    ),
     ready = q.filter((e) => !e.errors.length).length,
     count = q
       .filter((e) => selected.has(e.key))
@@ -710,7 +892,7 @@ function queuePanel(c, stage, q) {
     ["smart", "Automatic"],
     ["lowest", "Lowest score first"],
     ["highest", "Highest score first"],
-    ["first", "Chronological order"],
+    ["first", "Confirmation order"],
   ]
     .map(
       ([key, label]) =>
@@ -719,12 +901,11 @@ function queuePanel(c, stage, q) {
     .join(
       "",
     )}</select>${info(methodInfo(c))}</div><div class="queue-actions">${manual}<button data-action="select-all" ${!started || !ready ? "disabled" : ""}>Select all</button><button class="primary" id="redetail" data-action="redetail" ${count && started ? "" : "disabled"}>Redetail${count ? ` (${count})` : ""}</button></div></div>${!started ? `<div class="panel-body note">No ${esc(stageLabel(c, stage))} scores yet.</div>` : ""}<div class="queue-list" ${!started ? "hidden" : ""}>${
-    q
+    matchFirst(q, (e) => e.members.some(filtered))
       .map((e, i) => {
-        if (search && !e.members.some(filtered)) return "";
         const name = e.detail ? e.detail.name : e.members[0].name,
           max = e.priority.p.profile.components.find((x) => x.id === stage).max;
-        return `<div class="queue-row ${search && e.members.some(filtered) ? "match" : ""}" data-key="${esc(e.key)}"><input type="checkbox" data-queue="${esc(e.key)}" ${selected.has(e.key) ? "checked" : ""} ${e.errors.length ? "disabled" : ""} aria-label="Select ${esc(name)}"><span class="count">${i + 1}</span><div><strong>${esc(name)}</strong>${e.detail ? borrowedNote(c, e.detail, stage) : ""}${e.above ? badge("Above threshold") : ""}<p class="note">${e.errors.length ? "Fix this detail in Participants" : `Attempt ${e.attempt} · ${e.reason}`}</p>${e.holdingBack?.length ? `<p class="note holding">This is the straightforward way to clear ${esc(names(e.holdingBack.map((p) => p.name)))}, but the same detail has already tried twice. A detail built around ${e.holdingBack.length === 1 ? "them" : "each of them"} clears it faster.</p>` : ""}</div><button type="button" class="prio ${e.tag || ""}" data-priority="${esc(e.key)}" aria-label="${esc(name)} priority: ${e.tag || "normal"}" title="${e.tag === "high" ? "High priority" : e.tag === "low" ? "Low priority" : "Set priority"}">${e.tag === "high" ? "▲" : e.tag === "low" ? "▼" : "↕"}</button></div>`;
+        return `<div class="queue-row ${search && e.members.some(filtered) ? "match" : ""}" data-key="${esc(e.key)}"><input type="checkbox" data-queue="${esc(e.key)}" ${selected.has(e.key) ? "checked" : ""} ${e.errors.length ? "disabled" : ""} aria-label="Select ${esc(name)}"><span class="count">${i + 1}</span><div><strong>${esc(name)}</strong>${e.detail ? borrowedNote(c, e.detail, stage) : ""}${e.above ? badge("Above threshold") : ""}<p class="note">${e.errors.length ? "Fix this detail in Participants" : `Attempt ${e.attempt} · ${esc(e.reason)}`}</p>${e.holdingBack?.length ? `<p class="note holding">${esc(names(e.holdingBack.map((p) => p.name)))} may benefit from another attempt. Retry this detail, or consider a different mix.</p>` : ""}</div><button type="button" class="prio ${e.tag || ""}" data-priority="${esc(e.key)}" aria-label="${esc(name)} priority: ${e.tag || "normal"}" title="${e.tag === "high" ? "High priority" : e.tag === "low" ? "Low priority" : "Set priority"}">${e.tag === "high" ? "▲" : e.tag === "low" ? "▼" : "↕"}</button></div>`;
       })
       .join("") ||
     `<div class="panel-body note">${search && q.length ? "No matching firers to redetail." : "No firers to redetail."}</div>`
@@ -738,15 +919,10 @@ function summaryPanel(c, stage = null) {
   const count = notes
     .filter((x) => x.level !== "info")
     .reduce((n, x) => n + x.items.length, 0);
-  return `<details class="panel summary" data-summary="${esc(id)}" ${closedSummaries.has(id) ? "" : "open"}><summary><h3>Summary</h3><span class="count">${count ? `${count} ${count === 1 ? "warning" : "warnings"}` : "No warnings"}</span></summary>${notes
+  return `<details class="panel summary" data-summary="${esc(id)}" ${closedSummaries.has(id) ? "" : "open"}><summary><h3>Summary</h3><span class="count">${count ? `${count} to review` : "On track"}</span></summary>${notes
     .map(
       (n) =>
-        `<div class="insight insight-${n.level}"><strong>${esc(n.title)}</strong><ul>${n.items
-          .slice(0, 8)
-          .map((x) => `<li>${esc(x)}</li>`)
-          .join(
-            "",
-          )}${n.items.length > 8 ? `<li class="muted">and ${n.items.length - 8} more</li>` : ""}</ul></div>`,
+        `<details class="insight insight-${n.level}"><summary>${esc(n.title)} · ${n.items.length}</summary><ul>${n.items.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>`,
     )
     .join("")}</details>`;
 }
@@ -757,11 +933,11 @@ function summaryPanel(c, stage = null) {
 // detail gets two goes before it is worth breaking up, and a firer already
 // booked into a detail is left alone so nobody is put on two firing points.
 function weakPanel(c, stage) {
-  const list = weakFirers(c, stage).filter(({ p }) => !search || filtered(p));
+  const list = matchFirst(weakFirers(c, stage), ({ p }) => filtered(p));
   if (!list.length) return "";
   const max = stages(c).find((x) => x.id === stage).max,
     label = stageLabel(c, stage);
-  return `<details class="reached weak-list" open><summary>${list.length} poor ${list.length === 1 ? "shooter" : "shooters"}</summary><p class="note weak-note">Build detail lifts a poor shooter's ${esc(label)} average by pairing them with the best shooters from other details, firers who still need ${esc(label)} first. It opens once their own detail has fired ${esc(label)} twice.</p>${list
+  return `<details class="reached weak-list"><summary>${list.length} poor ${list.length === 1 ? "shooter" : "shooters"}</summary><p class="note weak-note">An optional different mix, based on past scores. Retrying the same detail is also an option.</p>${list
     .map(({ p }) => {
       const d = c.details.find((x) => x.id === p.detailId),
         booked = committed(c, stage, p),
@@ -782,17 +958,18 @@ function weakPanel(c, stage) {
 function reachedPanel(c, stage, q) {
   const listed = new Set(q.map((e) => e.key));
   let done = entities(c, stage).filter(
-      (e) =>
-        !listed.has(e.key) &&
-        e.members.some((p) => best(c, p, stage) !== null) &&
-        !c.dispatches.some(
-          (d) => d.key === e.key && d.stage === stage && d.status === "awaiting",
-        ),
-    );
+    (e) =>
+      !listed.has(e.key) &&
+      e.members.some((p) => best(c, p, stage) !== null) &&
+      !c.dispatches.some(
+        (d) => d.key === e.key && d.stage === stage && d.status === "awaiting",
+      ),
+  );
   const found = (e) => search && e.members.some(filtered);
-  if (search) done = done.filter(found);
+  if (search) done = matchFirst(done, found);
   if (!done.length) return "";
-  const score = (e) => Math.max(...e.members.map((p) => best(c, p, stage) ?? 0));
+  const score = (e) =>
+    Math.max(...e.members.map((p) => best(c, p, stage) ?? 0));
   return `<details class="reached"${showReached || search ? " open" : ""}><summary>${done.length} at or above the threshold</summary>${done
     .toSorted((a, b) => score(a) - score(b))
     .map((e) => {
@@ -814,6 +991,10 @@ function reachedPanel(c, stage, q) {
       return `<div class="reached-row ${found(e) ? "match" : ""}"><span class="count">✓</span><div><strong>${esc(name)}</strong><p class="note">Best ${ratio(score(e), max)}${why ? ` · ${why}` : ""}</p></div><button type="button" data-requeue="${esc(e.key)}" aria-label="Redetail ${esc(name)}" ${locked ? "disabled" : ""}>Redetail</button></div>`;
     })
     .join("")}</details>`;
+}
+// "1 shoot", "2 shoots".
+function plural(n, noun) {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`;
 }
 // "A", "A and B", "A, B and C".
 function names(list) {
@@ -837,7 +1018,7 @@ function syncSkips() {
       row = button.closest("tr"),
       boxes = [
         ...(row ?? panel ?? document).querySelectorAll(
-          "[data-hits],[data-cs-hits],[data-aggregate]",
+          "[data-part-person],[data-hits]:not([readonly]),[data-cs-hits]:not([readonly]),[data-aggregate]",
         ),
       ],
       typed = boxes.some((x) => x.value !== "");
@@ -851,6 +1032,8 @@ function syncSkips() {
 }
 function holdHit(input, stage) {
   const c = s();
+  requireActiveStage(c, stage);
+  c.updatedAt = now();
   c.entries ??= {};
   if (input.value === "") delete c.entries[`${stage}:${input.dataset.hits}`];
   else c.entries[`${stage}:${input.dataset.hits}`] = input.value;
@@ -869,13 +1052,18 @@ function confirmScores(stage) {
     panel = $(".score-panel"),
     errors = [],
     saved = [];
+  requireActiveStage(c, stage);
+  const laneOrder = firingQueue(c, stage).flatMap((e) =>
+    e.members.map((p) => p.id),
+  );
   const pending = Object.entries(c.entries ?? {})
     .filter(([key]) => key.startsWith(`${stage}:`))
     .map(([key, hits]) => ({
       p: c.participants.find((x) => x.id === key.slice(stage.length + 1)),
       hits,
     }))
-    .filter((x) => x.p);
+    .filter((x) => x.p)
+    .sort((a, b) => laneOrder.indexOf(a.p.id) - laneOrder.indexOf(b.p.id));
   if (!pending.length) {
     panel.querySelector(".draft-errors").textContent =
       "Enter at least one score.";
@@ -891,13 +1079,25 @@ function confirmScores(stage) {
       parsed = parseHits(hits, max);
     if (skipped.has(p.id))
       errors.push(`${p.name} is skipped and has not fired. Unskip them first.`);
-    else if (parsed.error) errors.push(`${p.name}: ${parsed.error}`);
+    else if (c.settings.requireBreakdown) {
+      try {
+        parseBreakdown(
+          c,
+          stageRifle(c, p, stage),
+          stage,
+          c.entryParts?.[`${stage}:${p.id}`],
+        );
+      } catch (e) {
+        errors.push(`${p.name}: ${e.message}`);
+      }
+    } else if (parsed.error) errors.push(`${p.name}: ${parsed.error}`);
   }
   if (errors.length) {
     panel.querySelector(".draft-errors").textContent = errors.join("\n");
     return;
   }
-  const at = now();
+  const at = now(),
+    batchId = uid();
   for (const { p, hits } of pending) {
     saved.push(
       recordIndividual(
@@ -908,12 +1108,21 @@ function confirmScores(stage) {
         isCS(c) ? stageRifle(c, p, stage) : p.weapon,
         "",
         at,
+        c.settings.requireBreakdown
+          ? c.entryParts?.[`${stage}:${p.id}`]
+          : undefined,
+        batchId,
       ),
     );
     delete c.entries[`${stage}:${p.id}`];
+    if (c.entryParts) delete c.entryParts[`${stage}:${p.id}`];
   }
-  save();
+  const persisted = save();
   render();
+  if (!persisted) {
+    toast("Not saved");
+    return;
+  }
   toast(
     `${saved.length} ${saved.length === 1 ? "score" : "scores"} saved.`,
     () => saved.forEach((a) => undoAttempt(c, a.id)),
@@ -924,6 +1133,7 @@ function confirmDetail(detailId, stage, totalOnly = false) {
     draft = getDraft(c, detailId, stage),
     panel = $(`[data-detail="${detailId}"]`);
   if (
+    !c.settings.requireBreakdown &&
     !totalOnly &&
     draft.aggregate !== "" &&
     draft.rows.every((r) => r.hits === "")
@@ -959,10 +1169,9 @@ function confirmDetail(detailId, stage, totalOnly = false) {
   }
 }
 function refreshDraft(panel, c, draft) {
-  panel.querySelector(".draft-errors").textContent = draftErrors(
-    c,
-    draft,
-  ).join("\n");
+  panel.querySelector(".draft-errors").textContent = draftErrors(c, draft).join(
+    "\n",
+  );
   const summary = panel.querySelector(".draft-summary");
   if (summary) summary.textContent = draftSummary(c, draft);
   save();
@@ -1050,9 +1259,7 @@ function slideFrom(before) {
       [{ transform: `translateY(${dy}px)` }, { transform: "none" }],
       { duration: 260, easing: "cubic-bezier(.2,.9,.2,1)" },
     );
-  last.finished
-    .catch(() => {})
-    .then(() => list.classList.remove("settling"));
+  last.finished.catch(() => {}).then(() => list.classList.remove("settling"));
 }
 // A change that reorders the list: measure, apply, redraw, then let it settle.
 function animateQueue(change) {
@@ -1068,15 +1275,17 @@ function renderFinal() {
     cs = stages(c),
     rr = c.participants.map((p) => result(c, p));
   const table = (people) =>
-    `<div class="table-wrap"><table><thead><tr><th>Full name</th><th>Result</th>${cs.map((x) => `<th>${esc(x.label)}</th>`).join("")}<th>Total</th><th></th></tr></thead><tbody>${people
+    `<div class="table-wrap"><table><thead><tr><th>Full name</th><th>Result</th>${cs.map((x) => `<th>${esc(x.label)}</th>`).join("")}<th>Total</th><th></th></tr></thead><tbody>${matchFirst(
+      people,
+    )
       .map((p) => {
         const r = result(c, p);
-        return `<tr><td class="name">${esc(p.name)}</td><td>${badge(r.status)}</td>${p.profile.components.map((x, i) => `<td class="num">${ratio(r.scores[i], x.max)}</td>`).join("")}<td class="num"><b>${ratio(r.total, p.profile.total)}</b></td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+        return `<tr class="${search && filtered(p) ? "match" : ""}"><td class="name">${esc(p.name)}${p.skipped ? badge("Skipped") : ""}</td><td>${badge(r.status)}</td>${p.profile.components.map((x, i) => `<td class="num">${ratio(r.scores[i], x.max)}${c.attempts.find((a) => a.id === r.bestAttemptIds[i])?.breakdown?.length ? `<details class="score-breakdown"><summary>Parts</summary>${esc(breakdownText(c.attempts.find((a) => a.id === r.bestAttemptIds[i]).breakdown))}</details>` : ""}</td>`).join("")}<td class="num"><b>${ratio(r.total, p.profile.total)}</b></td><td class="more-cell"><button data-person-skip="${p.id}" aria-label="${p.skipped ? "Unskip" : "Skip"} ${esc(p.name)}">${p.skipped ? "Unskip" : "Skip"}</button><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
       })
       .join("")}</tbody></table></div>`;
   $("#main").innerHTML =
     shootHead(
-      '<span class="spacer"></span><button data-action="csv">Export scores</button>',
+      `<span class="spacer"></span>${searchBox()}<button data-action="csv">Export scores</button>`,
     ) +
     summaryPanel(c) +
     `<div class="summary-line">${["Marksman", "Pass", "Fail", "Incomplete"].map((label) => `<span><strong>${rr.filter((r) => r.status === label).length}</strong> ${label}</span>`).join("")}</div>` +
@@ -1084,12 +1293,20 @@ function renderFinal() {
       ? empty("No scores yet")
       : isCS(c)
         ? c.details
-            .filter((d) => members(c, d.id).length)
+            .filter((d) => !d.temporary && members(c, d.id).length)
+            .toSorted(
+              (a, b) =>
+                Number(search && members(c, b.id).some(filtered)) -
+                Number(search && members(c, a.id).some(filtered)),
+            )
             .map(
               (d) =>
                 `<section class="panel"><div class="detail-head"><h3>${esc(d.name)}</h3></div>${table(members(c, d.id))}</section>`,
             )
-            .join("")
+            .join("") +
+          (members(c, null).length
+            ? `<section class="panel"><h3>Unassigned</h3>${table(members(c, null))}</section>`
+            : "")
         : `<section class="panel">${table(c.participants)}</section>`);
 }
 // The record of a shoot, filed under the stage each thing belongs to and
@@ -1101,9 +1318,9 @@ function renderHistory() {
     stageName = (id) => stages(c).find((x) => x.id === id)?.label ?? id,
     stageMax = (id) => stages(c).find((x) => x.id === id)?.max ?? null,
     text = (e) =>
-      `${e.title ?? ""} ${e.stage ? stageName(e.stage) : ""} ${e.summary ?? ""} ${(e.lines ?? []).join(" ")} ${(e.people ?? []).map((x) => x.name).join(" ")}`,
-    hit = (e) => !search || text(e).toLowerCase().includes(search.toLowerCase()),
-    shown = feed.filter(hit);
+      `${e.title ?? ""} ${e.stage ? stageName(e.stage) : ""} ${e.summary ?? ""} ${(e.lines ?? []).join(" ")} ${e.score ?? ""}/${e.max ?? (e.stage ? stageMax(e.stage) : "")} ${e.aggregate ?? ""} ${(e.people ?? []).map((x) => `${x.name} ${x.hits ?? ""}/${x.max ?? ""} ${x.score ?? ""} ${breakdownText(x.breakdown)}`).join(" ")}`,
+    hit = (e) => !search || textMatches(text(e)),
+    shown = matchFirst(feed, hit);
   const KINDS = {
       "detail-score": ["Scored", "blue"],
       score: ["Scored", "blue"],
@@ -1111,6 +1328,7 @@ function renderHistory() {
       "temp-detail": ["Detail built", "green"],
       roster: ["Nominal roll", ""],
       note: ["Setup", ""],
+      operation: ["Operation", ""],
       void: ["Voided", "red"],
       restore: ["Restored", "green"],
     },
@@ -1124,9 +1342,9 @@ function renderHistory() {
   // A card is a summary you can open. Whether it is open survives a redraw, so
   // typing in the search box does not keep shutting it.
   const card = (e, head, body = "", menu = "") =>
-    `<details class="panel event ${e.voided ? "void" : ""}" data-event="${esc(e.id)}" ${openEvents.has(e.id) ? "open" : ""}><summary><div class="event-head"><div>${tags(e)}${head}</div><span class="when">${esc(when(e))}</span></div></summary>${body}</details>${menu}`;
+    `<details class="panel event ${search && hit(e) ? "match" : ""} ${e.voided ? "void" : ""}" data-event="${esc(e.id)}" ${openEvents.has(e.id) || (search && hit(e)) ? "open" : ""}><summary><div class="event-head"><div>${tags(e)}${head}</div><span class="when">${esc(when(e))}</span></div></summary>${body}</details>${menu}`;
   const flat = (e, head, menu = "") =>
-    `<section class="panel event flat ${e.voided ? "void" : ""}"><div class="event-head"><div>${tags(e)}${head}</div><span class="when">${esc(when(e))}</span>${menu}</div></section>`;
+    `<section class="panel event flat ${search && hit(e) ? "match" : ""} ${e.voided ? "void" : ""}"><div class="event-head"><div>${tags(e)}${head}</div><span class="when">${esc(when(e))}</span>${menu}</div></section>`;
   const title = (main, note) =>
     `<strong>${main}</strong>${note ? `<p class="note">${note}</p>` : ""}`;
   const voidNote = (e) =>
@@ -1144,7 +1362,7 @@ function renderHistory() {
         ? `<button data-attempt="${esc(e.attemptId)}">Open this score</button>`
         : "";
   const entry = (e) => {
-    const max = e.stage ? stageMax(e.stage) : null;
+    const max = e.max ?? (e.stage ? stageMax(e.stage) : null);
     if (e.kind === "void" || e.kind === "restore")
       return flat(
         e,
@@ -1159,7 +1377,7 @@ function renderHistory() {
       // one from here; a single firer cannot be voided out of it.
       const rows = e.people.map(
         (x) =>
-          `<tr class="${mark(x.name) ? "match" : ""}"><td class="name">${esc(x.name)}</td><td class="num">${x.hits ?? '<span class="muted">—</span>'}${max ? `<span class="muted">/${max}</span>` : ""}</td></tr>`,
+          `<tr class="${mark(x.name) ? "match" : ""}"><td class="name">${esc(x.name)}${x.breakdown?.length ? `<div class="sub">${esc(breakdownText(x.breakdown))}</div>` : ""}</td><td class="num">${x.hits ?? '<span class="muted">—</span>'}${(x.max ?? max) ? `<span class="muted">/${x.max ?? max}</span>` : ""}</td></tr>`,
       );
       return card(
         e,
@@ -1174,7 +1392,7 @@ function renderHistory() {
     if (e.kind === "score") {
       const rows = e.people.map(
         (x) =>
-          `<tr class="${x.voided ? "void" : ""} ${mark(x.name) ? "match" : ""}"><td class="name">${esc(x.name)}${x.voided ? `<div class="sub">Voided${x.reason ? ` · ${esc(x.reason)}` : ""}</div>` : ""}</td><td class="num">${x.hits ?? '<span class="muted">—</span>'}${max ? `<span class="muted">/${max}</span>` : ""}</td><td class="more-cell"><button class="more" data-attempt="${x.attemptId}" aria-label="Correct ${esc(x.name)}'s ${esc(stageName(e.stage))} score">⋯</button></td></tr>`,
+          `<tr class="${x.voided ? "void" : ""} ${mark(x.name) ? "match" : ""}"><td class="name">${x.lane ? `<span class="count">Lane ${x.lane}</span> ` : ""}${esc(x.name)}${x.breakdown?.length ? `<div class="sub">${esc(breakdownText(x.breakdown))}</div>` : ""}${x.voided ? `<div class="sub">Voided${x.reason ? ` · ${esc(x.reason)}` : ""}</div>` : ""}</td><td class="num">${x.hits ?? '<span class="muted">—</span>'}${(x.max ?? max) ? `<span class="muted">/${x.max ?? max}</span>` : ""}</td><td class="more-cell"><button class="more" data-attempt="${x.attemptId}" aria-label="Correct ${esc(x.name)}'s ${esc(stageName(e.stage))} score">⋯</button></td></tr>`,
       );
       return card(
         e,
@@ -1200,6 +1418,14 @@ function renderHistory() {
         title(
           `${esc(e.title)} redetailed`,
           `${esc(who(e))} · ${e.status === "canceled" ? "de-detailed" : e.status === "scored" ? "scored since" : "waiting to fire"}`,
+        ),
+      );
+    if (e.kind === "operation")
+      return flat(
+        e,
+        title(
+          esc(e.title),
+          esc([who(e), ...(e.lines ?? [])].filter(Boolean).join(" · ")),
         ),
       );
     if (e.kind === "roster")
@@ -1238,19 +1464,17 @@ function renderHistory() {
 }
 function renderSettings() {
   $("#main").innerHTML =
-    `<div class="settings"><div class="heading"><h2>Settings</h2></div>${Object.entries(
+    `<div class="settings"><div class="heading"><h2>Settings</h2></div><label class="panel breakdown-toggle"><input id="require-breakdown" type="checkbox" ${store.requireBreakdown !== false ? "checked" : ""}> Require individual sub-stage scores</label>${Object.entries(
       PROGRAMS,
     )
       .map(([program, label]) => {
         const open = openPresets.has(program);
         return `<section class="preset ${open ? "open" : ""}"><div class="preset-head"><button class="expand" data-expand="${program}" aria-expanded="${open}">${label}</button></div><div class="preset-body">${presetBody(program)}</div></section>`;
       })
-      .join(
-        "",
-      )}</div>`;
+      .join("")}</div>`;
 }
 function thresholdInfo() {
-  return "Redetailing lists a firer for a stage until their best score reaches its threshold, they reach Marksman, or they max the stage. These are the starting thresholds. Once any other stage is scored, a firer's threshold becomes their share of what they still need. Stage B of ATP and Combat Shoot stays at 7/8.";
+  return "Redetailing lists a firer for a stage until their best score reaches its threshold, they reach Marksman, or they max the stage. These are the starting thresholds. Once any other stage is scored, a firer's threshold becomes their share of what they still need. Stage B starts at 7/8; targets adjust as other stage scores arrive.";
 }
 // A shoot type's settings: the rifle new participants start on, then one
 // collapsible threshold section per rifle, since each has its own standard.
@@ -1288,8 +1512,11 @@ function presetBody(program) {
           )
             .map((c) => {
               const max = profile.components.find((x) => x.id === c.id).max,
-                id = `target-${program}-${weapon}-${c.id}`.replace(/\W+/g, "-");
-              return `<div class="target-row"><label for="${id}">${esc(c.label)}</label><input id="${id}" data-threshold="${esc(`${key}|${weapon}|${c.id}`)}" type="number" min="0" max="${max}" step="1" inputmode="numeric" value="${target(shoot, p, c.id)}" aria-label="${esc(`${label} ${weapon} ${c.label}`)} threshold"><span class="muted">/${max}</span></div>`;
+                id = `target-${program}-${weapon}-${c.id}`.replace(/\W+/g, "-"),
+                // Only Stage B of ATP and Combat Shoot ships a layout, so say
+                // which stages still need one rather than leaving it to a click.
+                parts = pr.breakdowns?.[`${weapon}:${c.id}`] ?? [];
+              return `<div class="target-row"><label for="${id}">${esc(c.label)}</label><input id="${id}" data-threshold="${esc(`${key}|${weapon}|${c.id}`)}" type="number" min="0" max="${max}" step="1" inputmode="numeric" value="${target(shoot, p, c.id)}" aria-label="${esc(`${label} ${weapon} ${c.label}`)} threshold"><span class="muted">/${max}</span><button class="${parts.length ? "" : "unset"}" data-layout="${esc(`${key}|${weapon}|${c.id}`)}" aria-label="${esc(`${label} ${weapon} ${c.label}`)} sub-stages">${parts.length ? `${parts.length} sub-stages` : "Set sub-stages"}</button></div>`;
             })
             .join("")}</div>`
         : ""
@@ -1341,7 +1568,9 @@ function detailPicker(c) {
         rows = parseRoster(f.get("roster"), true),
         unknown = rows.filter((r) => !byName.has(r.name.toLowerCase()));
       if (unknown.length)
-        throw Error(`Not on the list: ${unknown.map((r) => r.name).join(", ")}.`);
+        throw Error(
+          `Not on the list: ${unknown.map((r) => r.name).join(", ")}.`,
+        );
       const numbered = rows.filter((r) => r.detail !== null);
       if (!numbered.length)
         throw Error("Type a detail number after a name, e.g. “Alex Tan, 2”.");
@@ -1453,13 +1682,18 @@ function poorAdvice(c, stage, chosen, poorPicked, aim, ids) {
     const drop = poorPicked.slice(keep).map((p) => p.name);
     return `On past scores this detail carries at most ${keep} poor ${keep === 1 ? "shot" : "shots"} and still averages ${aim}. Swapping ${names(drop)} for the best shooters still free would get it there.`;
   }
-  return `Even with the best shooters still free, this detail cannot average ${aim} while ${names(poorPicked.map((p) => p.name))} ${poorPicked.length === 1 ? "is" : "are"} in it. Run it to give them the practice, or wait for stronger shooters.`;
+  return `Recorded bests project below ${aim} with this mix. You can retry for practice or consider different partners.`;
 }
 // A detail put together on the spot. Around a poor shooter it comes ready
 // built; otherwise it starts empty. Firers already booked to fire this stage
 // are flagged rather than blocked: two details sharing a firer can be done, but
 // on the range it means one of them waits, so it should be a deliberate choice.
-function manualDetailDialog(stage, around = null, picks = null) {
+function manualDetailDialog(
+  stage,
+  around = null,
+  picks = null,
+  replacing = null,
+) {
   const c = s(),
     label = stageLabel(c, stage),
     rule = DETAIL_RULES[c.program],
@@ -1488,7 +1722,7 @@ function manualDetailDialog(stage, around = null, picks = null) {
             : []),
         ];
   const row = (p) =>
-    `<div class="manual-row ${picked.has(p.id) ? "on" : ""}"><label class="manual-pick"><input type="checkbox" name="pick" value="${p.id}" aria-label="Include ${esc(p.name)}" ${picked.has(p.id) ? "checked" : ""}><span>${esc(p.name)}${pickMarks(c, p, stage)}${committed(c, stage, p) ? ' <span class="muted">· already booked</span>' : ""}</span></label><span class="rifle">${esc(p.weapon)}</span></div>`;
+    `<div class="manual-row ${picked.has(p.id) ? "on" : ""}"><label class="manual-pick"><input type="checkbox" name="pick" value="${p.id}" aria-label="Include ${esc(p.name)}" ${p.skipped ? "disabled" : ""} ${picked.has(p.id) ? "checked" : ""}><span>${esc(p.name)}${p.skipped ? " · skipped" : ""}${pickMarks(c, p, stage)}${committed(c, stage, p) ? ' <span class="muted">· already booked</span>' : ""}</span></label><span class="rifle">${esc(p.weapon)}</span></div>`;
   // Why this plan is what it is, and whether waiting would give a better one.
   const advisories = [];
   if (plan?.short)
@@ -1500,10 +1734,12 @@ function manualDetailDialog(stage, around = null, picks = null) {
       `A stronger detail is possible later. ${names(plan.waitFor.map((x) => x.name))} ${plan.waitFor.length === 1 ? "shoots" : "shoot"} better and still ${plan.waitFor.length === 1 ? "needs" : "need"} ${label}, so they would lift the average more — but they are already in a detail waiting to fire. Wait for that detail to finish, or go ahead with this one.`,
     );
   dialog(
-    around ? `Detail around ${weakName} · ${label}` : `Manual detail · ${label}`,
+    around
+      ? `Detail around ${weakName} · ${label}`
+      : `Manual detail · ${label}`,
     `<p class="note">${
       around
-        ? `${esc(label)} scores the detail's hits divided by its firers, so ${esc(weakName)} drags everyone in their detail down. This puts them with the strongest shooters free right now — firers who still need ${esc(label)} first, since the reshoot counts for them too — and the bigger the detail, the further their hits are spread. Change anyone before creating it.`
+        ? `Suggested partners based on recorded scores, with firers who still need ${esc(label)} first. Past scores may not repeat. You can change this mix or retry the original detail.`
         : `Choose who fires together. The detail appears in ${esc(label)} so you can enter its scores.`
     }</p>${advisories.map((x) => `<p class="note warn-note">${esc(x)}</p>`).join("")}<div class="seg manual-seg">${[
       ["detail", "By detail"],
@@ -1515,7 +1751,7 @@ function manualDetailDialog(stage, around = null, picks = null) {
       )
       .join(
         "",
-      )}</div><div class="manual-list">${groups.map(([name, people]) => `<div class="manual-group"><h3>${esc(name)}</h3>${people.map(row).join("")}</div>`).join("")}</div><p class="note manual-summary">No firers chosen.</p><p class="note warn-note manual-carry" hidden></p><p class="note warn-note manual-warn" hidden></p>${around ? `<div class="rest-plan" hidden><label class="chk"><input type="checkbox" name="rest" checked> <span class="rest-title"></span></label><p class="note rest-text"></p></div>` : ""}<p class="note">A one-off is dropped once its scores are in; a kept detail can be redetailed.</p>`,
+      )}</div><div class="manual-list">${groups.map(([name, people]) => `<div class="manual-group"><h3>${esc(name)}</h3>${matchFirst(people).map(row).join("")}</div>`).join("")}</div><p class="note manual-summary">No firers chosen.</p><p class="note warn-note manual-carry" hidden></p><p class="note warn-note manual-warn" hidden></p>${around ? `<div class="rest-plan" hidden><label class="chk"><input type="checkbox" name="rest" checked> <span class="rest-title"></span></label><p class="note rest-text"></p></div>` : ""}<p class="note">A one-off is dropped once its scores are in; a kept detail can be redetailed.</p>`,
     [
       { label: "Keep as a detail", value: "keep" },
       { label: "One-off detail", value: "once" },
@@ -1526,7 +1762,7 @@ function manualDetailDialog(stage, around = null, picks = null) {
           weapon: c.participants.find((p) => p.id === id).weapon,
         })),
         oneOff = action === "once",
-        d = createTempDetail(c, stage, entries, { oneOff }),
+        d = createTempDetail(c, stage, entries, { oneOff, replacing }),
         made = [d];
       // The rest of the weak firer's detail, if the operator kept it ticked.
       const rest =
@@ -1595,7 +1831,9 @@ function manualDetailDialog(stage, around = null, picks = null) {
           `Aiming for ${aim}/${max}, what ${needing.length === 1 ? `${needing[0].name} still needs` : "the firers who still need it ask for"}.`,
         );
       if (expected !== null)
-        lines.push(`Expected average from their best hits: ${expected}/${max}.`);
+        lines.push(
+          `Average if recorded bests repeat from their best hits: ${expected}/${max}.`,
+        );
       if (room > 0)
         lines.push(
           `Room for ${room} more; a fuller detail spreads a poor shot's hits further.`,
@@ -1616,11 +1854,22 @@ function manualDetailDialog(stage, around = null, picks = null) {
       carry.hidden = !message;
       carry.textContent = message;
       // Two details cannot put the same firer on the point at once.
-      const clash = overlapping(c, stage, ids),
+      const clash = overlapping(
+          replacing
+            ? {
+                ...c,
+                dispatches: c.dispatches.filter(
+                  (d) => d.key !== `detail:${replacing}`,
+                ),
+              }
+            : c,
+          stage,
+          ids,
+        ),
         warn = form.querySelector(".manual-warn");
       warn.hidden = !clash.length;
       warn.textContent = clash.length
-        ? `${names(clash.map((p) => p.name))} ${clash.length === 1 ? "is" : "are"} already in a detail waiting to fire ${label}. They can only fire one at a time, so cancel the other detail or leave them out.`
+        ? `${names(clash.map((p) => p.name))} ${clash.length === 1 ? "is" : "are"} unavailable or already assigned for ${label}. Unskip them or cancel their other assignment first.`
         : "";
       // Who is left of the weak firer's detail, and the detail they get.
       const box = form.querySelector(".rest-plan");
@@ -1634,7 +1883,7 @@ function manualDetailDialog(stage, around = null, picks = null) {
             `Also make a detail for the rest of ${rest.from.name}`;
           form.querySelector(".rest-text").textContent = rest.short
             ? `${list(own)} still need ${label}, but there are not enough good shooters to make a detail with them. Make one by hand.`
-            : `${list(own)} fire without ${weakName}.${rest.fillIns.length ? ` ${list(rest.fillIns)} ${rest.fillIns.length === 1 ? "joins" : "join"} to make ${rest.people.length}.` : ""}${rest.expected !== null ? ` Expected average: ${rest.expected}/${max}.` : ""}`;
+            : `${list(own)} fire without ${weakName}.${rest.fillIns.length ? ` ${list(rest.fillIns)} ${rest.fillIns.length === 1 ? "joins" : "join"} to make ${rest.people.length}.` : ""}${rest.expected !== null ? ` Average if recorded bests repeat: ${rest.expected}/${max}.` : ""}`;
           box.querySelector("[name=rest]").disabled = rest.short;
         }
       }
@@ -1648,7 +1897,7 @@ function manualDetailDialog(stage, around = null, picks = null) {
   for (const b of form.querySelectorAll("[data-sort]"))
     b.onclick = () => {
       manualSort = b.dataset.sort;
-      manualDetailDialog(stage, around, new Set(chosenIds()));
+      manualDetailDialog(stage, around, new Set(chosenIds()), replacing);
     };
   update();
 }
@@ -1671,7 +1920,7 @@ function personDialog(id) {
     scored = stage && best(c, p, stage) !== null;
   dialog(
     p.name,
-    `<p class="note">${esc(stage && isCS(c) ? stageRifle(c, p, stage) : p.weapon)}${isCS(c) ? "" : ` · ${esc(stages(c).map((x) => `${x.label} ${ratio(best(c, p, x.id), x.max)}`).join(" · "))}`}</p>${swappable ? `<label class="field inline"><span>Rifle for ${esc(stageLabel(c, stage))}</span><select id="swap-rifle" ${scored ? "disabled" : ""}>${option(weapons(c), stageRifle(c, p, stage))}</select></label>${scored ? '<p class="note">Already scored this stage, so the rifle is fixed. Edit the score in History to change it.</p>' : ""}` : ""}<div class="actions"><button type="button" id="history">History</button>${p.profile.excluded?.length ? '<button type="button" id="sighting">Sighting</button>' : ""}${sent ? `<button type="button" id="undetail" title="Cancel this redetail and put them back in the Redetailing list">De-detail</button>` : ""}</div>`,
+    `<p class="note">${esc(stage && isCS(c) ? stageRifle(c, p, stage) : p.weapon)}${isCS(c) ? "" : ` · ${esc(p.profile.components.map((x) => `${x.label} ${ratio(best(c, p, x.id), x.max)}`).join(" · "))}`}</p>${swappable ? `<label class="field inline"><span>Rifle for ${esc(stageLabel(c, stage))}</span><select id="swap-rifle" ${scored ? "disabled" : ""}>${option(weapons(c), stageRifle(c, p, stage))}</select></label>${scored ? '<p class="note">Already scored this stage, so the rifle is fixed. Edit the score in History to change it.</p>' : ""}` : ""}<div class="actions"><button type="button" id="history">History</button>${p.profile.excluded?.length ? '<button type="button" id="sighting">Sighting</button>' : ""}${sent ? `<button type="button" id="undetail" title="Cancel this redetail and put them back in the Redetailing list">Cancel redetail</button>` : ""}</div>`,
     null,
     null,
     "Close",
@@ -1760,7 +2009,7 @@ function historyDialog(p, back) {
                   .map((m) => `${esc(m.name)} (${esc(m.weapon)})`)
                   .join(", ")
               : "";
-          return `<div class="history-row ${a.status === "void" ? "void" : ""}"><div><b>${esc(stageLabel(c, a.stage))} · ${number ? `attempt ${number}` : "not counted"} · ${ratio(a.score, max)}</b> ${a.status === "void" ? badge(a.revisedBy ? "Edited" : "Voided") : ""}<p>${esc(source)}${roster ? `<br>With: ${roster}` : ""}<br>${new Date(a.recordedAt).toLocaleString("en-US")}${a.correction ? `<br>${esc(a.correction.reason)}` : ""}</p></div>${a.status === "valid" ? `<div class="actions"><button type="button" data-edit="${a.id}">Edit</button><button type="button" class="danger" data-correct="${a.id}">Void</button></div>` : !a.detailAttemptId && restorable(c, a.id) ? `<div class="actions"><button type="button" data-unvoid="${a.id}">Restore</button></div>` : ""}</div>`;
+          return `<div class="history-row ${a.status === "void" ? "void" : ""}"><div><b>${esc(stageLabel(c, a.stage))} · ${number ? `attempt ${number}` : "not counted"} · ${ratio(a.score, max)}</b> ${a.status === "void" ? badge(a.revisedBy ? "Edited" : "Voided") : ""}<p>${esc(source)}${roster ? `<br>With: ${roster}` : ""}${a.breakdown?.length ? `<br>${esc(breakdownText(a.breakdown))}` : ""}<br>${new Date(a.recordedAt).toLocaleString("en-US")}${a.correction ? `<br>${esc(a.correction.reason)}` : ""}</p></div>${a.status === "valid" ? `<div class="actions"><button type="button" data-edit="${a.id}">Edit</button><button type="button" class="danger" data-correct="${a.id}">Void</button></div>` : !a.detailAttemptId && restorable(c, a.id) ? `<div class="actions"><button type="button" data-unvoid="${a.id}">Restore</button></div>` : ""}</div>`;
         })
         .join("") +
       (c.sightings || [])
@@ -1948,15 +2197,28 @@ function scoreEventDialog(attemptId) {
     );
 }
 // Editing an individual score, including the rifle where a stage allows a change.
+function editPartsInputs(parts, saved, id) {
+  if (!parts.length)
+    return '<p class="errors">Configure this stage in Settings before adding a breakdown.</p>';
+  return `<div class="subscores">${parts.map((p, i) => `<label>${esc(p.label)} /${p.max}<input name="part-${id}-${i}" type="number" min="0" max="${p.max}" step="1" value="${saved?.[i]?.hits ?? ""}" aria-label="${esc(p.label)} hits for ${id}"></label>`).join("")}</div>`;
+}
 function editScoreDialog(p, a, done) {
   const c = s(),
-    max = a.profile.components.find((x) => x.id === a.stage).max;
+    max = a.profile.components.find((x) => x.id === a.stage).max,
+    withParts = c.settings.requireBreakdown || a.breakdown?.length,
+    parts = breakdownFor(c, a.weapon, a.stage);
   dialog(
     `Edit ${p.name} · ${stageLabel(c, a.stage)}`,
-    `<label class="field"><span>Hits /${max}</span><input name="hits" type="number" min="0" max="${max}" step="1" value="${a.score}" required autofocus></label>${isCS(c) ? `<label class="field"><span>Rifle</span><select name="weapon">${option(weapons(c), a.weapon)}</select></label>` : `<p class="note">${esc(a.weapon)}</p>`}`,
+    `${withParts ? editPartsInputs(parts, a.breakdown, p.id) : ""}<label class="field"><span>Hits /${max}</span><input name="hits" type="number" min="0" max="${max}" step="1" value="${a.score}" ${withParts ? "readonly" : ""} required autofocus></label>${isCS(c) ? `<label class="field"><span>Rifle</span><select name="weapon">${option(weapons(c), a.weapon)}</select></label>` : `<p class="note">${esc(a.weapon)}</p>`}`,
     "Save score",
     (f) => {
-      editIndividual(c, a.id, f.get("hits"), f.get("weapon") || a.weapon);
+      editIndividual(
+        c,
+        a.id,
+        f.get("hits"),
+        f.get("weapon") || a.weapon,
+        withParts ? parts.map((_, i) => f.get(`part-${p.id}-${i}`)) : undefined,
+      );
       save();
       if (done) return done();
       render();
@@ -1996,7 +2258,7 @@ function detailHistoryDialog(detailId, stage, back) {
           const hits = a.roster
             .map((m) => `${m.name} ${m.rawHits ?? "—"}`)
             .join(", ");
-          return `<div class="history-row ${a.status === "void" ? "void" : ""}"><div><b>${number ? `Attempt ${number}` : "Not counted"} · ${ratio(a.score, max)}</b> ${a.status === "void" ? badge(a.revisedBy || list.some((x) => x.revisionOf === a.id) ? "Edited" : "Voided") : ""}<p>${esc(a.inputMode === "aggregate" ? `Detail total ${a.aggregateHits} over ${a.divisor} firers` : `${hits} · total ${a.aggregateHits} over ${a.divisor} firers`)}<br>${new Date(a.recordedAt).toLocaleString("en-US")}${a.correction ? `<br>${esc(a.correction.reason)}` : ""}</p></div>${a.status === "valid" ? `<div class="actions"><button type="button" data-edit-detail="${a.id}">Edit</button><button type="button" class="danger" data-void-detail="${a.id}">Void</button></div>` : restorable(c, c.attempts.find((x) => x.detailAttemptId === a.id)?.id) ? `<div class="actions"><button type="button" data-unvoid-detail="${a.id}">Restore</button></div>` : ""}</div>`;
+          return `<div class="history-row ${a.status === "void" ? "void" : ""}"><div><b>${number ? `Attempt ${number}` : "Not counted"} · ${ratio(a.score, max)}</b> ${a.status === "void" ? badge(a.revisedBy || list.some((x) => x.revisionOf === a.id) ? "Edited" : "Voided") : ""}<p>${esc(a.inputMode === "aggregate" ? `Detail total ${a.aggregateHits} over ${a.divisor} firers` : `${hits} · total ${a.aggregateHits} over ${a.divisor} firers`)}${a.breakdown?.length ? `<br>${esc(breakdownText(a.breakdown))}` : ""}<br>${new Date(a.recordedAt).toLocaleString("en-US")}${a.correction ? `<br>${esc(a.correction.reason)}` : ""}</p></div>${a.status === "valid" ? `<div class="actions"><button type="button" data-edit-detail="${a.id}">Edit</button><button type="button" class="danger" data-void-detail="${a.id}">Void</button></div>` : restorable(c, c.attempts.find((x) => x.detailAttemptId === a.id)?.id) ? `<div class="actions"><button type="button" data-unvoid-detail="${a.id}">Restore</button></div>` : ""}</div>`;
         })
         .join("") +
       (!list.length && !waitingOn.length
@@ -2130,24 +2392,33 @@ function editDetailDialog(detailAttemptId, back) {
   const c = s(),
     shared = c.shared.find((d) => d.id === detailAttemptId),
     detail = c.details.find((d) => d.id === shared.detailId),
-    max = shared.roster[0].profile.components.find((x) => x.id === shared.stage)
-      .max;
+    withParts =
+      c.settings.requireBreakdown ||
+      shared.roster.some((m) => m.breakdown?.length),
+    max = shared.roster[0].profile.components.find(
+      (x) => x.id === shared.stage,
+    ).max;
   dialog(
     `Edit ${detail ? detail.name : "detail"} · ${stageLabel(c, shared.stage)}`,
     `<p class="note">Enter every firer's hits, or only the detail total.</p><div class="manual-list">${shared.roster
       .map(
         (m) =>
-          `<div class="manual-row on"><span class="manual-pick">${esc(m.name)}</span><span class="rifle">${esc(m.weapon)}</span><input type="number" name="hits-${m.id}" min="0" max="${max}" step="1" value="${m.rawHits ?? ""}" placeholder="—" aria-label="${esc(m.name)} hits"></div>`,
+          `<div class="manual-row on"><span class="manual-pick">${esc(m.name)}</span><span class="rifle">${esc(m.weapon)}</span>${withParts ? editPartsInputs(breakdownFor(c, m.weapon, shared.stage), m.breakdown, m.id) : ""}<input ${withParts ? "readonly" : ""} type="number" name="hits-${m.id}" min="0" max="${max}" step="1" value="${m.rawHits ?? ""}" placeholder="—" aria-label="${esc(m.name)} hits"></div>`,
       )
       .join(
         "",
-      )}</div><label class="field inline"><span>Or detail total</span><input type="number" name="aggregate" min="0" step="1" value="${shared.inputMode === "aggregate" ? shared.aggregateHits : ""}" placeholder="—" aria-label="Detail total hits"></label>`,
+      )}</div><label class="field inline"><span>Or detail total</span><input ${withParts ? "disabled" : ""} type="number" name="aggregate" min="0" step="1" value="${shared.inputMode === "aggregate" ? shared.aggregateHits : ""}" placeholder="—" aria-label="Detail total hits"></label>`,
     "Save scores",
     (f) => {
       const entries = shared.roster.map((m) => ({
         participantId: m.id,
         weapon: m.weapon,
         hits: f.get(`hits-${m.id}`) ?? "",
+        parts: withParts
+          ? breakdownFor(c, m.weapon, shared.stage).map((_, i) =>
+              f.get(`part-${m.id}-${i}`),
+            )
+          : undefined,
       }));
       editDetailAttempt(c, detailAttemptId, entries, f.get("aggregate") ?? "");
       save();
@@ -2176,22 +2447,15 @@ function restore() {
         const file = f.get("file");
         if (!file?.name) throw Error("Choose a backup file.");
         if (file.size > 20000000) throw Error("Maximum backup size is 20 MB.");
-        const incoming = validateStore(
-          migrateStore(JSON.parse(await file.text())),
-        );
-        for (const shoot of incoming.shoots) {
-          const i = store.shoots.findIndex((x) => x.id === shoot.id);
-          if (i >= 0) store.shoots[i] = shoot;
-          else store.shoots.push(shoot);
-        }
-        store.presets = { ...incoming.presets, ...store.presets };
-        if (incoming.active) store.active = incoming.active;
-        applyPresets(store);
+        const incoming = validateStore(JSON.parse(await file.text()));
+        const report = importBackup(store, incoming);
         save();
         $("#dialog").close();
         tab = "shoots";
         render();
-        toast("Backup restored.");
+        toast(
+          `${plural(report.added, "shoot")} added, ${report.updated} updated, ${plural(report.kept, "local shoot")} kept (older or conflicting copies).`,
+        );
       } catch (e) {
         $("#dialog .error").textContent = e.message;
       }
@@ -2203,7 +2467,6 @@ $("#tabs").onclick = (e) => {
   if (!b) return;
   const previous = tab;
   tab = b.dataset.tab;
-  search = "";
   addMode = null;
   selected.clear();
   // The tab row is redrawn before the page below it, so a failure there would
@@ -2229,21 +2492,71 @@ $("#main").addEventListener("input", (e) => {
     $("#search").setSelectionRange(pos, pos);
     return;
   }
+  if (t.dataset.partPerson) {
+    const stage = tab.split(":")[1];
+    requireActiveStage(c, stage);
+    const id = t.dataset.partPerson,
+      p = c.participants.find((p) => p.id === id),
+      detail = t.dataset.partDetail,
+      weapon = detail ? rosterWeapon(c, detail, p) : stageRifle(c, p, stage),
+      parts = breakdownFor(c, weapon, stage);
+    c.entryParts ??= {};
+    const row = detail
+        ? getDraft(c, detail, stage).rows.find((r) => r.participantId === id)
+        : null,
+      values = detail
+        ? (row.parts ??= parts.map(() => ""))
+        : (c.entryParts[`${stage}:${id}`] ??= parts.map(() => ""));
+    values[Number(t.dataset.partIndex)] = t.value;
+    let total = "";
+    try {
+      total = String(parseBreakdown(c, weapon, stage, values).total);
+    } catch {}
+    const panel = t.closest(".score-panel"),
+      totalInput = panel.querySelector(
+        `[${detail ? "data-cs-hits" : "data-hits"}="${id}"]`,
+      );
+    totalInput.value = total;
+    if (detail) {
+      row.hits = total;
+      const draft = getDraft(c, detail, stage);
+      draft.aggregate = "";
+      draft.autoTotal = true;
+      draft.updatedAt = now();
+      refreshDraft(panel, c, draft);
+    } else {
+      c.entries ??= {};
+      c.entries[`${stage}:${id}`] = total;
+    }
+    c.updatedAt = now();
+    save();
+    return;
+  }
   if (t.dataset.hits) {
     holdHit(t, tab.split(":")[1]);
     return;
   }
   if (t.matches("[data-cs-hits],[data-aggregate]")) {
+    requireActiveStage(c, tab.split(":")[1]);
     const panel = t.closest("[data-detail]"),
       draft = getDraft(c, panel.dataset.detail, tab.split(":")[1]);
     if (t.dataset.csHits) {
       draft.rows.find((r) => r.participantId === t.dataset.csHits).hits =
         t.value;
-      // The total follows the hits until someone types their own.
+      // The total follows the hits until someone types their own. It is a
+      // total of credited hits, so a rifle issued more rounds than the stage
+      // counts adds only what can be credited.
       if (draft.autoTotal !== false) {
         const all = draft.rows.every((r) => /^\d+$/.test(r.hits));
         draft.aggregate = all
-          ? String(draft.rows.reduce((n, r) => n + Number(r.hits), 0))
+          ? String(
+              draft.rows.reduce(
+                (n, r) =>
+                  n +
+                  creditedHits(c, panel.dataset.detail, tab.split(":")[1], r),
+                0,
+              ),
+            )
           : "";
         const box = panel.querySelector("[data-aggregate]");
         if (box) box.value = draft.aggregate;
@@ -2253,6 +2566,8 @@ $("#main").addEventListener("input", (e) => {
       draft.autoTotal = t.value === "" ? undefined : false;
     }
     draft.updatedAt = now();
+    c.updatedAt = draft.updatedAt;
+    save();
     refreshDraft(panel, c, draft);
     syncSkips();
   }
@@ -2342,11 +2657,13 @@ $("#main").addEventListener("keydown", (e) => {
     !e.altKey &&
     !e.metaKey &&
     !e.ctrlKey &&
-    t.matches("[data-hits],[data-cs-hits],[data-aggregate]")
+    t.matches(
+      "[data-part-person],[data-hits]:not([readonly]),[data-cs-hits]:not([readonly]),[data-aggregate]",
+    )
   ) {
     const boxes = [
         ...$("#main").querySelectorAll(
-          ":is([data-hits],[data-cs-hits],[data-aggregate]):not(:disabled)",
+          ":is([data-part-person],[data-hits]:not([readonly]),[data-cs-hits]:not([readonly]),[data-aggregate]):not(:disabled)",
         ),
       ],
       next = boxes[boxes.indexOf(t) + (e.shiftKey ? -1 : 1)];
@@ -2357,7 +2674,12 @@ $("#main").addEventListener("keydown", (e) => {
     }
     return;
   }
-  if (e.key !== "Enter" || !t.matches("[data-hits],[data-cs-hits],[data-aggregate]"))
+  if (
+    e.key !== "Enter" ||
+    !t.matches(
+      "[data-part-person],[data-hits]:not([readonly]),[data-cs-hits]:not([readonly]),[data-aggregate]",
+    )
+  )
     return;
   e.preventDefault();
   const inputs = [
@@ -2380,6 +2702,13 @@ $("#main").addEventListener("change", (e) => {
     t = e.target,
     stage = tab.split(":")[1];
   try {
+    if (t.id === "require-breakdown") {
+      store.requireBreakdown = t.checked;
+      applyPresets(store);
+      save();
+      render();
+      return;
+    }
     if (t.id === "shoot-type") {
       const [program, variant] = t.value.split("|");
       changeShootType(c, program, variant);
@@ -2395,12 +2724,19 @@ $("#main").addEventListener("change", (e) => {
         save();
       });
     } else if (t.dataset.queue) {
-      t.checked ? selected.add(t.dataset.queue) : selected.delete(t.dataset.queue);
+      t.checked
+        ? selected.add(t.dataset.queue)
+        : selected.delete(t.dataset.queue);
       updateRedetailButton(stage);
     } else if (t.dataset.addTo) {
       const name = t.value.trim();
       if (!name) return;
-      addParticipants(c, name, baseWeapons(c.program, c.variant)[0], t.dataset.addTo);
+      addParticipants(
+        c,
+        name,
+        baseWeapons(c.program, c.variant)[0],
+        t.dataset.addTo,
+      );
       save();
       render();
       $(`[data-add-to="${t.dataset.addTo}"]`)?.focus();
@@ -2419,10 +2755,6 @@ $("#main").addEventListener("change", (e) => {
       );
       save();
       later(render);
-    } else if (t.dataset.stageRifle) {
-      c.stageRifles ??= {};
-      c.stageRifles[`${t.dataset.stageRifle}:${stage}`] = t.value;
-      save();
     } else if (t.dataset.assign) {
       assignDetail(
         c,
@@ -2534,9 +2866,57 @@ $("#main").addEventListener("click", (e) => {
     }
     if (b.dataset.openShoot) {
       store.active = b.dataset.openShoot;
-      tab = "participants";
-      search = "";
+      const opened = s();
+      tab = opened.locked
+        ? search.trim()
+          ? "history"
+          : opened.activeStage
+            ? `stage:${opened.activeStage}`
+            : "participants"
+        : "participants";
       selected.clear();
+      // A stage filter belongs to the shoot it was set in. Another shoot may
+      // not have that stage at all, which leaves History looking empty with no
+      // chip marked to explain why.
+      historyFilter = null;
+      save();
+      render();
+      return;
+    }
+    if (b.dataset.layout) {
+      const [program, variant, weapon, stage] = b.dataset.layout.split("|");
+      layoutDialog(program, variant, weapon, stage);
+      return;
+    }
+    if (b.dataset.configureParts) {
+      layoutDialog(
+        c.program,
+        c.variant,
+        b.dataset.configureParts,
+        b.dataset.configureStage,
+      );
+      return;
+    }
+    if (b.dataset.replaceDetail) {
+      manualDetailDialog(
+        stage,
+        null,
+        new Set(
+          replacementPlan(c, b.dataset.replaceDetail, stage).map((p) => p.id),
+        ),
+        b.dataset.replaceDetail,
+      );
+      return;
+    }
+    if (b.dataset.unlockStage) {
+      activateStage(c, b.dataset.unlockStage);
+      save();
+      render();
+      return;
+    }
+    if (b.dataset.personSkip) {
+      const p = c.participants.find((p) => p.id === b.dataset.personSkip);
+      setPersonSkipped(c, p.id, !p.skipped);
       save();
       render();
       return;
@@ -2580,6 +2960,13 @@ $("#main").addEventListener("click", (e) => {
       save();
       render();
       toast("Thresholds reset.");
+      return;
+    }
+    if (b.dataset.skip?.startsWith("person:")) {
+      const p = c.participants.find((p) => p.id === b.dataset.skip.slice(7));
+      setPersonSkipped(c, p.id, !p.skipped);
+      save();
+      render();
       return;
     }
     if (b.dataset.skip) {
@@ -2822,7 +3209,11 @@ if ("serviceWorker" in navigator) {
       await navigator.serviceWorker.ready;
       let checking = false;
       const check = async () => {
-        if (checking || document.visibilityState === "hidden" || !navigator.onLine)
+        if (
+          checking ||
+          document.visibilityState === "hidden" ||
+          !navigator.onLine
+        )
           return;
         checking = true;
         try {

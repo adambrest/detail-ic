@@ -9,8 +9,8 @@ import {
   profileFor,
 } from "../profiles.js";
 import {
-  newStore,
-  newShoot,
+  newStore as newStoreRaw,
+  newShoot as newShootRaw,
   createShoot,
   deleteShoot,
   getShoot,
@@ -39,9 +39,10 @@ import {
   getDraft,
   validateDraft,
   validateManual,
-  saveDetail,
+  saveDetail as saveDetailRaw,
   borrowedBy,
-  recordIndividual,
+  recordIndividual as recordIndividualRaw,
+  activateStage,
   best,
   bestAttempt,
   nextAttempt,
@@ -53,7 +54,6 @@ import {
   firerHits,
   hitsRange,
   poorPace,
-  repairWeapons,
   buildAround,
   planRest,
   committed,
@@ -74,15 +74,35 @@ import {
   unvoidAttempt,
   undoAttempt,
   queue,
-  dispatch,
+  dispatch as dispatchRaw,
   notYetShot,
   setPriority,
   manualQueue,
   exportCsv,
-  migrateStore,
   validateStore,
 } from "../core.js";
-const rifle = (program, variant = "standard") => weaponsFor(program, variant)[0];
+const newStore = () => ({ ...newStoreRaw(), requireBreakdown: false });
+const newShoot = (...args) => {
+  const s = newShootRaw(...args);
+  s.settings.requireBreakdown = false;
+  return s;
+};
+// These scoring fixtures intentionally switch stages; locking has separate tests.
+const recordIndividual = (s, p, stage, ...args) => {
+  activateStage(s, stage);
+  return recordIndividualRaw(s, p, stage, ...args);
+};
+const saveDetail = (s, draft) => {
+  activateStage(s, draft.stage);
+  return saveDetailRaw(s, draft);
+};
+const dispatch = (s, stage, keys) => {
+  activateStage(s, stage);
+  return dispatchRaw(s, stage, keys);
+};
+
+const rifle = (program, variant = "standard") =>
+  weaponsFor(program, variant)[0];
 function setup(program = "BTP", variant = "standard", n = 1, weapon) {
   const s = newShoot(program, variant),
     d = program.startsWith("CS_") ? addDetail(s) : null,
@@ -155,7 +175,7 @@ for (const [program, n, pass, marksman, max] of [
   });
 test("Only plain SAR21 variants share an option; a shoot is set on a base rifle", () => {
   assert.deepEqual(weaponsFor("BTP"), ["SAR21"]);
-  assert.deepEqual(weaponsFor("ATP_SP"), ["SAR21/SAR21 MMS/M203"]);
+  assert.deepEqual(weaponsFor("ATP_SP"), ["SAR21/SAR21 MMS/M203", "LMG"]);
   assert.deepEqual(weaponsFor("APS"), ["SAR21"]);
   // SAR21 SS and HK416 share a requirement in ATP (M), so they share an option.
   assert.deepEqual(weaponsFor("ATP_M"), [
@@ -173,18 +193,28 @@ test("Only plain SAR21 variants share an option; a shoot is set on a base rifle"
   );
   // SAR21 SS keeps its own requirement in ATP (M), so it is never lumped in.
   assert.equal(profileFor("ATP_M", "standard", "SAR21 SS/HK416").pass, 32);
-  assert.equal(profileFor("ATP_M", "standard", "SAR21/SAR21 MMS/M203").pass, 24);
+  assert.equal(
+    profileFor("ATP_M", "standard", "SAR21/SAR21 MMS/M203").pass,
+    24,
+  );
   // M16 and LMG are given out per firer, after the details are set.
   assert.deepEqual(baseWeapons("CS_M"), ["SAR21/SAR21 SS/M203"]);
   assert.deepEqual(baseWeapons("CS_SP"), ["SAR21/SAR21 SS"]);
   assert.deepEqual(baseWeapons("ATP_M"), weaponsFor("ATP_M"));
 });
+// ATP and Combat Shoot are fired with the full range of weapons. BTP and APS
+// are SAR21 only, so the LMG stays out of their selectors and grading.
 test("Unsupported rifles stay out of selectors and scoring", () => {
   assert.throws(() => profileFor("BTP", "standard", "LMG"));
-  assert.throws(() => profileFor("ATP_SP", "standard", "LMG"));
   assert.throws(() => profileFor("APS", "standard", "LMG"));
-  assert.equal(REFERENCE_ONLY[0].total, 108);
-  assert.ok(!weaponsFor("ATP_SP").some((w) => w.includes("LMG")));
+  assert.throws(() => profileFor("APS", "ns", "LMG"));
+  assert.deepEqual(REFERENCE_ONLY, []);
+  for (const program of ["ATP_M", "ATP_SP", "CS_M", "CS_SP"])
+    assert.ok(
+      weaponsFor(program).includes("LMG"),
+      `${program} should offer the LMG`,
+    );
+  assert.equal(profileFor("ATP_SP", "standard", "LMG").total, 108);
 });
 test("Shoots are created, opened and deleted from one list", () => {
   const store = newStore();
@@ -225,12 +255,15 @@ test("Shoot type can change until scores are recorded", () => {
   assert.throws(() => changeShootType(s, "ATP_M"), /new shoot/);
 });
 test("Pasted rosters read detail numbers from CSV, TSV or a trailing number", () => {
-  assert.deepEqual(parseRoster("Alex Tan, 2\nBen Lee\t1\nChris Wong 3\nDana", true), [
-    { name: "Alex Tan", detail: 2 },
-    { name: "Ben Lee", detail: 1 },
-    { name: "Chris Wong", detail: 3 },
-    { name: "Dana", detail: null },
-  ]);
+  assert.deepEqual(
+    parseRoster("Alex Tan, 2\nBen Lee\t1\nChris Wong 3\nDana", true),
+    [
+      { name: "Alex Tan", detail: 2 },
+      { name: "Ben Lee", detail: 1 },
+      { name: "Chris Wong", detail: 3 },
+      { name: "Dana", detail: null },
+    ],
+  );
   assert.deepEqual(parseRoster("Team 7", false), [
     { name: "Team 7", detail: null },
   ]);
@@ -256,7 +289,10 @@ test("Detail buttons assign firers; skipped, small and large details are reporte
   assert.equal(people[0].detailId, null);
   const t = setup("CS_SP", "standard", 4);
   detailScore(t.s, t.d, "A", 40);
-  assert.throws(() => assignDetail(t.s, t.p.id, 2), /Void it before moving them/);
+  assert.throws(
+    () => assignDetail(t.s, t.p.id, 2),
+    /Void it before moving them/,
+  );
 });
 test("Auto-detail uses as few details as possible, all within the allowed size", () => {
   assert.deepEqual(detailPlan(13, { min: 5, max: 7 }), [7, 6]);
@@ -312,7 +348,12 @@ test("CS floors each stage before addition: 59/6 + 65/6 = 9+10", () => {
 test("A one-off temporary detail scores once and then leaves the roster", () => {
   const { s, d, people } = setup("CS_SP", "standard", 4),
     other = addDetail(s),
-    others = addParticipants(s, ["B1", "B2", "B3", "B4"], rifle("CS_SP"), other.id);
+    others = addParticipants(
+      s,
+      ["B1", "B2", "B3", "B4"],
+      rifle("CS_SP"),
+      other.id,
+    );
   const temp = createTempDetail(
     s,
     "A",
@@ -328,12 +369,19 @@ test("A one-off temporary detail scores once and then leaves the roster", () => 
   detailScore(s, temp, "A", 50);
   assert.equal(best(s, people[0], "A"), 12);
   assert.equal(bestAttempt(s, people[0], "A").weapon, "LMG");
-  assert.ok(!stageDetails(s, "A").includes(s.details.find((x) => x.id === temp.id)));
+  assert.ok(
+    !stageDetails(s, "A").includes(s.details.find((x) => x.id === temp.id)),
+  );
 });
 test("A kept temporary detail belongs to its stage and flags where firers came from", () => {
   const { s, d, people } = setup("CS_SP", "standard", 4),
     other = addDetail(s),
-    others = addParticipants(s, ["B1", "B2", "B3", "B4"], rifle("CS_SP"), other.id);
+    others = addParticipants(
+      s,
+      ["B1", "B2", "B3", "B4"],
+      rifle("CS_SP"),
+      other.id,
+    );
   detailScore(s, d, "A", 20);
   detailScore(s, other, "A", 20);
   const temp = createTempDetail(
@@ -367,7 +415,12 @@ test("Temporary details follow the detail size and rifle rules", () => {
   const { s, people } = setup("CS_SP", "standard", 6),
     entry = (p, weapon = rifle("CS_SP")) => ({ participantId: p.id, weapon });
   assert.throws(
-    () => createTempDetail(s, "A", people.slice(0, 3).map((p) => entry(p))),
+    () =>
+      createTempDetail(
+        s,
+        "A",
+        people.slice(0, 3).map((p) => entry(p)),
+      ),
     /Too few/,
   );
   assert.throws(
@@ -375,7 +428,9 @@ test("Temporary details follow the detail size and rifle rules", () => {
       createTempDetail(
         s,
         "A",
-        people.slice(0, 4).map((p, i) => entry(p, i < 3 ? "LMG" : rifle("CS_SP"))),
+        people
+          .slice(0, 4)
+          .map((p, i) => entry(p, i < 3 ? "LMG" : rifle("CS_SP"))),
       ),
     /non-SAR21/,
   );
@@ -396,7 +451,11 @@ test("Recorded scores can be edited, keeping the original in the history", () =>
   editDetailAttempt(
     cs.s,
     detail.id,
-    cs.people.map((x) => ({ participantId: x.id, weapon: rifle("CS_SP"), hits: "" })),
+    cs.people.map((x) => ({
+      participantId: x.id,
+      weapon: rifle("CS_SP"),
+      hits: "",
+    })),
     "52",
   );
   assert.equal(best(cs.s, cs.p, "A"), 13);
@@ -432,7 +491,10 @@ test("Combat Shoot Stage B is fired individually, on any rifle", () => {
   recordIndividual(s, people[0], "B", "5", rifle("CS_SP"));
   assert.equal(best(s, people[0], "B"), 5);
   assert.equal(bestAttempt(s, people[0], "B").weapon, rifle("CS_SP"));
-  assert.throws(() => recordIndividual(s, people[1], "A", "10"), /whole detail/);
+  assert.throws(
+    () => recordIndividual(s, people[1], "A", "10"),
+    /whole detail/,
+  );
   assert.deepEqual(
     queue(s, "B").map((e) => e.key),
     [`person:${people[0].id}`],
@@ -458,7 +520,11 @@ test("CS detail sizes and ATP (SP) redetail limit", () => {
   for (const p of people) recordIndividual(s, p, "A", "1");
   assert.equal(queue(s, "A").length, 6);
   // Outside Combat Shoot there is no detail size: everyone can go at once.
-  dispatch(s, "A", queue(s, "A").map((e) => e.key));
+  dispatch(
+    s,
+    "A",
+    queue(s, "A").map((e) => e.key),
+  );
   assert.equal(setup("ATP_M", "standard", 50).people.length, 50);
 });
 test("A detail takes at most two non-SAR21 rifles, however they are arranged", () => {
@@ -524,7 +590,12 @@ test("CS best is selected from earned averaged attempts, never raw individual be
 test("An average cannot be borrowed from a detail the participant did not attend", () => {
   const { s, d, people } = setup("CS_SP", "standard", 4),
     other = addDetail(s),
-    others = addParticipants(s, ["B1", "B2", "B3", "B4"], rifle("CS_SP"), other.id);
+    others = addParticipants(
+      s,
+      ["B1", "B2", "B3", "B4"],
+      rifle("CS_SP"),
+      other.id,
+    );
   detailScore(s, d, "A", 12);
   detailScore(s, other, "A", 60);
   assert.equal(best(s, people[0], "A"), 3);
@@ -605,7 +676,8 @@ test("The firing queue keeps first attempts in order, then redetails as sent", (
     rifle("CS_SP"),
   );
   const [d1, d2, d3] = sortedDetails(s),
-    names = () => firingQueue(s, "A").map((e) => `${e.detail.name}#${e.attempt}`);
+    names = () =>
+      firingQueue(s, "A").map((e) => `${e.detail.name}#${e.attempt}`);
   assert.deepEqual(names(), ["Detail 1#1", "Detail 2#1", "Detail 3#1"]);
   detailScore(s, d1, "A", 20);
   assert.deepEqual(names(), ["Detail 2#1", "Detail 3#1"]);
@@ -661,7 +733,12 @@ test("Skipped entries wait below everyone, even later redetails", () => {
 test("A manual detail needs at least one firer who can still improve", () => {
   const { s, d, people } = setup("CS_SP", "standard", 4),
     d2 = addDetail(s),
-    others = addParticipants(s, ["Q 1", "Q 2", "Q 3", "Q 4"], rifle("CS_SP"), d2.id);
+    others = addParticipants(
+      s,
+      ["Q 1", "Q 2", "Q 3", "Q 4"],
+      rifle("CS_SP"),
+      d2.id,
+    );
   // Detail 1 maxes Stage A; Person 1 also finishes as Marksman.
   detailScore(s, d, "A", 60);
   recordIndividual(s, people[0], "B", "8");
@@ -689,7 +766,11 @@ test("A manual detail needs at least one firer who can still improve", () => {
 test("A skipped detail takes no scores until unskipped", () => {
   const store = newStore(),
     s = createShoot(store, "CS_SP", "standard", "S");
-  addParticipants(s, Array.from({ length: 8 }, (_, i) => `P${i} ${i < 4 ? 1 : 2}`), rifle("CS_SP"));
+  addParticipants(
+    s,
+    Array.from({ length: 8 }, (_, i) => `P${i} ${i < 4 ? 1 : 2}`),
+    rifle("CS_SP"),
+  );
   const [d1] = sortedDetails(s);
   setSkipped(s, "A", `detail:${d1.id}`, true);
   const draft = getDraft(s, d1.id, "A");
@@ -835,7 +916,7 @@ test("Detail insights say each thing once, and group firers with the same fix", 
   assert.equal(a["Marksman not possible"], undefined);
   const all = Object.fromEntries(insights(s).map((n) => [n.title, n.items]));
   assert.deepEqual(all["Marksman not possible"], [
-    "12 firers need a Stage A reshoot for Marksman, even with full marks in Stage B and Stage C: P1, P2, P3 and 9 more",
+    "12 firers need a Stage A reshoot for Marksman, even with full marks in Stage B and Stage C: P1, P2, P3, P4, P5, P6, P7, P8, P9, P10, P11, P12",
   ]);
   // A total-only detail is not a critical warning; the confirm prompt covers it.
   assert.equal(a["Totals only, no individual hits"], undefined);
@@ -856,11 +937,14 @@ test("Automatic order puts a pass at risk first, then the furthest behind, and s
     ["Person 2", "Person 1", "Person 3"],
   );
   // Both stages are in, so the figures are exact: "needs", not "recommended".
-  assert.deepEqual(q.map((e) => e.reason), [
-    "at risk of failing: best 3, needs 16 to pass",
-    "best 5, needs 10 for Marksman",
-    "best 11, needs 12 for Marksman",
-  ]);
+  assert.deepEqual(
+    q.map((e) => e.reason),
+    [
+      "at risk of failing: best 3, needs 16 to pass",
+      "best 5, needs 10 for Marksman",
+      "best 11, needs 12 for Marksman",
+    ],
+  );
 });
 test("A weak firer gets a detail of strong shooters, those still needing it first", () => {
   const store = newStore(),
@@ -1069,22 +1153,6 @@ test("A detail total pins down what each firer must have shot", () => {
   assert.deepEqual(hitsRange(u, few[0], "A"), { low: 0, high: 9 });
   assert.equal(shootsPoorly(u, few[0], "A"), true);
 });
-test("A preset keeps up with a rifle option that has been renamed", () => {
-  const store = newStore();
-  createShoot(store, "CS_M", "standard", "P");
-  // A preset saved before the Combat Shoot SAR21 options were merged.
-  store.presets.CS_M.weapon = "SAR21/M203";
-  store.presets.CS_M.targets = { "SAR21/M203:A:marksman": 17 };
-  repairWeapons(store);
-  assert.equal(store.presets.CS_M.weapon, "SAR21/SAR21 SS/M203");
-  assert.deepEqual(store.presets.CS_M.targets, {
-    "SAR21/SAR21 SS/M203:A:marksman": 17,
-  });
-  // Settings builds a profile from it, so it has to be one that exists.
-  assert.doesNotThrow(() =>
-    profileFor("CS_M", "standard", store.presets.CS_M.weapon),
-  );
-});
 test("A poor shooter who reaches what the stage needs drops off the list", () => {
   const store = newStore(),
     s = createShoot(store, "CS_SP", "standard", "C");
@@ -1145,7 +1213,14 @@ test("A firer booked into a detail is never built into a second one", () => {
   const taken = first.entries.map((e) => e.participantId);
   // Everyone in that temporary detail is now waiting to fire it.
   for (const id of taken)
-    assert.equal(committed(s, "A", people.find((p) => p.id === id)), true);
+    assert.equal(
+      committed(
+        s,
+        "A",
+        people.find((p) => p.id === id),
+      ),
+      true,
+    );
   assert.deepEqual(
     overlapping(s, "A", taken)
       .map((p) => p.id)
@@ -1319,7 +1394,12 @@ test("A rifle changes only once the scores fired on it are void", () => {
   // Rifles are held to different standards, so a live score pins the rifle.
   assert.throws(
     () =>
-      updateParticipant(s, p.id, { name: p.name, weapon: "LMG" }, "Changed rifle"),
+      updateParticipant(
+        s,
+        p.id,
+        { name: p.name, weapon: "LMG" },
+        "Changed rifle",
+      ),
     /void every score/,
   );
   assert.equal(p.weapon, "SAR21/SAR21 MMS/M203");
@@ -1353,7 +1433,12 @@ test("A firer leaves a detail only once its score is void, and the record keeps 
   detailScore(s, d, "A", 40);
   getDraft(s, d.id, "C").aggregate = "20";
   const other = addDetail(s);
-  addParticipants(s, ["Other 1", "Other 2", "Other 3"], rifle("CS_SP"), other.id);
+  addParticipants(
+    s,
+    ["Other 1", "Other 2", "Other 3"],
+    rifle("CS_SP"),
+    other.id,
+  );
   const move = () =>
     updateParticipant(
       s,
@@ -1435,7 +1520,7 @@ test("Thresholds float once the other stages are scored", () => {
   part.s.settings.targets["SAR21:A:marksman"] = 12;
   assert.deepEqual(names(part.s, "A"), []);
 });
-test("Scores confirmed together share one time, so chronological follows confirmations", () => {
+test("Scores confirmed together share one time, so confirmation order falls back to lanes", () => {
   const { s, people } = setup("BTP", "standard", 3),
     at = now();
   // Keyed in back to front, but confirmed in one go.
@@ -1445,7 +1530,7 @@ test("Scores confirmed together share one time, so chronological follows confirm
   s.settings.order = "first";
   assert.deepEqual(
     queue(s, "A").map((e) => e.members[0].name),
-    ["Person 1", "Person 2", "Person 3"],
+    ["Person 3", "Person 2", "Person 1"],
   );
 });
 test("Redetailing keeps the order the redetailer chose", () => {
@@ -1470,34 +1555,11 @@ test("Repeated names are reported before scoring starts", () => {
   setRosterLock(s, true);
   assert.equal(s.locked, true);
 });
-test("Rifles taken out of service are mapped onto what replaces them", () => {
-  const store = newStore(),
-    s = createShoot(store, "CS_SP", "standard", "Alpha"),
-    people = addParticipants(s, "A 1\nB 1\nC 1\nD 1", rifle("CS_SP"));
-  s.participants[0].weapon = "M16";
-  s.attempts.push({
-    id: "a1",
-    participantId: people[0].id,
-    recordId: people[0].recordId,
-    program: "CS_SP",
-    variant: "standard",
-    stage: "B",
-    weapon: "M16",
-    profile: profileFor("CS_SP", "standard", rifle("CS_SP")),
-    score: 5,
-    status: "valid",
-    recordedAt: now(),
-  });
-  const repaired = validateStore(migrateStore(JSON.parse(JSON.stringify(store)))),
-    rs = getShoot(repaired);
-  assert.equal(rs.participants[0].weapon, rifle("CS_SP"));
-  assert.equal(rs.attempts[0].weapon, rifle("CS_SP"));
-  assert.equal(best(rs, rs.participants[0], "B"), 5);
-});
-
 test("Priority tags put firers first or last, sorted within each group", () => {
   const { s, people } = setup("BTP", "standard", 4);
-  [5, 11, 8, 2].forEach((hits, i) => recordIndividual(s, people[i], "A", String(hits)));
+  [5, 11, 8, 2].forEach((hits, i) =>
+    recordIndividual(s, people[i], "A", String(hits)),
+  );
   const order = () => queue(s, "A").map((e) => e.members[0].name);
   s.settings.order = "lowest";
   assert.deepEqual(order(), ["Person 4", "Person 1", "Person 3", "Person 2"]);
@@ -1533,7 +1595,11 @@ test("CSV export escapes formulas and lists details only for Combat Shoot", () =
   const csv = exportCsv(s);
   assert.match(csv, /"'=HYPERLINK\(\)"/);
   assert.ok(!csv.split("\r\n")[0].includes("Detail"));
-  assert.ok(exportCsv(setup("CS_SP", "standard", 4).s).split("\r\n")[0].includes("Detail"));
+  assert.ok(
+    exportCsv(setup("CS_SP", "standard", 4).s)
+      .split("\r\n")[0]
+      .includes("Detail"),
+  );
 });
 test("Unknown or incompatible profile versions cannot enter best score selection", () => {
   const { s, p } = setup();
@@ -1548,73 +1614,11 @@ test("Backup round trip keeps shoots, drafts and best attempt IDs", () => {
     d = s.details[0];
   detailScore(s, d, "A", 44);
   getDraft(s, d.id, "C").aggregate = "30";
-  const restored = validateStore(migrateStore(JSON.parse(JSON.stringify(store)))),
+  const restored = validateStore(JSON.parse(JSON.stringify(store))),
     rs = getShoot(restored);
   assert.equal(rs.drafts[`${d.id}:C`].aggregate, "30");
   assert.equal(
     result(rs, rs.participants[0]).bestAttemptIds[0],
     result(s, people[0]).bestAttemptIds[0],
   );
-});
-test("Saved data from the previous version moves to grouped rifles and shoot lists", () => {
-  const old = {
-    schema: 2,
-    enabled: ["ATP_M"],
-    active: "ATP_M",
-    aps: "standard",
-    archives: [],
-    shoots: {
-      ATP_M: {
-        id: "old-shoot",
-        program: "ATP_M",
-        variant: "standard",
-        participants: [
-          {
-            id: "p1",
-            name: "Alex",
-            detailId: "d1",
-            weapon: "HK416",
-            recordId: "r1",
-            profile: { id: "ATP_M:standard:HK416", version: "2026-09-17.2" },
-          },
-        ],
-        details: [{ id: "d1", name: "Detail 1" }],
-        attempts: [
-          {
-            id: "a1",
-            participantId: "p1",
-            recordId: "r1",
-            program: "ATP_M",
-            variant: "standard",
-            stage: "A",
-            weapon: "HK416",
-            profile: { id: "ATP_M:standard:HK416", version: "2026-09-17.2" },
-            score: 20,
-            status: "valid",
-            recordedAt: "2026-09-17T08:00:00.000Z",
-          },
-        ],
-        shared: [],
-        drafts: {},
-        dispatches: [],
-        manualQueue: [],
-        audit: [],
-        settings: {
-          weapon: "SAR21",
-          objective: "marksman",
-          order: "automatic",
-          targets: { "HK416:A:marksman": 20 },
-        },
-      },
-      BTP: newShoot("BTP"),
-    },
-  };
-  const store = validateStore(migrateStore(old)),
-    s = getShoot(store),
-    p = s.participants[0];
-  assert.equal(store.shoots.length, 1);
-  assert.equal(p.weapon, "SAR21 SS/HK416");
-  assert.equal(p.detailId, null);
-  assert.equal(best(s, p, "A"), 20);
-  assert.equal(store.presets.ATP_M.targets["SAR21 SS/HK416:A:marksman"], 20);
 });

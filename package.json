@@ -1,12 +1,12 @@
 {
   "name": "detail-ic",
-  "version": "0.1.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "python3 -m http.server 8080",
     "test": "node --test tests/*.test.js",
-    "test:browser": "node tests/browser.cjs && node tests/recovery.cjs && node tests/update.cjs",
+    "test:browser": "node tests/browser.cjs && node tests/recovery.cjs && node tests/update.cjs && node tests/v2-browser.cjs",
     "format": "prettier --write app.js core.js profiles.js version.js styles.css index.html tests/*.js tests/*.cjs"
   },
   "devDependencies": {
