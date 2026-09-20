@@ -2,7 +2,6 @@ import {
   PROGRAMS,
   TYPES,
   DETAIL_RULES,
-  NON_SAR,
   isCS,
   typeLabel,
   weaponsFor,
@@ -653,20 +652,18 @@ function scoreEditor(c, p, stage, detailId = null, disabled = false) {
       : (c.entryParts?.[`${stage}:${p.id}`] ?? []),
     required = c.settings.requireBreakdown,
     attr = detailId ? `data-cs-hits="${p.id}"` : `data-hits="${p.id}"`;
-  // No layout and none to set yet: this rifle's sequence has not been given,
-  // so the sub-stage boxes stay closed and the stage is scored on its total.
-  const pending = required && !parts.length && NON_SAR.has(weapon);
   const cell = (v, i, part) =>
     `<input type="text" inputmode="numeric" pattern="[0-9]*" data-part-person="${p.id}" data-part-index="${i}" ${detailId ? `data-part-detail="${detailId}"` : ""} value="${esc(v ?? "")}" aria-label="${esc(p.name)} ${esc(part.label)} hits" title="${esc(part.label)} /${part.max}" ${invalidPart(v, part) ? 'aria-invalid="true"' : ""} ${disabled ? "disabled" : ""}>`;
   return `<div class="hits-row">${
     required
       ? parts.length
         ? `<span class="subscores">${parts.map((part, i) => cell(values[i], i, part)).join("")}</span>`
-        : pending
-          ? `<span class="muted pending-parts" title="No sub-stage sequence has been given for the ${esc(weapon)} yet.">Sub-stages pending</span>`
-          : `<button data-configure-parts="${esc(weapon)}" data-configure-stage="${stage}">Set sub-stages</button>`
+        : // Every weapon's sequence is stated, so a missing layout means one was
+          // cleared in Settings. Offer to set it rather than closing the stage:
+          // the LMG is no longer a special case with no way forward.
+          `<button data-configure-parts="${esc(weapon)}" data-configure-stage="${stage}">Set sub-stages</button>`
       : ""
-  }<span class="score-input"><input type="text" inputmode="numeric" pattern="[0-9]*" ${attr} value="${esc(value)}" aria-label="${esc(p.name)} hits" placeholder="—" ${required && parts.length ? "readonly" : ""} ${disabled || (required && !parts.length && !pending) ? "disabled" : ""}><span class="muted">/${fired}</span>${fired !== max ? info(creditNote(weapon, fired, max, stageLabel(c, stage))) : ""}</span></div>`;
+  }<span class="score-input"><input type="text" inputmode="numeric" pattern="[0-9]*" ${attr} value="${esc(value)}" aria-label="${esc(p.name)} hits" placeholder="—" ${required && parts.length ? "readonly" : ""} ${disabled || (required && !parts.length) ? "disabled" : ""}><span class="muted">/${fired}</span>${fired !== max ? info(creditNote(weapon, fired, max, stageLabel(c, stage))) : ""}</span></div>`;
 }
 // The column header names the sub-stage boxes, so each row can stay bare: one
 // line of small boxes and the stage total at the end.

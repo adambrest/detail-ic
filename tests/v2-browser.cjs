@@ -201,9 +201,10 @@ const data = (p) => p.evaluate((k) => JSON.parse(localStorage.getItem(k)), key);
       await tab(page, "stage:A");
       const lmg = page.getByLabel("Alpha hits", { exact: true });
       assert.equal(await lmg.getAttribute("inputmode"), "numeric");
-      // Only the LMG's box carries the "what can be credited" note.
-      assert.equal(await page.locator(".score-input .info").count(), 1);
-      await lmg.fill("22");
+      // The LMG is issued the rifles' 15 rounds in Combat Shoot, so its box
+      // carries no "what can be credited" note and takes the same maximum.
+      assert.equal(await page.locator(".score-input .info").count(), 0);
+      await lmg.fill("12");
       for (const n of ["Bravo", "Charlie", "Delta"])
         await page.getByLabel(`${n} hits`, { exact: true }).fill("15");
       await page.locator("[data-confirm]").first().click();
@@ -217,8 +218,8 @@ const data = (p) => p.evaluate((k) => JSON.parse(localStorage.getItem(k)), key);
           total: s.shared[0].aggregateHits,
         };
       }, key);
-      // 22 entered and kept, credited at 15, so the detail totals 60 not 67.
-      assert.deepEqual(credited, { raw: 22, score: 15, total: 60 });
+      // The gunner's own 12 is kept and the detail averages 57 over 4 firers.
+      assert.deepEqual(credited, { raw: 12, score: 14, total: 57 });
 
       // A locked stage is readable but nothing on it can be acted on, and the
       // summary says how urgent it is by colour rather than by a label.

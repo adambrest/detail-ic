@@ -1737,10 +1737,6 @@ tr.duplicate-name input {
 .hits-row .score-input .muted {
   font-size: 11px;
 }
-.pending-parts {
-  font-size: 11px;
-  font-style: italic;
-}
 [aria-invalid="true"] {
   border-color: #b42318;
   background: #fff5f4;

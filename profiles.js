@@ -57,11 +57,10 @@ function rules(
       id: "ABCDEF"[i],
       label: `Stage ${"ABCDEF"[i]}`,
       max,
-      // The LMG is issued 30 rounds for Combat Shoot Stages A and C, though only
-      // the stage maximum can ever be credited. The true entry is kept; the cap
-      // is applied when the detail's hits are summed.
-      inputMax:
-        program.startsWith("CS_") && weapon === "LMG" && i !== 1 ? 30 : max,
+      // No conduct issues a weapon more rounds than its stage credits: in
+      // Combat Shoot the LMG is issued the same allocation as the rifles. A
+      // stage that ever does states `inputMax`, and the cap is applied when the
+      // detail's hits are summed while the true entry is kept.
       shared: program.startsWith("CS_") && i !== 1,
     })),
     ...extra,

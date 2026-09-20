@@ -79,9 +79,9 @@ Hits are whole numbers from zero to that stage's maximum. A blank is missing, no
 
 With the sub-stage requirement enabled (the V2 default), enter every section for each firer. Section maximums sum to the rounds that stage fires, which is not always what it credits. Individual stage hits are the sum of that attempt's sections, capped at the stage maximum, and CS averages are computed from those capped hits. Definitions and hits are kept with each attempt. Missing is not zero, and sections from different attempts are never combined.
 
-A rifle issued more rounds than the stage credits is entered on what it actually scored and credited at the maximum: the Combat Shoot LMG is issued 30 rounds for Stages A and C but can be credited only 20 in CS (M) and 15 in CS (SP). The true entry is retained in History and exports; only the arithmetic uses the lower figure.
+No conduct issues a weapon more rounds than its stage credits: in Combat Shoot the LMG is issued the rifles' allocation, 20 rounds for Stages A and C in CS (M) and 15 in CS (SP). Where a conduct ever does, the firer is entered on what they actually scored and credited at the maximum, the true entry is retained in History and exports, and only the arithmetic uses the lower figure.
 
-A stage whose sections have not been stated ships no layout and cannot be scored until one is set in Settings or the requirement is turned off. The Combat Shoot LMG is in that position for Stages A and C: its 30-round allocation has no stated sequence, so those stages are scored on their totals. Its Stage B is fired on the same 8 rounds as the rifles and shares their sequence, and in ATP the LMG fires its own stated sequence throughout.
+A stage whose sections have not been stated ships no layout and cannot be scored until one is set in Settings or the requirement is turned off. Every stage of every conduct is now stated, so this applies only to a layout a user clears themselves. In ATP the LMG fires its own sequence; in Combat Shoot it is issued the rifles' allocation and shares theirs.
 
 When the requirement is disabled, for Stages A and C enter each firer's hits or the detail total. Entering hits fills the total; a total typed by hand must match the hits exactly, and a mismatch blocks confirmation.
 

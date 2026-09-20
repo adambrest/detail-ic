@@ -279,11 +279,11 @@ test("Shipped sub-stage layouts match the stated firing sequence", () => {
       C: [10, 10, 10, 10],
     },
     "CS_M SAR21/SAR21 SS/M203": { A: [20], B: [2, 2, 2, 2], C: [20] },
-    // Stages A and C overissue the LMG to 30 rounds and no sequence has been
-    // stated for them, so only Stage B, fired on the same 8 rounds, is shipped.
-    "CS_M LMG": { B: [2, 2, 2, 2] },
+    // Combat Shoot issues the LMG the rifles' allocation, so it shares their
+    // sequence throughout.
+    "CS_M LMG": { A: [20], B: [2, 2, 2, 2], C: [20] },
     "CS_SP SAR21/SAR21 SS": { A: [5, 10], B: [2, 2, 2, 2], C: [5, 10] },
-    "CS_SP LMG": { B: [2, 2, 2, 2] },
+    "CS_SP LMG": { A: [5, 10], B: [2, 2, 2, 2], C: [5, 10] },
     "APS SAR21": { 2: [6], 3: [6], 4: [6], 5: [6] },
     "APS:ns SAR21": { 1: [10], 2: [10], 3: [10] },
   };
@@ -320,23 +320,17 @@ test("Shipped sub-stage layouts match the stated firing sequence", () => {
       }
     }
 });
-// Combat Shoot overissues the LMG in Stages A and C and no sequence has been
-// stated for them, so those stay closed. Stage B is fired on the same 8 rounds
-// as the rifles, so it shares their sequence.
+// Every shipped conduct now states a sequence, so the guard is exercised by
+// clearing one rather than by a gap in the data: a stage with no layout cannot
+// be scored while the requirement is on.
 test("A stage with no stated layout cannot be scored", () => {
-  const { s, people } = setup("CS_M", 5);
-  c.autoDetail(s);
-  const p = people[0];
-  c.updateParticipant(s, p.id, {
-    name: p.name,
-    weapon: "LMG",
-    detailId: p.detailId,
-  });
-  for (const stage of ["A", "C"])
-    assert.deepEqual(c.breakdownFor(s, "LMG", stage), [], stage);
-  assert.equal(c.breakdownFor(s, "LMG", "B").length, 4, "B");
-  // The rifles in the same shoot are unaffected.
-  assert.equal(c.breakdownFor(s, s.settings.weapon, "A").length, 1);
+  const { s, p } = setup("ATP_M");
+  delete s.settings.breakdowns[`${p.weapon}:A`];
+  assert.deepEqual(c.breakdownFor(s, p.weapon, "A"), []);
+  assert.throws(() => score(s, p, "A", 20), /breakdown in Settings/);
+  // A shoot that keeps its layout is unaffected.
+  const { s: s2, p: p2 } = setup("ATP_M");
+  assert.equal(score(s2, p2, "A", "", [6, 6, 6, 6]).score, 24);
 });
 // ATP states the LMG's own sequence, so it is scored on it like any rifle.
 test("The ATP LMG is scored on its own stated sequence", () => {
@@ -354,9 +348,9 @@ test("The ATP LMG is scored on its own stated sequence", () => {
   const [other] = c.addParticipants(s, "Rifleman", s.settings.weapon);
   assert.equal(score(s, other, "A", "", [6, 6, 6, 6]).score, 24);
 });
-// The LMG fires more rounds than Combat Shoot credits. The entry is kept whole
-// and the cap is applied when the detail's hits are summed.
-test("A CS LMG is entered over 30 rounds but credited at the stage maximum", () => {
+// Combat Shoot issues the LMG the same rounds as the rifles, so it is entered
+// and credited on the same figures and shares their sequence.
+test("A CS LMG fires and is credited the same as the rifles", () => {
   const { s, people } = setup("CS_SP", 4);
   s.settings.requireBreakdown = false;
   c.autoDetail(s);
@@ -365,22 +359,25 @@ test("A CS LMG is entered over 30 rounds but credited at the stage maximum", () 
     weapon: "LMG",
     detailId: people[0].detailId,
   });
-  // 30 rounds are issued for Stages A and C though only 15 can be credited.
   const lmg = profileFor("CS_SP", "standard", "LMG").components.find(
     (x) => x.id === "A",
   );
-  assert.equal(lmg.inputMax, 30);
+  assert.equal(lmg.inputMax ?? lmg.max, 15, "issued the rifles' allocation");
   assert.equal(lmg.max, 15);
+  assert.deepEqual(
+    c.breakdownFor(s, "LMG", "A").map((x) => x.max),
+    c.breakdownFor(s, s.settings.weapon, "A").map((x) => x.max),
+    "shares the rifles' sequence",
+  );
   const draft = c.getDraft(s, s.details[0].id, "A");
   draft.rows.forEach((r) => {
-    r.hits = r.participantId === people[0].id ? "22" : "15";
+    r.hits = r.participantId === people[0].id ? "12" : "15";
   });
   const d = c.saveDetail(s, draft);
   const a = s.attempts.find((x) => x.participantId === people[0].id);
-  assert.equal(a.rawHits, 22, "the real score is kept");
-  assert.equal(a.score, 15, "credited at the stage maximum");
-  assert.equal(d.aggregateHits, 60);
-  assert.equal(d.score, 15);
+  assert.equal(a.rawHits, 12, "the firer's own hits are kept");
+  assert.equal(d.aggregateHits, 57);
+  assert.equal(d.score, 14, "the detail average, floored");
 });
 
 test("Changing shoot type clears everything keyed by the old stages", () => {
