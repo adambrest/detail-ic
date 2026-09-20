@@ -76,7 +76,19 @@ test("Required breakdown rejects missing and excessive parts; zero is a score", 
   assert.equal(a.status, "void");
   assert.equal(edited.recordedAt, a.recordedAt);
   assert.equal(edited.lane, a.lane);
-  assert.match(c.exportCsv(s), /Part 2: 2\/2/);
+  // Every sub-score is its own column, so the file sorts and totals like a
+  // sheet instead of hiding the figures inside one cell.
+  const [head, row] = c
+    .exportCsv(s)
+    .trim()
+    .split("\n")
+    .map((line) => line.slice(1, -1).split('","'));
+  assert.equal(head.length, row.length);
+  const at = (label) => row[head.indexOf(label)];
+  assert.deepEqual(
+    [1, 2, 3, 4].map((i) => at(`Stage B · Part ${i}`)),
+    ["2", "2", "2", "2"],
+  );
 });
 test("Best stage keeps the breakdown from its actual winning attempt", () => {
   const { s, p } = setup();
@@ -411,6 +423,41 @@ test("Weak-detail advice ignores firers who are skipped", () => {
   c.setPersonSkipped(s, people[4].id, "A", true);
   const after = c.insights(s, "A").find((n) => n.title === "Weak details");
   assert.notDeepEqual(after?.items, weakest?.items);
+});
+// Finishing closes every stage at once and is reversible.
+test("A shoot is finished only once every stage is scored", () => {
+  const { s, p } = setup();
+  s.settings.requireBreakdown = false;
+  assert.equal(c.allScored(s), false);
+  assert.throws(() => c.setFinished(s, true), /score in every stage/);
+  score(s, p, "A", 20);
+  score(s, p, "B", 7);
+  assert.equal(c.allScored(s), false, "Stage C is still open");
+  score(s, p, "C", 12);
+  assert.equal(c.allScored(s), true);
+  c.setFinished(s, true);
+  assert.equal(s.activeStage, null);
+  assert.throws(() => c.recordIndividual(s, p, "A", "21"), /finished/);
+  c.setFinished(s, false);
+  c.activateStage(s, "A");
+  assert.equal(c.recordIndividual(s, p, "A", "21").score, 21);
+});
+// Marksman is the objective, so losing it is critical rather than a caution.
+test("Losing Marksman is a critical alert", () => {
+  const { s, p } = setup();
+  s.settings.requireBreakdown = false;
+  // 20 + 0 leaves at most 36: a pass is still reachable, Marksman is not.
+  score(s, p, "A", 20);
+  score(s, p, "B", 0);
+  const notes = c.insights(s);
+  assert.equal(
+    notes.find((n) => n.title === "Marksman not possible")?.level,
+    "bad",
+  );
+  assert.equal(
+    notes.some((n) => n.title === "Pass not possible"),
+    false,
+  );
 });
 test("History keeps score records and leaves working adjustments out", () => {
   const { s, p } = setup();

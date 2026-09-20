@@ -18,6 +18,8 @@ import {
   availableMembers,
   replacementPlan,
   setPersonSkipped,
+  setFinished,
+  allScored,
   personSkipped,
   skippedStages,
   importBackup,
@@ -548,7 +550,12 @@ function resultsCell(c, p, stage) {
 }
 // Weak and Strong describe how a firer shoots, which in Stages A and C is not
 // the number in the Results column: that is their detail's average.
+// Strong and weak only matter where a firer's hits are pooled into a detail's
+// average, so they are worth flagging when choosing who fires together. On an
+// individually scored stage they say nothing the redetail order does not
+// already act on, so they are left off.
 function abilityMark(c, p, stage, weak, strong) {
+  if (!detailedStage(c, stage)) return "";
   const low = weak.has(p.id),
     high = !low && strong.has(p.id);
   if (!low && !high) return "";
@@ -568,14 +575,20 @@ function renderStage(stage) {
   $("#main").innerHTML =
     shootHead(`<span class="spacer"></span>${searchBox()}`) +
     issuesPanel(c) +
-    (c.activeStage && c.activeStage !== stage
-      ? `<div class="panel confirmed"><span>${esc(stageLabel(c, stage))} is locked. ${esc(stageLabel(c, c.activeStage))} is active.</span><button data-unlock-stage="${stage}">Unlock ${esc(stageLabel(c, stage))}</button></div>`
-      : "") +
+    (c.finished
+      ? `<div class="panel confirmed"><span>This shoot is finished. Every stage is closed.</span><button data-action="reopen">Reopen shoot</button></div>`
+      : c.activeStage && c.activeStage !== stage
+        ? `<div class="panel confirmed"><span>${esc(stageLabel(c, stage))} is locked. ${esc(stageLabel(c, c.activeStage))} is active.</span><button data-unlock-stage="${stage}">Unlock ${esc(stageLabel(c, stage))}</button></div>`
+        : "") +
     `<div class="grid"><div class="score-col">${detailedStage(c, stage) ? detailPanels(c, stage) : individualPanel(c, stage)}</div><div class="side-col">${summaryPanel(c, stage)}${queuePanel(c, stage, q)}</div></div>`;
-  if (c.activeStage && c.activeStage !== stage) {
-    document
+  // A locked stage is readable but cannot be acted on. Everything that would
+  // change it goes dead — including Select all and the order controls, which
+  // were left live and let a locked stage be redetailed. Unlock stays enabled,
+  // as do the read-only views (⋯ menus and detail history).
+  if (c.finished || (c.activeStage && c.activeStage !== stage)) {
+    $("#main")
       .querySelectorAll(
-        "[data-part-person], [data-hits], [data-cs-hits], [data-aggregate], [data-confirm], [data-confirm-all], [data-reset], [data-skip], [data-person-skip], [data-queue], #redetail, [data-action=manual-detail], [data-replace-detail], [data-build], [data-requeue]",
+        "[data-part-person], [data-hits], [data-cs-hits], [data-aggregate], [data-confirm], [data-confirm-all], [data-reset], [data-skip], [data-person-skip], [data-queue], [data-priority], [data-undetail], [data-replace-detail], [data-build], [data-requeue], [data-action]:not([data-action=reopen]), #redetail, #order",
       )
       .forEach((el) => (el.disabled = true));
   }
@@ -956,13 +969,19 @@ function queuePanel(c, stage, q) {
 }
 // What the operator should know before choosing who fires next.
 // The summary itself is always on show; only the groups inside it fold away.
+// Nothing announces that all is well: with nothing to act on it falls back to
+// the overview alone, and where there is, the colour of the group says so.
 function summaryPanel(c, stage = null) {
-  const notes = insights(c, stage);
+  const all = insights(c, stage),
+    live = all.filter((x) => x.level !== "info"),
+    notes = live.length ? all : all.filter((x) => x.title === "Overview");
   if (!notes.length) return "";
-  const count = notes
-    .filter((x) => x.level !== "info")
-    .reduce((n, x) => n + x.items.length, 0);
-  return `<section class="panel summary"><div class="summary-head"><h3>Summary</h3><span class="count">${count ? `${count} to review` : "On track"}</span></div>${notes
+  const worst = live.some((x) => x.level === "bad")
+    ? "bad"
+    : live.length
+      ? "warn"
+      : "calm";
+  return `<section class="panel summary summary-${worst}"><div class="summary-head"><h3>Summary</h3></div>${notes
     .map(
       (n) =>
         `<details class="insight insight-${n.level}"><summary>${esc(n.title)} · ${n.items.length}</summary><ul>${n.items.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>`,
@@ -1339,9 +1358,11 @@ function renderFinal() {
       .join("")}</tbody></table></div>`;
   $("#main").innerHTML =
     shootHead(
-      `<span class="spacer"></span>${searchBox()}<button data-action="csv">Export scores</button>`,
+      `<span class="spacer"></span>${searchBox()}${c.finished ? '<button data-action="reopen">Reopen shoot</button>' : `<button class="primary" data-action="finish" ${allScored(c) ? "" : 'disabled title="Every firer needs a score in every stage first."'}>Done shooting</button>`}<button data-action="csv">Export scores</button>`,
     ) +
-    summaryPanel(c) +
+    // Once the shoot is finished the advice has nothing left to advise on, so
+    // the results stand on their own.
+    (c.finished ? "" : summaryPanel(c)) +
     `<div class="summary-line">${["Marksman", "Pass", "Fail", "Incomplete"].map((label) => `<span><strong>${rr.filter((r) => r.status === label).length}</strong> ${label}</span>`).join("")}</div>` +
     (!c.participants.length
       ? empty("No scores yet")
@@ -3127,6 +3148,19 @@ $("#main").addEventListener("click", (e) => {
       case "participants":
         tab = b.dataset.action;
         render();
+        break;
+      case "finish":
+        setFinished(c, true);
+        save();
+        tab = "final";
+        render();
+        toast("Shoot finished. Every stage is closed.");
+        break;
+      case "reopen":
+        setFinished(c, false);
+        save();
+        render();
+        toast("Shoot reopened. Unlock a stage to enter scores.");
         break;
       case "add":
         addMode = isCS(c) ? "choose" : "list";

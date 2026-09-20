@@ -44,6 +44,7 @@ export function newShoot(program, variant = "standard", name = "") {
     createdAt: now(),
     updatedAt: now(),
     activeStage: null,
+    finished: false,
     program,
     variant,
     participants: [],
@@ -103,9 +104,28 @@ export function activateStage(s, stage) {
   audit(s, "Stage unlocked", { stage });
 }
 export function requireActiveStage(s, stage) {
+  if (s.finished)
+    throw Error("This shoot is finished. Reopen it to enter scores.");
   if (s.activeStage && s.activeStage !== stage)
     throw Error("This stage is locked. Unlock it before entering scores.");
   if (!s.activeStage) activateStage(s, stage);
+}
+// Every firer has a score in every stage, so there is nothing left to fire.
+export function allScored(s) {
+  return (
+    s.participants.length > 0 &&
+    s.participants.every((p) => result(s, p).scores.every((v) => v !== null))
+  );
+}
+// Finishing closes all three stages at once and puts the results forward in
+// place of the advice. It is reversible: reopening returns the shoot to
+// whichever stage was being scored.
+export function setFinished(s, on) {
+  if (on && !allScored(s))
+    throw Error("Every firer needs a score in every stage first.");
+  s.finished = !!on;
+  if (on) s.activeStage = null;
+  audit(s, on ? "Shoot finished" : "Shoot reopened");
 }
 // Availability belongs to a stage, not to the whole shoot: a firer who sits out
 // Stage B may still fire Stage C the same morning.
@@ -1541,7 +1561,8 @@ export function insights(s, stage = null) {
     ),
   );
   add(
-    "warn",
+    // Marksman is what the conduct aims at, so losing it is a critical alert.
+    "bad",
     "Marksman not possible",
     grouped(
       people
@@ -2654,7 +2675,16 @@ export function exportCsv(s) {
       s.variant,
       s.settings.weapon,
     ).components,
-    cs = isCS(s);
+    cs = isCS(s),
+    // A sub-score gets its own column, so the file can be totalled and sorted
+    // like any other sheet rather than parsed out of one crowded cell. The
+    // shoot's own rifle sets the shape; a rifle with no layout leaves blanks.
+    sections = components
+      .map((component) => ({
+        component,
+        parts: breakdownFor(s, s.settings.weapon, component.id),
+      }))
+      .filter((x) => x.parts.length);
   const rows = [
     [
       "Name",
@@ -2665,7 +2695,9 @@ export function exportCsv(s) {
       "Out of",
       "Result",
       ...components.map((c) => `${c.label} attempt ID`),
-      ...components.map((c) => `${c.label} individual breakdown`),
+      ...sections.flatMap(({ component, parts }) =>
+        parts.map((part) => `${component.label} · ${part.label}`),
+      ),
     ],
   ];
   for (const p of s.participants) {
@@ -2679,13 +2711,11 @@ export function exportCsv(s) {
       p.profile.total,
       r.status,
       ...r.bestAttemptIds,
-      ...r.bestAttemptIds.map(
-        (id) =>
-          s.attempts
-            .find((a) => a.id === id)
-            ?.breakdown?.map((p) => `${p.label}: ${p.hits}/${p.max}`)
-            .join("; ") ?? "",
-      ),
+      ...sections.flatMap(({ component, parts }) => {
+        const id = r.bestAttemptIds[components.indexOf(component)],
+          breakdown = s.attempts.find((a) => a.id === id)?.breakdown;
+        return parts.map((_, i) => breakdown?.[i]?.hits ?? "");
+      }),
     ]);
   }
   return rows

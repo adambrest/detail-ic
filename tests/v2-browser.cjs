@@ -220,6 +220,77 @@ const data = (p) => p.evaluate((k) => JSON.parse(localStorage.getItem(k)), key);
       // 22 entered and kept, credited at 15, so the detail totals 60 not 67.
       assert.deepEqual(credited, { raw: 22, score: 15, total: 60 });
 
+      // A locked stage is readable but nothing on it can be acted on, and the
+      // summary says how urgent it is by colour rather than by a label.
+      await page.evaluate(async (k) => {
+        const c = await import("./core.js"),
+          store = c.newStore();
+        const s = c.createShoot(store, "ATP_M", "standard", "Lock audit");
+        c.addParticipants(s, "One\nTwo", s.settings.weapon);
+        c.setRosterLock(s, true);
+        localStorage.setItem(k, JSON.stringify(store));
+      }, key);
+      await page.reload();
+      await page.locator("[data-open-shoot]").click();
+      await tab(page, "stage:A");
+      for (const n of ["One", "Two"])
+        for (let i = 1; i <= 4; i++)
+          await page
+            .getByLabel(`${n} Practice ${i} hits`, { exact: true })
+            .fill("2");
+      await page.locator("[data-confirm-all]").click();
+      assert.equal(
+        (await page.locator(".summary").innerText()).includes("to review"),
+        false,
+        "the summary labels urgency with colour, not a count",
+      );
+      // Unlocking B locks A; A's redetail controls must all go dead.
+      await tab(page, "stage:B");
+      await page.locator("[data-unlock-stage]").click();
+      await tab(page, "stage:A");
+      for (const sel of ['[data-action="select-all"]', "#order", "#redetail"])
+        assert.equal(
+          await page.locator(sel).isDisabled(),
+          true,
+          `${sel} stays live on a locked stage`,
+        );
+      assert.equal(await page.locator("[data-unlock-stage]").isEnabled(), true);
+      // Strong and weak only mean something where hits are pooled.
+      assert.equal(
+        await page
+          .locator(".badge")
+          .filter({ hasText: /^(Strong|Weak)$/ })
+          .count(),
+        0,
+      );
+
+      // Done shooting closes every stage and puts the results forward.
+      await tab(page, "stage:A");
+      await page.locator("[data-unlock-stage]").click();
+      for (const st of ["B", "C"]) {
+        await tab(page, `stage:${st}`);
+        const unlock = page.locator("[data-unlock-stage]");
+        if (await unlock.count()) await unlock.click();
+        for (const n of ["One", "Two"])
+          for (let i = 1; i <= 4; i++)
+            await page
+              .getByLabel(`${n} Practice ${i} hits`, { exact: true })
+              .fill("2");
+        await page.locator("[data-confirm-all]").click();
+      }
+      await tab(page, "final");
+      const finish = page.getByRole("button", { name: "Done shooting" });
+      assert.equal(await finish.isEnabled(), true);
+      await finish.click();
+      assert.equal(await page.locator(".summary").count(), 0);
+      await tab(page, "stage:A");
+      assert.match(
+        await page.locator(".panel.confirmed").innerText(),
+        /finished/,
+      );
+      await page.getByRole("button", { name: "Reopen shoot" }).click();
+      assert.equal((await data(page)).shoots[0].finished, false);
+
       assert.deepEqual(errors, []);
       console.log(
         `${type.name()}: V2 breakdowns, search scope, lane order, locks, recovery, skips and replacement passed`,

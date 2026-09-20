@@ -26,7 +26,7 @@ A Combat Shoot LMG is issued 30 rounds for Stages A and C though only 20 (CS (M)
 
 Any stage not listed above starts unset and is marked *Set sub-stages* in red in Settings. It cannot be scored while the requirement is on — set it, or turn the requirement off for total-only entry. No layout is ever guessed from a stage total.
 
-Breakdowns are retained with each attempt, shown in History and Final scores, and included in CSV exports. Best parts from different attempts are never combined. Once a layout has recorded scores it is fixed for that version.
+Breakdowns are retained with each attempt, shown in History and Final scores, and exported with **one column per sub-score** so the file sorts and totals like any other sheet. Best parts from different attempts are never combined. Once a layout has recorded scores it is fixed for that version.
 
 The first score entry activates that stage. Other stages stay readable and locked; use Unlock on another stage to transfer entry there. History corrections remain available and are audited.
 
@@ -40,7 +40,7 @@ Automatic order gives pass risk priority, then firers furthest below their targe
 
 Skip marks a firer as not firing **one stage**, leaving their other stages and earned scores untouched. It sits in the firer's ⋯ menu, shows as a small badge on their row, and is refused while hits are typed for that stage. A short CS detail offers Unskip and Build replacement detail. The proposed replacement respects size, rifle limits and existing bookings, preferring suitable firers who still need the stage. Review the selection before creating it.
 
-You can retry the same detail or use Manual detail. Suggestions based on past scores are optional, not predictions. The stage Summary is always on show; the groups within it stay folded, so routine scoring keeps the room.
+You can retry the same detail or use Manual detail. Suggestions based on past scores are optional, not predictions. The stage Summary is always on show; the groups within it stay folded, so routine scoring keeps the room. It says how urgent something is by colour rather than with a label: red where a pass or Marksman is no longer reachable, amber for a caution. With nothing to act on, it shows the overview alone. Strong and weak marks appear only on Combat Shoot Stages A and C, where hits are pooled into a detail's average and the mix matters.
 
 ## History and results
 
@@ -48,7 +48,7 @@ History can be searched by name, detail, score (for example 7/8), or a combinati
 
 Dates read day-first with the month in letters and times are 24-hour (20 Sep · 14:30). The year appears only on the Shoots list and where a shoot was created.
 
-Final scores show each firer once. A stage column shows the score alone, with its sub-stage figures in small grey text; only the total carries a denominator. Shoots are ordered by latest update; searching a name finds matching shoots and opens their history.
+Final scores show each firer once. A stage column shows the score alone, with its sub-stage figures in small grey text; only the total carries a denominator. Once every firer has a score in every stage, **Done shooting** closes all the stages at once and puts the results forward in place of the advice. It is reversible from the same place. Shoots are ordered by latest update; searching a name finds matching shoots and opens their history.
 
 ## Offline use and backups
 
