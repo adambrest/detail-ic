@@ -680,7 +680,12 @@ function hitsHeader(c, stage) {
         .map((parts) => parts.map((x) => x.max).join("+")),
     ),
   ];
-  if (layouts.length !== 1) return "Hits";
+  // Rifles in the same shoot can fire different sequences: the LMG is issued
+  // its own allocation in ATP. One shape cannot describe the column then, so it
+  // names the boxes instead of stating a figure that is wrong for half the rows.
+  if (!layouts.length) return "Hits";
+  if (layouts.length !== 1)
+    return `Hits <span class="muted">by practice</span>`;
   const parts = layouts[0].split("+"),
     even = new Set(parts).size === 1,
     shape = even

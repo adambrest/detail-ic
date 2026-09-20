@@ -262,18 +262,28 @@ test("Shipped sub-stage layouts match the stated firing sequence", () => {
       B: [2, 2, 2, 2],
       C: [4, 4, 4, 4],
     },
-    // No LMG sequence has been stated for any stage yet.
-    "ATP_M LMG": {},
+    // The LMG is issued its own allocation in ATP and fires its own sequence.
+    "ATP_M LMG": {
+      A: [20, 20, 10, 10, 10],
+      B: [2, 2, 2, 2],
+      C: [12, 12, 12, 12],
+    },
     "ATP_SP SAR21/SAR21 MMS/M203": {
       A: [4, 4, 4, 4],
       B: [2, 2, 2, 2],
       C: [3, 3, 3, 3],
     },
-    "ATP_SP LMG": {},
+    "ATP_SP LMG": {
+      A: [10, 10, 10, 10, 10, 10],
+      B: [2, 2, 2, 2],
+      C: [10, 10, 10, 10],
+    },
     "CS_M SAR21/SAR21 SS/M203": { A: [20], B: [2, 2, 2, 2], C: [20] },
-    "CS_M LMG": {},
+    // Stages A and C overissue the LMG to 30 rounds and no sequence has been
+    // stated for them, so only Stage B, fired on the same 8 rounds, is shipped.
+    "CS_M LMG": { B: [2, 2, 2, 2] },
     "CS_SP SAR21/SAR21 SS": { A: [5, 10], B: [2, 2, 2, 2], C: [5, 10] },
-    "CS_SP LMG": {},
+    "CS_SP LMG": { B: [2, 2, 2, 2] },
     "APS SAR21": { 2: [6], 3: [6], 4: [6], 5: [6] },
     "APS:ns SAR21": { 1: [10], 2: [10], 3: [10] },
   };
@@ -310,17 +320,37 @@ test("Shipped sub-stage layouts match the stated firing sequence", () => {
       }
     }
 });
-// ATP LMG Stage A awaits its breakdown, so it cannot be scored yet.
+// Combat Shoot overissues the LMG in Stages A and C and no sequence has been
+// stated for them, so those stay closed. Stage B is fired on the same 8 rounds
+// as the rifles, so it shares their sequence.
 test("A stage with no stated layout cannot be scored", () => {
+  const { s, people } = setup("CS_M", 5);
+  c.autoDetail(s);
+  const p = people[0];
+  c.updateParticipant(s, p.id, {
+    name: p.name,
+    weapon: "LMG",
+    detailId: p.detailId,
+  });
+  for (const stage of ["A", "C"])
+    assert.deepEqual(c.breakdownFor(s, "LMG", stage), [], stage);
+  assert.equal(c.breakdownFor(s, "LMG", "B").length, 4, "B");
+  // The rifles in the same shoot are unaffected.
+  assert.equal(c.breakdownFor(s, s.settings.weapon, "A").length, 1);
+});
+// ATP states the LMG's own sequence, so it is scored on it like any rifle.
+test("The ATP LMG is scored on its own stated sequence", () => {
   const { s, p } = setup("ATP_M");
   c.updateParticipant(s, p.id, { name: p.name, weapon: "LMG" });
-  for (const stage of ["A", "B", "C"])
-    assert.deepEqual(c.breakdownFor(s, "LMG", stage), [], stage);
-  assert.throws(
-    () => score(s, s.participants[0], "A", 40),
-    /breakdown in Settings/,
+  assert.deepEqual(
+    c.breakdownFor(s, "LMG", "A").map((x) => x.max),
+    [20, 20, 10, 10, 10],
   );
-  // A SAR21 firer in the same shoot is unaffected.
+  assert.equal(
+    score(s, s.participants[0], "A", "", [18, 17, 9, 8, 7]).score,
+    59,
+  );
+  // A rifle in the same shoot keeps its own, shorter sequence.
   const [other] = c.addParticipants(s, "Rifleman", s.settings.weapon);
   assert.equal(score(s, other, "A", "", [6, 6, 6, 6]).score, 24);
 });

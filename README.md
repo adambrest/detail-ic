@@ -6,19 +6,25 @@
 
 V2 requires individual sub-stage scores by default. Each stage is fired in sections; define them in Settings, one name and maximum per section, adding up to the rounds that stage fires.
 
-Layouts ship for the stages whose firing sequence is known, and are the same for every rifle in that shoot:
+Layouts ship for the stages whose firing sequence is known. A rifle fires the shoot's sequence; the LMG is issued its own allocation in ATP and fires its own:
 
-| Shoot | Stage A | Stage B | Stage C |
-|---|---|---|---|
-| BTP | 4 × 4 | 4 × 4 | — |
-| ATP (M) | 4 × 6 | 4 × 2 | 4 × 4 |
-| ATP (SP) | 4 × 4 | 4 × 2 | 4 × 3 |
-| CS (M) | 20 | 4 × 2 | 20 |
-| CS (SP) | 5 + 10 | 4 × 2 | 5 + 10 |
-| APS | Practices 2–5: 6 each | | |
-| APS (NS) | Practices 1–3: 10 each | | |
+| Shoot | Weapon | Stage A | Stage B | Stage C |
+|---|---|---|---|---|
+| BTP | SAR21 | 4 × 4 | 4 × 4 | — |
+| ATP (M) | rifles | 4 × 6 | 4 × 2 | 4 × 4 |
+| ATP (M) | LMG | 20 + 20 + 10 + 10 + 10 | 4 × 2 | 4 × 12 |
+| ATP (SP) | rifles | 4 × 4 | 4 × 2 | 4 × 3 |
+| ATP (SP) | LMG | 6 × 10 | 4 × 2 | 4 × 10 |
+| CS (M) | rifles | 20 | 4 × 2 | 20 |
+| CS (M) | LMG | *pending* | 4 × 2 | *pending* |
+| CS (SP) | rifles | 5 + 10 | 4 × 2 | 5 + 10 |
+| CS (SP) | LMG | *pending* | 4 × 2 | *pending* |
+| APS | SAR21 | Practices 2–5: 6 each | | |
+| APS (NS) | SAR21 | Practices 1–3: 10 each | | |
 
-**The LMG has no sub-stage layout in any shoot.** Its firing sequence has not been given, so its sub-stage boxes read *Sub-stages pending* and it is scored on the stage total.
+**The Combat Shoot LMG has no layout for Stages A and C.** It is issued 30 rounds there against the rifles' 20 (CS (M)) or 15 (CS (SP)), and no sequence has been given for that allocation, so those boxes read *Sub-stages pending* and the stage is scored on its total. Stage B is fired on the same 8 rounds as the rifles, so it shares their sequence.
+
+Where rifles in one shoot fire different sequences, the column header reads *Hits by practice* rather than a shape that would be wrong for half the rows.
 
 A stage fired in one go still gets a single section, which keeps per-firer entry required without pretending the stage is subdivided. Sections are not always equal. The column header names them, so the boxes sit on one line with the stage total at the end; out-of-range entries are flagged as they are typed.
 

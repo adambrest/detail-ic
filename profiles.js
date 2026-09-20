@@ -204,21 +204,32 @@ export function stages(s) {
 // it in Settings rather than inventing a layout from a stage total.
 const SECTIONS = {
   BTP: { A: [4, 4, 4, 4], B: [4, 4, 4, 4] },
-  ATP_M: { A: [6, 6, 6, 6], B: [2, 2, 2, 2], C: [4, 4, 4, 4] },
-  ATP_SP: { A: [4, 4, 4, 4], B: [2, 2, 2, 2], C: [3, 3, 3, 3] },
+  ATP_M: {
+    A: [6, 6, 6, 6],
+    B: [2, 2, 2, 2],
+    C: [4, 4, 4, 4],
+    LMG: { A: [20, 20, 10, 10, 10], B: [2, 2, 2, 2], C: [12, 12, 12, 12] },
+  },
+  ATP_SP: {
+    A: [4, 4, 4, 4],
+    B: [2, 2, 2, 2],
+    C: [3, 3, 3, 3],
+    LMG: { A: [10, 10, 10, 10, 10, 10], B: [2, 2, 2, 2], C: [10, 10, 10, 10] },
+  },
   CS_M: { A: [20], B: [2, 2, 2, 2], C: [20] },
   CS_SP: { A: [5, 10], B: [2, 2, 2, 2], C: [5, 10] },
   APS: { 2: [6], 3: [6], 4: [6], 5: [6] },
   "APS:ns": { 1: [10], 2: [10], 3: [10] },
 };
 export function defaultBreakdowns(program, variant = "standard") {
-  const plan = SECTIONS[variant === "ns" ? `${program}:ns` : program];
-  if (!plan) return {};
+  const shoot = SECTIONS[variant === "ns" ? `${program}:ns` : program];
+  if (!shoot) return {};
   const rows = [];
   for (const weapon of weaponsFor(program, variant)) {
-    // No LMG sequence has been stated for any stage, so it gets no layout and
-    // its sub-stages stay closed until one is given.
-    if (NON_SAR.has(weapon)) continue;
+    // A weapon fires the shoot's stated sequence unless its own is given. The
+    // LMG is issued a different allocation in some stages and states its own
+    // there; where it fires the same rounds as the rifles it shares theirs.
+    const plan = shoot[weapon] ?? shoot;
     for (const c of profileFor(program, variant, weapon).components) {
       const sections = plan[c.id];
       if (!sections) continue;

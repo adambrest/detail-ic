@@ -40,7 +40,7 @@ Stages can be scored in sections. `store.requireBreakdown` is on by default; per
 
 Layouts are defined per rifle and stage in Settings and are stored on the shoot, so a shoot keeps the layout it was scored under. Once a layout has recorded scores it cannot be changed for that version.
 
-Layouts are derived from a stated firing sequence per shoot — see the table in the README. A stage fired in one go gets a single part, which still forces per-firer entry without pretending the stage is subdivided.
+Layouts are derived from a stated firing sequence per shoot and weapon — see the table in the README. A stage fired in one go gets a single part, which still forces per-firer entry without pretending the stage is subdivided.
 
 A layout's parts sum to the **rounds fired** (`inputMax`), not to the credited maximum. A Combat Shoot LMG fires 30 in Stages A and C but is credited 20 (CS (M)) or 15 (CS (SP)), so the cap is applied in `scoreRows` via `Math.min(value, component.max)` while `rawHits` retains the true entry. `parseBreakdown` and `validateStore` both validate against `inputMax ?? max`; they disagreed at one point, which would have let a correct LMG layout save but fail at scoring.
 
@@ -50,7 +50,13 @@ Entry boxes are numeric text rather than `type="number"`: the spinner arrows sit
 
 Sections are not always equal — CS (SP) Stages A and C are 5 + 10 — so `SECTIONS` records the rounds in each section rather than a count to divide by.
 
-**The LMG is excluded from every shipped layout**, because no firing sequence has been stated for it in any stage. Its sub-stage boxes read *Sub-stages pending* and it is scored on the stage total. A second safety net backs this up: a layout ships only when its sections add up to the rounds that weapon actually fires in that stage, so a SAR21 default can never be applied to a rifle issued a different allocation. Earlier drafts generated `Part 1..4` layouts by dividing each stage total by four; that invented standards that were never confirmed, and is now blocked by a test that checks every shipped layout against the stated sequence.
+**A weapon fires the shoot's stated sequence unless its own is given.** `SECTIONS` takes a weapon name inside a shoot as an override, so the ATP LMG carries its own layout — Stage A is 20 + 20 + 10 + 10 + 10 in ATP (M) and 6 × 10 in ATP (SP) — while the rifles keep theirs.
+
+The guard that decides whether a layout ships at all is unchanged, and it is what still holds the Combat Shoot LMG open: a layout ships only when its sections add up to the rounds that weapon actually fires in that stage. The CS LMG is issued 30 rounds in Stages A and C against the rifles' 20 or 15, no sequence has been stated for that allocation, and so those two stages ship nothing and read *Sub-stages pending*. Its Stage B fires the same 8 rounds as the rifles and therefore inherits their sequence rather than being left unset — sharing a sequence where the rounds match is the documented fallback, not an assumption about the weapon.
+
+This is why the override lives in the data and the arithmetic check stays in code: a SAR21 default can never reach a weapon issued a different allocation, whether or not anyone remembers to exclude it. Earlier drafts generated `Part 1..4` layouts by dividing each stage total by four; that invented standards that were never confirmed, and is now blocked by a test that checks every shipped layout against the stated sequence.
+
+Because ATP shoots now mix sequences, the hits column header cannot state one shape for every row. Where the rifles in a shoot differ it reads *Hits by practice* instead of a figure that would be wrong for half the firers.
 
 Breakdowns are stored on the attempt, survive edits, appear in History, Final scores and CSV, and are never recombined across attempts — a best stage shows the breakdown of the attempt that actually earned it.
 
