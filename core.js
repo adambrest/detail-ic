@@ -1946,36 +1946,89 @@ export function queueKey(s, key, stage) {
     s.manualQueue.push({ key, stage });
   audit(s, "Reshoot queued", { key, stage });
 }
-// Setup steps worth remembering. Scores, redetails and temporary details are
-// read from the records themselves, so their audit lines are left out here to
-// avoid saying everything twice.
-const NOTED = {
-  "Shoot created": "Shoot created",
-  "Shoot type changed": "Shoot type changed",
-  "Participants added": "Participants added",
-  "Participants confirmed": "Participants confirmed",
-  "Participants unlocked": "Participants unlocked",
-  "Participants cleared": "Participants cleared",
-  "Auto-detailed": "Auto-detailed",
-  "Participant corrected": "Participant corrected",
-  "Participant removed": "Participant removed",
-  "Scores corrected": "Score voided",
-  "Score edited": "Score edited",
-  "Detail score edited": "Detail score edited",
-  "Redetail canceled": "De-detailed",
-  "Skipped in the firing order": "Skipped",
-  Unskipped: "Unskipped",
-  "Temporary detail removed": "Temporary detail removed",
-  "Sighting recorded": "Sighting recorded",
-};
-// Everything that happened in a shoot, newest first: what was set up, what was
-// fired, who was sent again and what was corrected. Built from the records
-// themselves, so each score carries the ID needed to open and correct it.
+// Everything worth knowing about a shoot, for the History tab. Only changes
+// are kept: confirming or unlocking the roster settles nothing on its own, and
+// a skip says where someone stood in a queue, not what they shot. The whole
+// nominal roll is one entry rather than a line per name, and every score keeps
+// the ID needed to open and correct it. Entries carry the stage they belong
+// to, so the tab can file them under it, and are newest first.
 export function historyFeed(s) {
   const entries = [],
     nameOf = (id) =>
       s.participants.find((p) => p.id === id)?.name ?? "Removed firer",
-    detailOf = (id) => s.details.find((d) => d.id === id);
+    detailOf = (id) => s.details.find((d) => d.id === id),
+    reasonFor = (detailAttemptId) =>
+      s.attempts.find((x) => x.detailAttemptId === detailAttemptId)?.correction
+        ?.reason ?? "";
+  for (const a of s.audit)
+    if (a.action === "Shoot created" || a.action === "Shoot type changed")
+      entries.push({
+        id: `audit:${a.id}`,
+        at: a.at,
+        kind: "note",
+        stage: null,
+        title: a.action,
+        lines: [],
+        people: [],
+      });
+  // The nominal roll: who is on it, and every change made to it.
+  const changes = [];
+  let added = 0,
+    rosterAt = null;
+  for (const a of s.audit) {
+    if (a.action === "Participants added") {
+      added += (a.participants ?? []).length;
+      rosterAt = a.at;
+    } else if (a.action === "Participant corrected") {
+      const from = a.previous?.name,
+        to = a.current?.name;
+      changes.push(
+        from && to && from !== to
+          ? `Renamed ${from} to ${to}${a.reason ? ` · ${a.reason}` : ""}`
+          : `${to ?? "A firer"} corrected${a.reason ? ` · ${a.reason}` : ""}`,
+      );
+      rosterAt = a.at;
+    } else if (a.action === "Participant removed") {
+      changes.push(`Removed ${a.participant?.name ?? "a firer"}`);
+      rosterAt = a.at;
+    } else if (a.action === "Participants cleared") {
+      changes.push(`Cleared all ${a.count ?? ""} participants`.trim());
+      rosterAt = a.at;
+    }
+  }
+  if (added || changes.length) {
+    const cs = isCS(s),
+      roll = cs
+        ? sortedDetails(s)
+            .filter((d) => !d.temporary && members(s, d.id).length)
+            .map(
+              (d) =>
+                `${d.name}: ${members(s, d.id)
+                  .map((p) => p.name)
+                  .join(", ")}`,
+            )
+        : [s.participants.map((p) => p.name).join(", ")].filter(Boolean),
+      waiting = cs ? members(s, null) : [];
+    if (waiting.length)
+      roll.push(`Needs a detail: ${waiting.map((p) => p.name).join(", ")}`);
+    entries.push({
+      id: "roster",
+      at: rosterAt,
+      kind: "roster",
+      stage: null,
+      title: "Nominal roll",
+      summary: [
+        `${s.participants.length} ${s.participants.length === 1 ? "firer" : "firers"}`,
+        changes.length
+          ? `${changes.length} ${changes.length === 1 ? "change" : "changes"}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      lines: [...roll, ...changes],
+      people: s.participants.map((p) => ({ id: p.id, name: p.name })),
+    });
+  }
   for (const d of s.shared)
     entries.push({
       id: `shared:${d.id}`,
@@ -1984,7 +2037,9 @@ export function historyFeed(s) {
       stage: d.stage,
       detailId: d.detailId,
       title: detailOf(d.detailId)?.name ?? "Detail",
+      temporary: !!detailOf(d.detailId)?.temporary,
       voided: d.status !== "valid",
+      reason: d.status !== "valid" ? reasonFor(d.id) : "",
       score: d.score,
       divisor: d.divisor,
       aggregate: d.aggregateHits,
@@ -2011,10 +2066,11 @@ export function historyFeed(s) {
       voided: list.every((a) => a.status !== "valid"),
       people: list.map((a) => ({
         id: a.participantId,
+        attemptId: a.id,
         name: nameOf(a.participantId),
         hits: a.score,
-        weapon: a.weapon,
         voided: a.status !== "valid",
+        reason: a.correction?.reason ?? "",
       })),
     });
   for (const d of s.dispatches)
@@ -2043,21 +2099,7 @@ export function historyFeed(s) {
         retired: !!d.retired,
         people: (d.memberIds ?? []).map((id) => ({ id, name: nameOf(id) })),
       });
-  for (const a of s.audit)
-    if (NOTED[a.action])
-      entries.push({
-        id: `audit:${a.id}`,
-        at: a.at,
-        kind: "note",
-        title: NOTED[a.action],
-        note: a.reason || "",
-        people: (a.participants ?? [a.current ?? a.participant])
-          .filter(Boolean)
-          .map((p) => ({ id: p.id, name: p.name })),
-      });
-  return entries.sort(
-    (a, b) => Date.parse(b.at) - Date.parse(a.at) || a.kind.localeCompare(b.kind),
-  );
+  return entries.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
 }
 export function exportCsv(s) {
   const components = profileFor(s.program, s.variant, s.settings.weapon)

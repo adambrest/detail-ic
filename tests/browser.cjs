@@ -533,19 +533,29 @@ async function addNames(page, names) {
       1,
     );
 
-    // History is the record of the whole shoot, and where scores are corrected.
+    // History is the record of the whole shoot, filed by stage, and where
+    // scores are corrected.
     await tab(page, "History");
     const events = await page.locator(".event").count();
     assert.ok(events > 4, `expected a full history, saw ${events}`);
     const feed = await page.locator(".history-feed").innerText();
     for (const line of [
-      "Participants added",
-      "Participants confirmed",
+      "Setup",
+      "Shoot created",
+      "Nominal roll",
+      "Stage A",
       "Temp detail 1 built",
-      "Scored",
     ])
       assert.ok(feed.includes(line), `history is missing "${line}"`);
-    // Searching narrows it to one firer, temporary details included.
+    // Settling and skipping are not changes, so they are not kept.
+    for (const noise of ["Participants confirmed", "Skipped"])
+      assert.ok(!feed.includes(noise), `history should not keep "${noise}"`);
+    // The roll opens to show who is in which detail.
+    const roll = page.locator('.event:has-text("Nominal roll")');
+    assert.equal(await roll.getAttribute("open"), null);
+    await roll.locator("summary").click();
+    assert.ok((await roll.innerText()).includes("Detail 1:"));
+    // Searching narrows it, and temporary details are findable by name.
     await page.locator("#search").fill("Temp detail");
     await waitFor(page, () => {
       const n = document.querySelectorAll(".event").length;
@@ -563,15 +573,24 @@ async function addNames(page, names) {
       (n) => document.querySelectorAll(".event").length === n,
       events,
     );
-    // A detail's scores open from its entry, and a firer's from their row.
-    await page.getByRole("button", { name: /^Scores for Detail 1$/ }).first().click();
+    // A detail's score is corrected as one; no firer can be voided out of it.
+    const detailCard = page.locator('.event:has-text("Detail 1 ·")').first();
+    await detailCard.locator("summary").click();
+    assert.equal(await detailCard.locator("[data-attempt]").count(), 0);
+    await detailCard
+      .getByRole("button", { name: /Edit or void this detail/ })
+      .click();
     assert.ok((await page.locator("#dialog").innerText()).includes("Detail 1"));
     await click(page, "Close");
-    await page
-      .getByRole("button", { name: "Scores for Dana Koh", exact: true })
-      .first()
-      .click();
-    assert.ok((await page.locator("#dialog").innerText()).includes("History"));
+    // An individual score is corrected on its own, from its own row.
+    const stageB = page
+      .locator(".event")
+      .filter({ hasText: /^\s*\d+ scores? confirmed/ })
+      .first();
+    await stageB.locator("summary").click();
+    await stageB.locator("[data-attempt]").first().click();
+    const one = await page.locator("#dialog").innerText();
+    assert.ok(one.includes("Edit") && one.includes("Void"), one);
     await click(page, "Close");
 
     // The roster keeps temporary details out, and says why a rifle is fixed.

@@ -1132,19 +1132,45 @@ dialog .error {
   opacity: 1;
   -webkit-text-fill-color: var(--muted);
 }
-/* The History feed: one card per thing that happened. */
+/* The History feed: one card per thing that happened, filed under its stage. */
 .history-feed {
   max-width: 760px;
 }
+.event-group {
+  margin-bottom: 22px;
+}
+.event-group > h2 {
+  font-size: 13px;
+  margin: 0 0 8px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
 .event {
   padding: 0;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
+}
+details.event > summary {
+  list-style: none;
+  cursor: pointer;
+}
+details.event > summary::-webkit-details-marker {
+  display: none;
 }
 .event-head {
   display: flex;
   align-items: baseline;
   gap: 10px;
   padding: 11px 12px;
+}
+details.event > summary .event-head::before {
+  content: "▸";
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+details.event[open] > summary .event-head::before {
+  content: "▾";
 }
 .event-head > div {
   flex: 1;
@@ -1161,20 +1187,34 @@ dialog .error {
   font-size: 11px;
   white-space: nowrap;
 }
-.event .table-wrap {
+.event .table-wrap,
+.event-body,
+.event-foot {
   border-top: 1px solid var(--line);
 }
-.event.void .event-head > div {
-  opacity: 0.55;
+.event-body,
+.event-foot {
+  padding: 10px 12px;
+}
+.event-body .note {
+  margin: 0 0 4px;
+}
+/* A voided score is struck through and red, wherever it appears. */
+.voided-tag {
+  color: var(--danger);
+  font-weight: 650;
+}
+.event.void .event-head strong {
   text-decoration: line-through;
+  color: var(--muted);
 }
 .event tr.void td {
-  opacity: 0.55;
   text-decoration: line-through;
-}
-.note-event .event-head strong {
-  font-weight: 650;
   color: var(--muted);
+}
+.event tr.void .sub {
+  color: var(--danger);
+  text-decoration: none;
 }
 /* A rifle held by a recorded score: greyed, but it still answers a tap. */
 .locked-field {

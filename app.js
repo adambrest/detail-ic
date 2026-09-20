@@ -126,6 +126,7 @@ let store,
   manualSort = "best",
   showReached = false,
   closedSummaries = new Set(),
+  openEvents = new Set(),
   pasteDetail = 1,
   apsView = "standard",
   busy = false,
@@ -1088,64 +1089,111 @@ function renderFinal() {
             .join("")
         : `<section class="panel">${table(c.participants)}</section>`);
 }
-// Everything that happened, newest first: what was set up, what was fired, who
-// was sent again and what was corrected. Scores are corrected from here, which
-// is where the roster sends you once a rifle or a detail is held by one.
+// The record of a shoot, filed under the stage each thing belongs to and
+// newest first within it. Cards open for the detail behind them, and the menu
+// beside a score corrects that score and nothing else.
 function renderHistory() {
   const c = s(),
     feed = historyFeed(c),
     stageName = (id) => stages(c).find((x) => x.id === id)?.label ?? id,
+    stageMax = (id) => stages(c).find((x) => x.id === id)?.max ?? null,
     text = (e) =>
-      `${e.title ?? ""} ${e.stage ? stageName(e.stage) : ""} ${e.note ?? ""} ${e.people.map((x) => x.name).join(" ")}`,
-    shown = feed.filter(
-      (e) => !search || text(e).toLowerCase().includes(search.toLowerCase()),
-    );
-  const when = (e) => `${dateLabel(e.at)} · ${timeLabel(e.at)}`,
-    who = (e) => e.people.map((x) => x.name).join(", "),
-    scoreRows = (e, max) =>
-      `<div class="table-wrap"><table><tbody>${e.people
-        .map(
-          (x) =>
-            `<tr class="${x.voided ? "void" : ""} ${search && x.name.toLowerCase().includes(search.toLowerCase()) ? "match" : ""}"><td class="name">${esc(x.name)}</td><td class="num">${x.hits ?? '<span class="muted">—</span>'}${max ? `<span class="muted">/${max}</span>` : ""}</td><td class="more-cell"><button class="more" data-person="${x.id}" aria-label="Scores for ${esc(x.name)}">⋯</button></td></tr>`,
-        )
-        .join("")}</tbody></table></div>`;
-  const card = (e) => {
-    const max = e.stage
-        ? (stages(c).find((x) => x.id === e.stage)?.max ?? null)
-        : null,
-      head = (title, note, menu = "") =>
-        `<div class="event-head"><div><strong>${title}</strong>${note ? `<p class="note">${note}</p>` : ""}</div><span class="when">${esc(when(e))}</span>${menu}</div>`;
-    if (e.kind === "detail-score")
-      return `<section class="panel event ${e.voided ? "void" : ""}">${head(
-        `${esc(e.title)} · ${esc(stageName(e.stage))}`,
-        `Scored ${e.score}/${max}${e.totalOnly ? ` from the detail total ${e.aggregate} over ${e.divisor} firers` : ""}${e.voided ? " · voided" : ""}`,
-        `<button class="more" data-score-detail="${e.detailId}|${e.stage}" aria-label="Scores for ${esc(e.title)}">⋯</button>`,
-      )}${scoreRows(e, max)}</section>`;
-    if (e.kind === "score")
-      return `<section class="panel event ${e.voided ? "void" : ""}">${head(
-        `${esc(stageName(e.stage))} · ${e.people.length} ${e.people.length === 1 ? "score" : "scores"} confirmed`,
-        e.voided ? "Voided" : "",
-      )}${scoreRows(e, max)}</section>`;
-    if (e.kind === "redetail")
-      return `<section class="panel event ${e.status === "canceled" ? "void" : ""}">${head(
-        `${esc(e.title)} redetailed · ${esc(stageName(e.stage))}`,
-        `${esc(who(e))}${e.status === "canceled" ? " · de-detailed" : e.status === "scored" ? " · scored since" : " · waiting to fire"}`,
-      )}</section>`;
+      `${e.title ?? ""} ${e.stage ? stageName(e.stage) : ""} ${e.summary ?? ""} ${(e.lines ?? []).join(" ")} ${(e.people ?? []).map((x) => x.name).join(" ")}`,
+    hit = (e) => !search || text(e).toLowerCase().includes(search.toLowerCase()),
+    shown = feed.filter(hit);
+  const when = (e) => (e.at ? `${dateLabel(e.at)} · ${timeLabel(e.at)}` : ""),
+    who = (e) => (e.people ?? []).map((x) => x.name).join(", "),
+    mark = (x) => search && x.toLowerCase().includes(search.toLowerCase());
+  // A card is a summary you can open. Whether it is open survives a redraw, so
+  // typing in the search box does not keep shutting it.
+  const card = (e, head, body = "", menu = "") =>
+    `<details class="panel event ${e.voided ? "void" : ""}" data-event="${esc(e.id)}" ${openEvents.has(e.id) ? "open" : ""}><summary><div class="event-head"><div>${head}</div><span class="when">${esc(when(e))}</span></div></summary>${body}</details>${menu}`;
+  const flat = (e, head, menu = "") =>
+    `<section class="panel event flat ${e.voided ? "void" : ""}"><div class="event-head"><div>${head}</div><span class="when">${esc(when(e))}</span>${menu}</div></section>`;
+  const title = (main, note) =>
+    `<strong>${main}</strong>${note ? `<p class="note">${note}</p>` : ""}`;
+  const voidNote = (e) =>
+    e.voided
+      ? `<span class="voided-tag">Voided${e.reason ? ` · ${esc(e.reason)}` : ""}</span>`
+      : "";
+  const scoreTable = (e, rows) =>
+    `<div class="table-wrap"><table><tbody>${rows.join("")}</tbody></table></div>`;
+  const entry = (e) => {
+    const max = e.stage ? stageMax(e.stage) : null;
+    if (e.kind === "detail-score") {
+      // A detail's score belongs to the whole detail, so it is corrected as
+      // one from here; a single firer cannot be voided out of it.
+      const rows = e.people.map(
+        (x) =>
+          `<tr class="${mark(x.name) ? "match" : ""}"><td class="name">${esc(x.name)}</td><td class="num">${x.hits ?? '<span class="muted">—</span>'}${max ? `<span class="muted">/${max}</span>` : ""}</td></tr>`,
+      );
+      return card(
+        e,
+        title(
+          `${esc(e.title)}${e.temporary ? ' <span class="badge">Temporary</span>' : ""} · ${e.score}/${max}`,
+          `${e.people.length} firers${e.totalOnly ? ` · confirmed on the detail total ${e.aggregate} over ${e.divisor}` : ""} ${voidNote(e)}`,
+        ),
+        scoreTable(e, rows) +
+          `<div class="event-foot"><button data-score-detail="${e.detailId}|${e.stage}">Edit or void this detail's score</button></div>`,
+      );
+    }
+    if (e.kind === "score") {
+      const rows = e.people.map(
+        (x) =>
+          `<tr class="${x.voided ? "void" : ""} ${mark(x.name) ? "match" : ""}"><td class="name">${esc(x.name)}${x.voided ? `<div class="sub">Voided${x.reason ? ` · ${esc(x.reason)}` : ""}</div>` : ""}</td><td class="num">${x.hits ?? '<span class="muted">—</span>'}${max ? `<span class="muted">/${max}</span>` : ""}</td><td class="more-cell"><button class="more" data-attempt="${x.attemptId}" aria-label="Correct ${esc(x.name)}'s ${esc(stageName(e.stage))} score">⋯</button></td></tr>`,
+      );
+      return card(
+        e,
+        title(
+          `${e.people.length} ${e.people.length === 1 ? "score" : "scores"} confirmed`,
+          voidNote(e),
+        ),
+        scoreTable(e, rows),
+      );
+    }
     if (e.kind === "temp-detail")
-      return `<section class="panel event ${e.retired ? "void" : ""}">${head(
-        `${esc(e.title)} built · ${esc(stageName(e.stage))}`,
-        `${e.oneOff ? "One-off" : "Kept"} detail · ${esc(who(e))}${e.retired ? " · finished and dropped" : ""}`,
-      )}</section>`;
-    return `<section class="panel event note-event">${head(
-      esc(e.title),
-      [who(e), e.note].filter(Boolean).map(esc).join(" · "),
-    )}</section>`;
+      return card(
+        e,
+        title(
+          `${esc(e.title)} built`,
+          `${e.oneOff ? "One-off" : "Kept"} · ${e.people.length} firers${e.retired ? " · finished and dropped" : ""}`,
+        ),
+        `<div class="event-body"><p class="note">${esc(who(e))}</p></div>`,
+      );
+    if (e.kind === "redetail")
+      return flat(
+        e,
+        title(
+          `${esc(e.title)} redetailed`,
+          `${esc(who(e))} · ${e.status === "canceled" ? "de-detailed" : e.status === "scored" ? "scored since" : "waiting to fire"}`,
+        ),
+      );
+    if (e.kind === "roster")
+      return card(
+        e,
+        title("Nominal roll", esc(e.summary)),
+        `<div class="event-body">${e.lines.map((l) => `<p class="note ${mark(l) ? "match" : ""}">${esc(l)}</p>`).join("")}</div>`,
+      );
+    return flat(e, title(esc(e.title), ""));
   };
+  // Setup first, then each stage in the order it is fired.
+  const groups = [
+    ["Setup", shown.filter((e) => !e.stage)],
+    ...stages(c).map((x) => [
+      x.label,
+      shown.filter((e) => e.stage === x.id),
+    ]),
+  ].filter(([, list]) => list.length);
   $("#main").innerHTML =
     shootHead(`<span class="spacer"></span>${searchBox()}`) +
-    `<div class="history-feed"><div class="toolbar"><span class="count">${shown.length} of ${feed.length} ${feed.length === 1 ? "entry" : "entries"}</span></div>${
-      shown.length
-        ? shown.map(card).join("")
+    `<div class="history-feed">${
+      groups.length
+        ? groups
+            .map(
+              ([name, list]) =>
+                `<section class="event-group"><h2>${esc(name)} <span class="count">${list.length}</span></h2>${list.map(entry).join("")}</section>`,
+            )
+            .join("")
         : empty(search ? "Nothing matches that name" : "Nothing has happened yet")
     }</div>`;
 }
@@ -1764,8 +1812,54 @@ function detailMenu(detailId) {
         detailMenu(detailId),
       );
 }
+// A single recorded score, corrected on its own. A score fired as part of a
+// detail never reaches here: it belongs to everyone who fired it, so it is
+// corrected from the detail and they all move together.
+function scoreEventDialog(attemptId) {
+  const c = s(),
+    a = c.attempts.find((x) => x.id === attemptId);
+  if (!a) return;
+  const p = c.participants.find((x) => x.id === a.participantId),
+    max = a.profile.components.find((x) => x.id === a.stage).max,
+    number = p ? attemptNumbers(c, p).get(a.id) : null,
+    live = a.status === "valid" && !a.detailAttemptId,
+    done = () => {
+      $("#dialog").close();
+      render();
+    };
+  dialog(
+    `${p?.name ?? "Removed firer"} · ${stageLabel(c, a.stage)}`,
+    `<p class="note">${ratio(a.score, max)} · ${esc(a.weapon)}${number ? ` · attempt ${number}` : ""}<br>${esc(new Date(a.recordedAt).toLocaleString("en-US"))}</p>${
+      a.status === "valid"
+        ? ""
+        : `<p class="note warn-note">Already voided${a.correction?.reason ? ` · ${esc(a.correction.reason)}` : ""}.</p>`
+    }${
+      a.detailAttemptId
+        ? '<p class="note warn-note">Fired as part of a detail, so it cannot be corrected on its own. Open the detail\'s score and every firer in it moves together.</p>'
+        : ""
+    }${live ? '<div class="actions"><button type="button" id="edit-score">Edit</button><button type="button" class="danger" id="void-score">Void</button></div>' : ""}`,
+    null,
+    null,
+    "Close",
+  );
+  if (!live) return;
+  $("#edit-score").onclick = () => editScoreDialog(p, a, done);
+  $("#void-score").onclick = () =>
+    dialog(
+      `Void ${p?.name ?? "this score"} · ${stageLabel(c, a.stage)}`,
+      `<p class="note">This removes ${ratio(a.score, max)} from their record. It stays in History, struck through.</p><label class="field"><span>Reason</span><input name="reason" required autofocus></label>`,
+      [{ label: "Void score", danger: true }],
+      (f) => {
+        voidAttempt(c, a.id, f.get("reason"));
+        save();
+        done();
+      },
+      "Back",
+      () => scoreEventDialog(attemptId),
+    );
+}
 // Editing an individual score, including the rifle where a stage allows a change.
-function editScoreDialog(p, a) {
+function editScoreDialog(p, a, done) {
   const c = s(),
     max = a.profile.components.find((x) => x.id === a.stage).max;
   dialog(
@@ -1775,11 +1869,12 @@ function editScoreDialog(p, a) {
     (f) => {
       editIndividual(c, a.id, f.get("hits"), f.get("weapon") || a.weapon);
       save();
+      if (done) return done();
       render();
       historyDialog(p);
     },
     "Back",
-    () => historyDialog(p),
+    done ?? (() => historyDialog(p)),
   );
 }
 // A detail's own history: every score confirmed for it, newest first, each one
@@ -1997,6 +2092,12 @@ $("#main").addEventListener("input", (e) => {
 $("#main").addEventListener(
   "toggle",
   (e) => {
+    const event = e.target.dataset?.event;
+    if (event) {
+      if (e.target.open) openEvents.add(event);
+      else openEvents.delete(event);
+      return;
+    }
     const id = e.target.dataset?.summary;
     if (!id) return;
     if (e.target.open) closedSummaries.delete(id);
@@ -2335,6 +2436,10 @@ $("#main").addEventListener("click", (e) => {
     }
     if (b.dataset.build) {
       manualDetailDialog(stage, b.dataset.build);
+      return;
+    }
+    if (b.dataset.attempt) {
+      scoreEventDialog(b.dataset.attempt);
       return;
     }
     if (b.dataset.scoreDetail) {

@@ -29,7 +29,7 @@ Everything works offline. Scores are saved on your device only, so export a back
 
 **Build a detail around a poor shooter.** In Combat Shoot, Stages A and C score the detail's hits divided by its firers, so one bad shot drags a whole detail down. Once a detail has fired a stage twice, Redetailing offers Build detail for each poor shooter: it puts them with the best shooters free at that moment — firers who still need the stage first — and plans a detail for the rest of theirs. Anyone already waiting to fire is left out, and the plan says when waiting for a detail to finish would give a better one.
 
-**Check History.** Every shoot keeps a record of what happened, newest first: who was added and confirmed, every score as it was confirmed, who was sent again, and every temporary detail built. Search it by name to follow one firer, and correct any score from the ⋯ beside it.
+**Check History.** Every shoot keeps a record of what changed, filed under the stage it belongs to: the nominal roll and every edit to it, each set of scores as it was confirmed, who was sent again, and every temporary detail built. Open a card for the detail behind it, search by name to follow one firer, and correct a score from the ⋯ beside it. Voided scores stay, struck through in red. A score fired as part of a detail is corrected from the detail, so everyone who fired it moves together.
 
 **Read the summary.** Each stage tab reports who is not improving, who is shooting poorly, who cannot reach Marksman or a pass on their current scores, exactly what each firer needs from their remaining stages, and who is close enough to be worth one more detail.
 
