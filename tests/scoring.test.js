@@ -52,6 +52,7 @@ import {
   cleared,
   firerHits,
   hitsRange,
+  poorPace,
   repairWeapons,
   buildAround,
   planRest,
@@ -254,7 +255,7 @@ test("Detail buttons assign firers; skipped, small and large details are reporte
   assert.equal(people[0].detailId, null);
   const t = setup("CS_SP", "standard", 4);
   detailScore(t.s, t.d, "A", 40);
-  assert.throws(() => assignDetail(t.s, t.p.id, 2), /recorded scores/);
+  assert.throws(() => assignDetail(t.s, t.p.id, 2), /Void it before moving them/);
 });
 test("Auto-detail uses as few details as possible, all within the allowed size", () => {
   assert.deepEqual(detailPlan(13, { min: 5, max: 7 }), [7, 6]);
@@ -747,11 +748,10 @@ test("Insights flag results out of reach and the reshoot that fixes them", () =>
   const a = Object.fromEntries(insights(s, "A").map((n) => [n.title, n.items]));
   // Person 2 could still make Marksman by reshooting A: B 0 and C 16 leave 39 to find,
   // shared between A (24) and C (16), so 24 is recommended.
-  // A poor shooter is under what the stage needs from them, not merely under a
-  // pass: Person 3's 12 is well short of the 21 Stage A is asked to give them.
+  // Poor means under half the stage's rounds. Person 3's 12 of 24 is exactly
+  // half, so they are behind but not shooting badly.
   assert.deepEqual(a["Poor shooters"], [
     "Person 2: 2/24, recommended 24 for Marksman",
-    "Person 3: 12/24, recommended 21 for Marksman",
   ]);
 });
 test("Close to failing says exactly what the last stages must give", () => {
@@ -818,16 +818,12 @@ test("Detail insights say each thing once, and group firers with the same fix", 
   // Before B or C are in, CS (M) Stage A starts at 39 × 20/48 = 17 for Marksman.
   // The detail line carries the recommendation, so a poor shooter line says
   // only who they are, where they fire and what they hit.
-  // CS (M) Stage A is asked for 17, so everyone in this detail is short of it,
-  // weakest first. The detail itself is the real problem, and it is named
-  // separately below.
+  // Under half of Stage A's 20 rounds, weakest first. The rest of the detail
+  // is behind, but it is the detail that is named for that, below.
   assert.deepEqual(a["Poor shooters"], [
     "P6 (Detail 1): 1/20",
     "P5 (Detail 1): 8/20",
     "P4 (Detail 1): 9/20",
-    "P3 (Detail 1): 10/20",
-    "P2 (Detail 1): 11/20",
-    "P1 (Detail 1): 12/20",
   ]);
   assert.deepEqual(a["Weak details"], [
     "Detail 1: averages 8/20, recommended 17 for Marksman",
@@ -878,11 +874,10 @@ test("A weak firer gets a detail of strong shooters, those still needing it firs
   detailScore(s, d1, "A", null, { individuals: [14, 13, 13, 1] });
   detailScore(s, d2, "A", null, { individuals: [15, 15, 15, 15] });
   detailScore(s, d3, "A", null, { individuals: [9, 9, 9, 9] });
-  // Detail 3 averaged 9, under the 13 Stage A is asked to give them, so they
-  // are short of it too. P4 is far and away the worst.
+  // Detail 3 averaged 9 of 15, above half, so only P4 is shooting badly.
   assert.deepEqual(
     weakFirers(s, "A").map((x) => x.p.name),
-    ["P4", "P9", "P10", "P11", "P12"],
+    ["P4"],
   );
   const plan = buildAround(s, "A", people[3].id);
   // Strong means at least marksman pace, 13/15. P1–P3 still need Stage A
@@ -965,6 +960,24 @@ test("A temporary detail's average follows only the firers who were in it", () =
     people.map((p) => best(s, p, "A")),
     [15, 10, 10, 10, 15, 15, 15, 12],
   );
+});
+test("Shooting badly means under half the stage, never above a pass", () => {
+  for (const [program, variant, weapon, stage, expected] of [
+    ["BTP", "standard", "SAR21", "A", 8],
+    ["CS_M", "standard", "SAR21/SAR21 SS/M203", "A", 10],
+    ["CS_SP", "standard", "SAR21/SAR21 SS", "A", 7.5],
+    ["ATP_SP", "standard", "SAR21/SAR21 MMS/M203", "C", 6],
+    ["APS", "standard", "SAR21", "2", 3],
+    ["APS", "ns", "SAR21", "1", 5],
+    // The SS passes at 32/48, so half its rounds is the lenient reading.
+    ["ATP_M", "standard", "SAR21 SS/HK416", "A", 12],
+    // The LMG passes at 32/126. Half of its 70 Stage A rounds would call a
+    // comfortably passing gunner weak, so the pass pace caps it.
+    ["ATP_M", "standard", "LMG", "A", 18],
+  ]) {
+    const p = { weapon, profile: profileFor(program, variant, weapon) };
+    assert.equal(poorPace(p, stage), expected);
+  }
 });
 test("A detail total pins down what each firer must have shot", () => {
   const store = newStore(),
@@ -1261,11 +1274,22 @@ test("Invalid fractional, negative and excessive counts never become scores", ()
   const { s, d } = setup("CS_SP", "standard", 4);
   assert.throws(() => detailScore(s, d, "A", 61));
 });
-test("Changing an individual's rifle starts a separate record", () => {
+test("A rifle changes only once the scores fired on it are void", () => {
   const { s, p } = setup("ATP_M");
   recordIndividual(s, p, "A", "24");
   const oldId = p.recordId;
   assert.throws(() => recordIndividual(s, p, "B", "8", "LMG"));
+  // Rifles are held to different standards, so a live score pins the rifle.
+  assert.throws(
+    () =>
+      updateParticipant(s, p.id, { name: p.name, weapon: "LMG" }, "Changed rifle"),
+    /void every score/,
+  );
+  assert.equal(p.weapon, "SAR21/SAR21 MMS/M203");
+  // A name is never pinned; it just needs a reason.
+  updateParticipant(s, p.id, { name: "Renamed", weapon: p.weapon }, "Spelling");
+  assert.equal(p.name, "Renamed");
+  voidAttempt(s, s.attempts[0].id, "Wrong rifle on the sheet");
   updateParticipant(s, p.id, { name: p.name, weapon: "LMG" }, "Changed rifle");
   assert.notEqual(p.recordId, oldId);
   assert.equal(best(s, p, "A"), null);
@@ -1287,19 +1311,29 @@ test("Best stages may come from different attempts; corrections keep shared hist
   assert.equal(s.attempts.filter((a) => a.status === "void").length, 4);
   assert.equal(s.attempts.length, 8);
 });
-test("Roster corrections keep historical membership and make old entries stale", () => {
+test("A firer leaves a detail only once its score is void, and the record keeps its roster", () => {
   const { s, d, p } = setup("CS_SP", "standard", 4);
   detailScore(s, d, "A", 40);
   getDraft(s, d.id, "C").aggregate = "20";
   const other = addDetail(s);
   addParticipants(s, ["Other 1", "Other 2", "Other 3"], rifle("CS_SP"), other.id);
-  updateParticipant(
+  const move = () =>
+    updateParticipant(
+      s,
+      p.id,
+      { name: p.name, weapon: p.weapon, detailId: other.id },
+      "Roster correction",
+    );
+  // A detail score belongs to the firers who fired it.
+  assert.throws(move, /void those scores/);
+  voidAttempt(
     s,
-    p.id,
-    { name: p.name, weapon: p.weapon, detailId: other.id },
+    s.attempts.find((a) => a.participantId === p.id).id,
     "Roster correction",
   );
-  assert.equal(best(s, p, "A"), 10);
+  move();
+  assert.equal(best(s, p, "A"), null);
+  // The record still names everyone who was on the point.
   assert.equal(s.shared[0].roster.length, 4);
   assert.match(
     validateDraft(s, getDraft(s, d.id, "C")).errors.join(" "),

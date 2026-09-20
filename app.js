@@ -38,6 +38,7 @@ import {
   addParticipants,
   ensureDetail,
   updateParticipant,
+  hasRecords,
   removeParticipant,
   clearParticipants,
   compositionErrors,
@@ -63,7 +64,7 @@ import {
   cleared,
   stageNeed,
   goal,
-  passPace,
+  poorPace,
   marksmanPace,
   committed,
   overlapping,
@@ -150,9 +151,6 @@ const dateLabel = (iso) =>
     year: "numeric",
   });
 const stageLabel = (c, stage) => stages(c).find((x) => x.id === stage).label;
-// ATP and Combat Shoot start on Stage B, while there is daylight for A later.
-const firstStage = (c) =>
-  ["ATP_M", "ATP_SP"].includes(c.program) || isCS(c) ? "B" : stages(c)[0].id;
 const reduceMotion = () =>
   matchMedia("(prefers-reduced-motion: reduce)").matches;
 // Re-rendering while a button is pressed would swallow its click, so wait.
@@ -324,7 +322,7 @@ function renderShoots() {
         ? `<section class="panel"><div class="panel-head"><h3>Shoots <span class="count">${list.length}</span></h3></div>${list
             .map(
               (x) =>
-                `<div class="shoot-row"><div><strong>${esc(x.name)}</strong><p class="note">${esc(typeLabel(x.program, x.variant))} · ${esc(dateLabel(x.createdAt))} · ${x.participants.length} participants · ${hasScores(x) ? "Scores recorded" : "No scores yet"}</p></div>${x.id === store.active ? '<span class="badge blue">Open now</span>' : ""}<div class="actions"><button class="danger" data-delete-shoot="${x.id}" aria-label="Delete ${esc(x.name)}">Delete</button><button class="primary" data-open-shoot="${x.id}" aria-label="Open ${esc(x.name)}">Open</button></div></div>`,
+                `<div class="shoot-row"><div><strong>${esc(x.name)}</strong><p class="note">${esc(typeLabel(x.program, x.variant))} · ${esc(dateLabel(x.createdAt))} · ${x.participants.length} participants · ${hasScores(x) ? "Scores recorded" : "No scores yet"}</p></div><div class="actions"><button class="danger" data-delete-shoot="${x.id}" aria-label="Delete ${esc(x.name)}">Delete</button><button class="primary" data-open-shoot="${x.id}" aria-label="Open ${esc(x.name)}">Open</button></div></div>`,
             )
             .join("")}</section>`
         : ""
@@ -406,7 +404,7 @@ function renderParticipants() {
     ).join("")}${roomForNew || !n ? '<option value="new">New detail</option>' : ""}</select></td>`;
   };
   const row = (p) =>
-    `<tr class="${matches(p) ? "match" : ""}" ${cs && !locked ? `draggable="true" data-drag="${p.id}" data-drop-row="${p.id}"` : ""}>${cs ? `<td class="grip">${locked ? "" : `<span class="handle" aria-hidden="true">☰</span>`}</td>` : ""}<td class="name"><input class="name-input" type="text" data-name="${p.id}" value="${esc(p.name)}" aria-label="Name for ${esc(p.name)}" ${locked ? "disabled" : ""}></td>${multi ? `<td><select class="row-weapon" data-rifle="${p.id}" aria-label="Rifle for ${esc(p.name)}" ${locked ? "disabled" : ""}>${option(weapons(c), p.weapon)}</select></td>` : ""}${cs ? picker(p) : ""}<td class="more-cell">${locked ? "" : `<button class="icon-button danger" data-remove="${p.id}" aria-label="Remove ${esc(p.name)}">✕</button>`}</td></tr>`;
+    `<tr class="${matches(p) ? "match" : ""}" ${cs && !locked ? `draggable="true" data-drag="${p.id}" data-drop-row="${p.id}"` : ""}>${cs ? `<td class="grip">${locked ? "" : `<span class="handle" aria-hidden="true">☰</span>`}</td>` : ""}<td class="name"><input class="name-input" type="text" data-name="${p.id}" value="${esc(p.name)}" aria-label="Name for ${esc(p.name)}" ${locked ? "disabled" : ""}></td>${multi ? `<td><select class="row-weapon" data-rifle="${p.id}" aria-label="Rifle for ${esc(p.name)}" ${locked || hasRecords(c, p) ? "disabled" : ""} ${hasRecords(c, p) ? `title="${esc(p.name)} has scores on ${esc(p.weapon)}. Void them to change rifle."` : ""}>${option(weapons(c), p.weapon)}</select></td>` : ""}${cs ? picker(p) : ""}<td class="more-cell">${locked ? "" : `<button class="icon-button danger" data-remove="${p.id}" aria-label="Remove ${esc(p.name)}">✕</button>`}</td></tr>`;
   // An empty row on each detail, so a short detail can be filled in place.
   const addRow = (d, people) =>
     locked || !d || people.length >= max
@@ -446,7 +444,7 @@ function renderParticipants() {
       ? '<p class="note lock-note">Scores are recorded, so the shoot type is locked. <button class="inline-link" data-action="shoots">Start a new shoot</button> to use a different type.</p>'
       : "") +
     (locked
-      ? `<div class="panel confirmed"><span>Participants confirmed and locked.${isCS(c) ? " Stage B rifles can still change on its tab." : ""}</span><div class="actions"><button data-action="unlock">Edit participants</button><button class="primary" data-action="to-stage">Go to ${esc(stageLabel(c, firstStage(c)))}</button></div></div>`
+      ? `<div class="panel confirmed"><span>Participants confirmed. Pick a stage above to start scoring.${isCS(c) ? " Stage B rifles can still change on its tab." : ""}</span><div class="actions"><button data-action="unlock">Edit participants</button></div></div>`
       : "") +
     (c.participants.length
       ? `<div class="toolbar">${searchBox()}<span class="count">${c.participants.length} participants</span><span class="spacer"></span>${locked ? "" : `<button class="danger" data-action="clear-participants">Clear participants</button>${ready ? '<button class="primary" data-action="confirm-participants">Confirm participants</button>' : ""}`}</div>`
@@ -480,7 +478,7 @@ function abilityMark(c, p, stage, weak, strong) {
     high = !low && strong.has(p.id);
   if (!low && !high) return "";
   const note = low
-    ? `Shoots under the ${stageNeed(c, p, stage)} ${stageLabel(c, stage)} is asked to give them, so they pull a detail's average down.`
+    ? `Shot under half of ${stageLabel(c, stage)}'s rounds, so they pull a detail's average down.`
     : `At or above the ${marksmanPace(p, stage)} that keeps them on course for Marksman.`;
   return ` <span class="badge ${high ? "green" : "red"}" title="${esc(note)}">${low ? "Weak" : "Strong"}</span>`;
 }
@@ -581,11 +579,10 @@ function draftSummary(c, draft) {
   const v = validateDraft(c, draft),
     max = stages(c).find((x) => x.id === draft.stage).max,
     entered = draft.rows.filter((r) => r.hits !== "").length;
+  // Always a line, so the bar never pops in and out as hits are typed.
   return v.shared && v.score !== null
     ? `Average ${v.aggregate}/${v.divisor} → ${v.score}/${max}.`
-    : entered
-      ? `${entered} of ${v.rows.length} entered.`
-      : "";
+    : `${entered} of ${v.rows.length} entered.`;
 }
 function hasInput(draft) {
   return !!draft && (draft.aggregate !== "" || draft.rows.some((r) => r.hits !== ""));
@@ -761,7 +758,10 @@ function weakPanel(c, stage) {
     .map(({ p }) => {
       const d = c.details.find((x) => x.id === p.detailId),
         booked = committed(c, stage, p),
-        tries = homeAttempts(c, p, stage),
+        tries = Math.max(
+          scoreHistory(c, p, stage).length,
+          homeAttempts(c, p, stage),
+        ),
         why = booked
           ? "already in a detail waiting to fire"
           : tries < 2
@@ -1242,7 +1242,7 @@ function pickMarks(c, p, stage) {
       badge(
         "Weak",
         "red",
-        `Shoots under the ${need} ${stageLabel(c, stage)} is asked to give them, so they pull a detail's average down.`,
+        `Shot under ${poorPace(p, stage)} of ${stageLabel(c, stage)}'s rounds, so they pull a detail's average down.`,
       ),
     );
   else if (isStrong(c, p, stage))
@@ -2313,17 +2313,12 @@ $("#main").addEventListener("click", (e) => {
       case "confirm-participants":
         setRosterLock(c, true);
         save();
-        tab = `stage:${firstStage(c)}`;
         render();
-        toast("Participants confirmed.");
+        toast("Participants confirmed. Pick a stage above to start scoring.");
         break;
       case "unlock":
         setRosterLock(c, false);
         save();
-        render();
-        break;
-      case "to-stage":
-        tab = `stage:${firstStage(c)}`;
         render();
         break;
       case "select-all": {

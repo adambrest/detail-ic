@@ -87,13 +87,15 @@ An ATP result keeps one rifle throughout. LMG fires 70, 8 and 48 rounds against 
 
 ## History
 
+A name can be corrected at any time, with a reason, and the new name replaces the old one wherever it was written down. A rifle and a detail cannot: a recorded score is held to the standard of the rifle that fired it and belongs to the firers who were on the point. Both are fixed until the scores that still count are voided, and voiding one takes it from everyone in that detail.
+
 Every attempt is kept: the stage, the attempt number, the rifle, the hits or the detail total with its firer count, who else was in the detail, and the time it was confirmed. Scores confirmed together share one timestamp.
 
 Editing a score records a replacement and keeps the original, marked as edited. Voiding one keeps it with its reason. Corrections to a detail score apply to everyone in that detail. Grades already recorded are never changed by later settings.
 
 ## Poor shooters and strong shooters
 
-A firer shoots poorly in a stage when their own hits are under what that stage is asked to give them — their threshold, not a bare pass. They shoot strongly when their hits are at or above the share of the stage that keeps them on course for Marksman. Both read a firer's own hits, never their detail's average, so a firer carried by a good detail can still be a poor shot, and is still the wrong person to lend to a detail that needs lifting.
+A firer shoots poorly in a stage when their own hits are under half its rounds. Every conduct's pass mark sits at half the rounds or below, except the ATP (M) LMG, whose standard is far easier, so the pass pace caps the mark there rather than calling a comfortably passing gunner weak. They shoot strongly when their hits are at or above the share of the stage that keeps them on course for Marksman. Both read a firer's own hits, never their detail's average, so a firer carried by a good detail can still be a poor shot, and is still the wrong person to lend to a detail that needs lifting.
 
 A poor shooter leaves the list once the stage has given them what they need, since there is nothing left to act on, but the caution stays on them wherever a detail is being put together.
 

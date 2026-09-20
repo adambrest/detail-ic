@@ -134,9 +134,19 @@ async function addNames(page, names) {
         .isDisabled(),
     );
     await click(page, "Confirm participants");
+    // Confirming settles the roster and stays put; the stage is the user's
+    // choice, and the roster is read-only until they unlock it.
     assert.ok(
-      (await page.locator("#tabs .on").innerText()).includes("Stage A · Day"),
+      (await page.locator("#tabs .on").innerText()).includes("Participants"),
     );
+    assert.ok(
+      await page.getByRole("textbox", { name: /^Name for / }).first().isDisabled(),
+    );
+    assert.equal(
+      await page.getByRole("button", { name: /^Go to / }).count(),
+      0,
+    );
+    await tab(page, "Stage A · Day");
 
     // Nothing in Redetailing before any score is confirmed.
     assert.equal(await page.locator(".queue-row").count(), 0);
@@ -408,9 +418,9 @@ async function addNames(page, names) {
     assert.equal(await page.locator("tr.match").count(), 1);
     await page.locator("#search").fill("");
     await click(page, "Confirm participants");
-    // Combat Shoot starts on Stage B, as on the range.
+    // The roster is settled; which stage fires first is the user's call.
     assert.ok(
-      (await page.locator("#tabs .on").innerText()).includes("Stage B"),
+      (await page.locator("#tabs .on").innerText()).includes("Participants"),
     );
     await tab(page, "Stage A");
     assert.ok((await page.locator("#main").innerText()).includes("Detail 1"));

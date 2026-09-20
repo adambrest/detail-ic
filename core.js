@@ -252,8 +252,10 @@ export function parseRoster(text, detailed) {
 export function assignDetail(s, id, number) {
   const p = s.participants.find((p) => p.id === id);
   if (!p) throw Error("Participant not found.");
-  if (hasActivity(s, p))
-    throw Error(`${p.name} has recorded scores and cannot change detail.`);
+  if (hasRecords(s, p))
+    throw Error(
+      `${p.name} has a score that still counts, and it belongs to the firers who fired it. Void it before moving them to another detail.`,
+    );
   if (
     s.dispatches.some(
       (d) => d.status === "awaiting" && d.roster.some((m) => m.id === id),
@@ -399,6 +401,14 @@ export function addParticipants(s, lines, weapon, detailId = null) {
   audit(s, "Participants added", { participants: structuredClone(people) });
   return people;
 }
+// Scores that still stand for this firer. A voided score no longer ties their
+// rifle or their detail down, which is how a correction is made: void first,
+// then change what was wrong.
+export function hasRecords(s, p) {
+  return s.attempts.some(
+    (a) => a.participantId === p.id && a.status === "valid",
+  );
+}
 function hasActivity(s, p) {
   return (
     s.attempts.some((a) => a.participantId === p.id) ||
@@ -420,11 +430,16 @@ export function updateParticipant(
   if (cs && detailId && !s.details.some((d) => d.id === detailId))
     throw Error("Choose a detail.");
   profileFor(s.program, s.variant, weapon);
-  if (
-    hasActivity(s, p) &&
-    (p.detailId !== detailId || p.weapon !== weapon || p.name !== name) &&
-    !reason.trim()
-  )
+  const recorded = hasRecords(s, p);
+  if (recorded && weapon !== p.weapon)
+    throw Error(
+      `${p.name} has scores recorded on ${p.weapon}. Rifles are scored against different standards, so void every score they fired before changing it: open their ⋯ menu on a stage and use History.`,
+    );
+  if (recorded && cs && detailId !== p.detailId)
+    throw Error(
+      `${p.name} has scores recorded with ${s.details.find((d) => d.id === p.detailId)?.name ?? "their detail"}. A detail score belongs to the firers who fired it, so void those scores before moving them.`,
+    );
+  if (recorded && p.name !== name && !reason.trim())
     throw Error("Enter a correction reason to preserve the scoring history.");
   if (
     s.dispatches.some(
@@ -436,6 +451,9 @@ export function updateParticipant(
     );
   const changed = { ...p, name, weapon, detailId };
   const previous = structuredClone(p);
+  if (p.name !== name)
+    for (const d of s.shared)
+      for (const m of d.roster) if (m.id === id) m.name = name;
   if (p.weapon !== weapon && !cs) {
     changed.recordId = uid();
     changed.profile = profileFor(s.program, s.variant, weapon);
@@ -1691,13 +1709,22 @@ export function stageNeed(s, p, stage) {
   const g = goal(s, p, stage);
   return g ? target(s, p, stage, g.objective) : passPace(p, stage);
 }
-// This firer's own hits are under what the stage needs from them. It says how
-// they shoot, whatever their detail earned them, so it holds even after their
-// counted score is safe: they are still the wrong person to lend to a detail
-// that needs lifting.
+// The mark below which a firer is shooting badly by any reading: under half
+// the stage's rounds. Every conduct's pass sits at half or below, except the
+// ATP (M) LMG, whose standard is far easier — half its 70 rounds would call a
+// comfortably passing gunner weak — so the pass pace caps it.
+export function poorPace(p, stage) {
+  return Math.min(
+    p.profile.components.find((x) => x.id === stage).max / 2,
+    passPace(p, stage),
+  );
+}
+// This firer is shooting badly, whatever their detail earned them, so it holds
+// even after their counted score is safe: they are still the wrong person to
+// lend to a detail that needs lifting.
 export function shootsPoorly(s, p, stage) {
   const { high } = hitsRange(s, p, stage);
-  return high !== null && high < stageNeed(s, p, stage);
+  return high !== null && high < poorPace(p, stage);
 }
 // This firer has the stage score they need: at their threshold, out of reach of
 // improving it, or already Marksman.

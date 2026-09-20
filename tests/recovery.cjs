@@ -59,6 +59,11 @@ const previousVersion = {
   await page
     .getByRole("button", { name: "Confirm participants", exact: true })
     .click();
+  // Confirming stays on Participants; the stage is chosen from the tabs.
+  await page
+    .locator("#tabs")
+    .getByRole("button", { name: "Stage A · Day", exact: true })
+    .click();
   const hits = page.getByRole("spinbutton", {
     name: "Backup Firer hits",
     exact: true,
