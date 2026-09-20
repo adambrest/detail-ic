@@ -189,8 +189,10 @@ export function profileFor(program, variant, weapon) {
 export function stages(s) {
   return profileFor(s.program, s.variant, s.settings.weapon).components;
 }
+// Every scored stage can be given a starting threshold. On a two-stage shoot
+// like BTP only one of them really needs one: once either stage is scored, the
+// other's threshold becomes exactly what is still needed. It is offered for
+// both so whichever is fired first has a sensible figure waiting.
 export function targetStages(s) {
-  return s.program === "BTP"
-    ? stages(s).filter((c) => c.id === "A")
-    : stages(s);
+  return stages(s);
 }

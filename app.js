@@ -122,7 +122,7 @@ let store,
   addMode = null,
   dragging = null,
   dragOver = null,
-  manualSort = "detail",
+  manualSort = "best",
   showReached = false,
   closedSummaries = new Set(),
   pasteDetail = 1,
@@ -404,7 +404,7 @@ function renderParticipants() {
     ).join("")}${roomForNew || !n ? '<option value="new">New detail</option>' : ""}</select></td>`;
   };
   const row = (p) =>
-    `<tr class="${matches(p) ? "match" : ""}" ${cs && !locked ? `draggable="true" data-drag="${p.id}" data-drop-row="${p.id}"` : ""}>${cs ? `<td class="grip">${locked ? "" : `<span class="handle" aria-hidden="true">☰</span>`}</td>` : ""}<td class="name"><input class="name-input" type="text" data-name="${p.id}" value="${esc(p.name)}" aria-label="Name for ${esc(p.name)}" ${locked ? "disabled" : ""}></td>${multi ? `<td><select class="row-weapon" data-rifle="${p.id}" aria-label="Rifle for ${esc(p.name)}" ${locked || hasRecords(c, p) ? "disabled" : ""} ${hasRecords(c, p) ? `title="${esc(p.name)} has scores on ${esc(p.weapon)}. Void them to change rifle."` : ""}>${option(weapons(c), p.weapon)}</select></td>` : ""}${cs ? picker(p) : ""}<td class="more-cell">${locked ? "" : `<button class="icon-button danger" data-remove="${p.id}" aria-label="Remove ${esc(p.name)}">✕</button>`}</td></tr>`;
+    `<tr class="${matches(p) ? "match" : ""}" ${cs && !locked ? `draggable="true" data-drag="${p.id}" data-drop-row="${p.id}"` : ""}>${cs ? `<td class="grip">${locked ? "" : `<span class="handle" aria-hidden="true">☰</span>`}</td>` : ""}<td class="name"><input class="name-input" type="text" data-name="${p.id}" value="${esc(p.name)}" aria-label="Name for ${esc(p.name)}" ${locked ? "disabled" : ""}></td>${multi ? `<td><select class="row-weapon" data-rifle="${p.id}" aria-label="Rifle for ${esc(p.name)}" ${locked || hasRecords(c, p) ? "disabled" : ""} ${hasRecords(c, p) ? `title="${esc(p.name)} has scores on ${esc(p.weapon)}. Void them to change rifle."` : ""}>${option(weapons(c), p.weapon)}</select></td>` : ""}${cs ? picker(p) : ""}<td class="more-cell">${locked ? `<button class="more" data-person="${p.id}" aria-label="Scores for ${esc(p.name)}">⋯</button>` : `<button class="icon-button danger" data-remove="${p.id}" aria-label="Remove ${esc(p.name)}">✕</button>`}</td></tr>`;
   // An empty row on each detail, so a short detail can be filled in place.
   const addRow = (d, people) =>
     locked || !d || people.length >= max
@@ -432,7 +432,7 @@ function renderParticipants() {
         .map(([d, people]) =>
           d?.temporary
             ? `<section class="panel temporary"><div class="detail-head"><h3>${esc(d.name)}</h3><span class="count">${people.length} firers</span></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th></tr></thead><tbody>${people.map((p) => `<tr class="${matches(p) ? "match" : ""}"><td class="name">${esc(p.name)}</td><td>${esc(rosterWeapon(c, d.id, p))}</td></tr>`).join("")}</tbody></table></div></section>`
-            : `<section class="panel ${d ? "" : "unassigned"}" ${d && !locked ? `data-drop="${d.id}"` : 'data-drop=""'}><div class="detail-head"><h3>${d ? esc(d.name) : "Needs a detail"}</h3>${d ? borrowedNote(c, d) : ""}<span class="count">${people.length}${d && max !== Infinity ? ` of ${max}` : ""} firers</span>${d || locked ? "" : '<div class="actions"><button class="primary" data-action="auto-detail">Auto-detail</button></div>'}</div>${table(people, d)}</section>`,
+            : `<section class="panel ${d ? "" : "unassigned"}" ${d && !locked ? `data-drop="${d.id}"` : 'data-drop=""'}><div class="detail-head"><h3>${d ? esc(d.name) : "Needs a detail"}</h3>${d ? borrowedNote(c, d) : ""}<span class="count">${people.length}${d && max !== Infinity ? ` of ${max}` : ""} firers</span>${d && locked ? `<div class="actions"><button class="more" data-detail-menu="${d.id}" aria-label="Scores for ${esc(d.name)}">⋯</button></div>` : ""}${d || locked ? "" : '<div class="actions"><button class="primary" data-action="auto-detail">Auto-detail</button></div>'}</div>${table(people, d)}</section>`,
         )
         .join("");
   } else
@@ -661,7 +661,7 @@ function detailPanels(c, stage) {
           e = entry.get(d.id);
         // Waiting to fire, or part-typed: a form. Otherwise it is a record.
         if (!e && !hasInput(draft)) return scoredPanel(c, d, stage, weak, strong);
-        return `<section class="panel score-panel ${[d.temporary && "temporary", e?.n === 0 && !e.skipped && "next", e?.skipped && "skipped"].filter(Boolean).join(" ")}" data-detail="${d.id}"><div class="detail-head">${e ? `<span class="seat">${e.n + 1}</span>` : ""}<h3>${esc(d.name)}</h3>${e?.n === 0 && !e.skipped ? '<span class="badge blue">Next</span>' : ""}${badge(`Attempt ${attempt}`)}${borrowedNote(c, d, stage)}<span class="count">${people.length} firers</span><div class="actions">${e && order.length > 1 ? skipButton(`detail:${d.id}`, d.name, e.skipped, hasInput(draft)) : ""}<button data-detail-history="${d.id}" aria-label="History for ${esc(d.name)}">History</button><button class="icon-button" data-reset="${d.id}" title="Clear entries" aria-label="Clear entries for ${esc(d.name)}">↺</button><button class="primary" data-confirm="${d.id}" aria-label="Confirm scores for ${esc(d.name)}" ${e?.skipped ? "disabled" : ""}>Confirm scores</button></div></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th><th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${people
+        return `<section class="panel score-panel ${[d.temporary && "temporary", e?.n === 0 && !e.skipped && "next", e?.skipped && "skipped"].filter(Boolean).join(" ")}" data-detail="${d.id}"><div class="detail-head">${e ? `<span class="seat">${e.n + 1}</span>` : ""}<h3>${esc(d.name)}</h3>${e?.n === 0 && !e.skipped ? '<span class="badge blue">Next</span>' : ""}${badge(`Attempt ${attempt}`)}${borrowedNote(c, d, stage)}<span class="count">${people.length} firers</span><div class="actions">${e && order.length > 1 ? skipButton(`detail:${d.id}`, d.name, e.skipped, hasInput(draft)) : ""}${e?.dispatch ? `<button data-undetail="${e.dispatch.id}" title="Cancel this redetail and put the detail back in the Redetailing list" aria-label="De-detail ${esc(d.name)}">De-detail</button>` : ""}<button data-detail-history="${d.id}" aria-label="History for ${esc(d.name)}">History</button><button class="icon-button" data-reset="${d.id}" title="Clear entries" aria-label="Clear entries for ${esc(d.name)}">↺</button><button class="primary" data-confirm="${d.id}" aria-label="Confirm scores for ${esc(d.name)}" ${e?.skipped ? "disabled" : ""}>Confirm scores</button></div></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th><th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${people
           .map((p) => {
             const row = draft.rows.find((r) => r.participantId === p.id),
               mine = nextAttempt(c, p, stage);
@@ -1214,19 +1214,22 @@ function detailPicker(c) {
 // the stage, then a strong shot with nothing left to gain, then everyone else,
 // and poor shots last. The same order picks the plan and lays out the list.
 const ROLES = [
-  "Best help · a better score here makes Marksman",
-  "Best help · still needs this stage",
-  "Best help · already has what they need",
+  "Helps most · shoots well and a good score here makes them Marksman",
+  "Helps · shoots well and still needs this stage",
+  "Can help · already has the score they need here",
+  "Can help · already maxed this stage, so it is pure charity",
   "Everyone else",
-  "Needs a detail built around them",
-  "Marksman already · nothing in it for them, but they can still carry a detail",
+  "Needs help · build the detail around them",
+  "Can help · Marksman already, so nothing in it for them",
 ];
 function role(c, p, stage) {
-  // Marksman is the end of the line, so they sit at the bottom whatever else
-  // is true of them. Within that group the best shots still come first.
-  if (result(c, p).status === "Marksman") return 5;
-  if (shootsPoorly(c, p, stage)) return 4;
-  if (!isStrong(c, p, stage)) return 3;
+  const max = p.profile.components.find((x) => x.id === stage).max;
+  // Marksman is the end of the line, and a maxed stage cannot be improved, so
+  // neither is anyone to build a detail around however they shoot.
+  if (result(c, p).status === "Marksman") return 6;
+  if (best(c, p, stage) === max) return 3;
+  if (shootsPoorly(c, p, stage)) return 5;
+  if (!isStrong(c, p, stage)) return 4;
   if (cleared(c, p, stage)) return 2;
   return goal(c, p, stage)?.objective === "marksman" ? 0 : 1;
 }
@@ -1505,15 +1508,32 @@ function personDialog(id) {
     stage = tab.startsWith("stage:") ? tab.split(":")[1] : null,
     // Combat Shoot Stage B may be fired on another rifle.
     swappable = stage && isCS(c) && !detailedStage(c, stage),
+    // A redetail that has not been scored yet can be taken back.
+    sent =
+      stage &&
+      c.dispatches.find(
+        (d) =>
+          d.stage === stage &&
+          d.status === "awaiting" &&
+          d.roster.some((m) => m.id === p.id),
+      ),
     scored = stage && best(c, p, stage) !== null;
   dialog(
     p.name,
-    `<p class="note">${esc(stage && isCS(c) ? stageRifle(c, p, stage) : p.weapon)}${isCS(c) ? "" : ` · ${esc(stages(c).map((x) => `${x.label} ${ratio(best(c, p, x.id), x.max)}`).join(" · "))}`}</p>${swappable ? `<label class="field inline"><span>Rifle for ${esc(stageLabel(c, stage))}</span><select id="swap-rifle" ${scored ? "disabled" : ""}>${option(weapons(c), stageRifle(c, p, stage))}</select></label>${scored ? '<p class="note">Already scored this stage, so the rifle is fixed. Edit the score in History to change it.</p>' : ""}` : ""}<div class="actions"><button type="button" id="history">History</button>${p.profile.excluded?.length ? '<button type="button" id="sighting">Sighting</button>' : ""}</div>`,
+    `<p class="note">${esc(stage && isCS(c) ? stageRifle(c, p, stage) : p.weapon)}${isCS(c) ? "" : ` · ${esc(stages(c).map((x) => `${x.label} ${ratio(best(c, p, x.id), x.max)}`).join(" · "))}`}</p>${swappable ? `<label class="field inline"><span>Rifle for ${esc(stageLabel(c, stage))}</span><select id="swap-rifle" ${scored ? "disabled" : ""}>${option(weapons(c), stageRifle(c, p, stage))}</select></label>${scored ? '<p class="note">Already scored this stage, so the rifle is fixed. Edit the score in History to change it.</p>' : ""}` : ""}<div class="actions"><button type="button" id="history">History</button>${p.profile.excluded?.length ? '<button type="button" id="sighting">Sighting</button>' : ""}${sent ? `<button type="button" id="undetail" title="Cancel this redetail and put them back in the Redetailing list">De-detail</button>` : ""}</div>`,
     null,
     null,
     "Close",
   );
   $("#history").onclick = () => historyDialog(p);
+  if ($("#undetail"))
+    $("#undetail").onclick = () => {
+      cancelDispatch(c, sent.id);
+      save();
+      $("#dialog").close();
+      render();
+      toast(`${p.name} is back in the Redetailing list.`);
+    };
   if ($("#sighting")) $("#sighting").onclick = () => sightingDialog(p);
   if ($("#swap-rifle"))
     $("#swap-rifle").onchange = (ev) => {
@@ -1651,6 +1671,28 @@ function historyDialog(p) {
           historyDialog(p);
         }),
     );
+}
+// From the roster there is no stage in hand, so a detail's menu offers the
+// stages it has fired. Each one opens its scores, where they can be corrected.
+function detailMenu(detailId) {
+  const c = s(),
+    d = c.details.find((x) => x.id === detailId),
+    scored = stages(c).filter(
+      (x) =>
+        detailedStage(c, x.id) &&
+        detailAttempts(c, detailId, x.id).some((a) => a.status === "valid"),
+    );
+  dialog(
+    d.name,
+    scored.length
+      ? `<p class="note">Open a stage to edit or void what this detail scored. Voiding takes the score from every firer who fired it, which is what has to happen before anyone in the detail can change rifle or move.</p><div class="actions">${scored.map((x) => `<button type="button" data-stage-scores="${x.id}">${esc(x.label)} scores</button>`).join("")}</div>`
+      : '<p class="note">No scores recorded for this detail yet.</p>',
+    null,
+    null,
+    "Close",
+  );
+  for (const b of $("#dialog").querySelectorAll("[data-stage-scores]"))
+    b.onclick = () => detailHistoryDialog(detailId, b.dataset.stageScores);
 }
 // Editing an individual score, including the rifle where a stage allows a change.
 function editScoreDialog(p, a) {
@@ -2210,6 +2252,17 @@ $("#main").addEventListener("click", (e) => {
     }
     if (b.dataset.build) {
       manualDetailDialog(stage, b.dataset.build);
+      return;
+    }
+    if (b.dataset.detailMenu) {
+      detailMenu(b.dataset.detailMenu);
+      return;
+    }
+    if (b.dataset.undetail) {
+      cancelDispatch(c, b.dataset.undetail);
+      save();
+      render();
+      toast("Back in the Redetailing list.");
       return;
     }
     if (b.dataset.detailHistory) {
