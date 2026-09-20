@@ -110,12 +110,27 @@ export function requireActiveStage(s, stage) {
     throw Error("This stage is locked. Unlock it before entering scores.");
   if (!s.activeStage) activateStage(s, stage);
 }
-// Every firer has a score in every stage, so there is nothing left to fire.
-export function allScored(s) {
-  return (
-    s.participants.length > 0 &&
-    s.participants.every((p) => result(s, p).scores.every((v) => v !== null))
+// Stages a firer still owes: no score, and not skipped out of that stage.
+export function outstanding(s) {
+  return s.participants.flatMap((p) =>
+    stages(s)
+      .filter((c) => best(s, p, c.id) === null && !personSkipped(s, p, c.id))
+      .map((c) => ({ p, stage: c.id })),
   );
+}
+// Gaps left by someone who was skipped. They do not hold the shoot open, since
+// nobody is waiting on them to fire, but their result stays incomplete and the
+// operator is told before the shoot is closed.
+export function skippedGaps(s) {
+  return s.participants.flatMap((p) =>
+    stages(s)
+      .filter((c) => best(s, p, c.id) === null && personSkipped(s, p, c.id))
+      .map((c) => ({ p, stage: c.id })),
+  );
+}
+// Nothing left to fire: everyone who was expected to shoot a stage has a score.
+export function allScored(s) {
+  return s.participants.length > 0 && outstanding(s).length === 0;
 }
 // Finishing closes all three stages at once and puts the results forward in
 // place of the advice. It is reversible: reopening returns the shoot to

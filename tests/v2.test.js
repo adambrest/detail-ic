@@ -435,6 +435,15 @@ test("A shoot is finished only once every stage is scored", () => {
   assert.equal(c.allScored(s), false, "Stage C is still open");
   score(s, p, "C", 12);
   assert.equal(c.allScored(s), true);
+  // A firer skipped out of a stage is not holding the shoot open, but their
+  // result stays incomplete and the gap is reported.
+  const [other] = c.addParticipants(s, "Late Arrival", s.settings.weapon);
+  assert.equal(c.allScored(s), false);
+  for (const st of ["A", "B", "C"]) c.setPersonSkipped(s, other.id, st, true);
+  assert.equal(c.allScored(s), true);
+  assert.equal(c.outstanding(s).length, 0);
+  assert.equal(c.skippedGaps(s).length, 3);
+  assert.equal(c.result(s, other).status, "Incomplete");
   c.setFinished(s, true);
   assert.equal(s.activeStage, null);
   assert.throws(() => c.recordIndividual(s, p, "A", "21"), /finished/);

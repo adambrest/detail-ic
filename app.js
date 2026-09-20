@@ -20,6 +20,7 @@ import {
   setPersonSkipped,
   setFinished,
   allScored,
+  skippedGaps,
   personSkipped,
   skippedStages,
   importBackup,
@@ -3149,13 +3150,34 @@ $("#main").addEventListener("click", (e) => {
         tab = b.dataset.action;
         render();
         break;
-      case "finish":
-        setFinished(c, true);
-        save();
-        tab = "final";
-        render();
-        toast("Shoot finished. Every stage is closed.");
+      case "finish": {
+        const finish = () => {
+          setFinished(c, true);
+          save();
+          tab = "final";
+          render();
+          toast("Shoot finished. Every stage is closed.");
+        };
+        // A skipped firer does not hold the shoot open, but their result stays
+        // incomplete, so say whose and what before closing it.
+        const gaps = skippedGaps(c);
+        if (!gaps.length) return finish();
+        const who = [...new Set(gaps.map((g) => g.p.id))].map((id) => {
+          const p = c.participants.find((x) => x.id === id);
+          return `${p.name}: no ${names(gaps.filter((g) => g.p.id === id).map((g) => stageLabel(c, g.stage)))} score`;
+        });
+        dialog(
+          "Finish with skipped firers?",
+          `<p class="note">${who.length === 1 ? "One firer was" : `${who.length} firers were`} skipped and never fired every stage. Their result stays incomplete.</p><ul class="note">${who.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`,
+          "Finish anyway",
+          () => {
+            $("#dialog").close();
+            finish();
+          },
+          "Cancel",
+        );
         break;
+      }
       case "reopen":
         setFinished(c, false);
         save();

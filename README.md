@@ -48,7 +48,7 @@ History can be searched by name, detail, score (for example 7/8), or a combinati
 
 Dates read day-first with the month in letters and times are 24-hour (20 Sep · 14:30). The year appears only on the Shoots list and where a shoot was created.
 
-Final scores show each firer once. A stage column shows the score alone, with its sub-stage figures in small grey text; only the total carries a denominator. Once every firer has a score in every stage, **Done shooting** closes all the stages at once and puts the results forward in place of the advice. It is reversible from the same place. Shoots are ordered by latest update; searching a name finds matching shoots and opens their history.
+Final scores show each firer once. A stage column shows the score alone, with its sub-stage figures in small grey text; only the total carries a denominator. Once everyone who was expected to fire has a score, **Done shooting** closes all the stages at once and puts the results forward in place of the advice. A firer skipped out of a stage does not hold the shoot open; finishing warns which stages they never fired, and their result stays incomplete. It is reversible from the same place. Shoots are ordered by latest update; searching a name finds matching shoots and opens their history.
 
 ## Offline use and backups
 
