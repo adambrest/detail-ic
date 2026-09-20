@@ -38,13 +38,13 @@ Automatic order gives pass risk priority, then firers furthest below their targe
 
 Skip marks a firer as not firing **one stage**, leaving their other stages and earned scores untouched. It sits in the firer's ⋯ menu, shows as a small badge on their row, and is refused while hits are typed for that stage. A short CS detail offers Unskip and Build replacement detail. The proposed replacement respects size, rifle limits and existing bookings, preferring suitable firers who still need the stage. Review the selection before creating it.
 
-You can retry the same detail or use Manual detail. Suggestions based on past scores are optional, not predictions. Summary and additional advice are collapsed so routine scoring stays prominent.
+You can retry the same detail or use Manual detail. Suggestions based on past scores are optional, not predictions. The stage Summary is always on show; the groups within it stay folded, so routine scoring keeps the room.
 
 ## History and results
 
 History can be searched by name, detail, score (for example 7/8), or a combination. Every record is a closed card that opens on a click, with nothing actionable until it does. It keeps what would matter in a recount — scores, corrections, voids, restores and redetails — and leaves working adjustments such as skips, priority changes and stage unlocks out. A detail score is corrected as a whole.
 
-Dates read day-first with the month in letters and times are 24-hour (20 Sep · 1430). The year appears only on the Shoots list and where a shoot was created.
+Dates read day-first with the month in letters and times are 24-hour (20 Sep · 14:30). The year appears only on the Shoots list and where a shoot was created.
 
 Final scores show each firer once. A stage column shows the score alone, with its sub-stage figures in small grey text; only the total carries a denominator. Shoots are ordered by latest update; searching a name finds matching shoots and opens their history.
 

@@ -139,7 +139,6 @@ let store,
   dragOver = null,
   manualSort = "best",
   showReached = false,
-  closedSummaries = new Set(),
   openEvents = new Set(),
   historyFilter = null,
   pasteDetail = 1,
@@ -170,7 +169,7 @@ const dayLabel = (iso, year = false) => {
 };
 const clockLabel = (iso) => {
   const d = new Date(iso);
-  return `${pad(d.getHours())}${pad(d.getMinutes())}`;
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 const dateLabel = (iso) => dayLabel(iso, true);
 // Separated, so a 24-hour time is never mistaken for a year.
@@ -953,19 +952,19 @@ function queuePanel(c, stage, q) {
   }</div>${detailedStage(c, stage) ? weakPanel(c, stage) : ""}${reachedPanel(c, stage, q)}</section>`;
 }
 // What the operator should know before choosing who fires next.
+// The summary itself is always on show; only the groups inside it fold away.
 function summaryPanel(c, stage = null) {
-  const notes = insights(c, stage),
-    id = `${c.id}:${stage ?? "final"}`;
+  const notes = insights(c, stage);
   if (!notes.length) return "";
   const count = notes
     .filter((x) => x.level !== "info")
     .reduce((n, x) => n + x.items.length, 0);
-  return `<details class="panel summary" data-summary="${esc(id)}" ${closedSummaries.has(id) ? "" : "open"}><summary><h3>Summary</h3><span class="count">${count ? `${count} to review` : "On track"}</span></summary>${notes
+  return `<section class="panel summary"><div class="summary-head"><h3>Summary</h3><span class="count">${count ? `${count} to review` : "On track"}</span></div>${notes
     .map(
       (n) =>
         `<details class="insight insight-${n.level}"><summary>${esc(n.title)} · ${n.items.length}</summary><ul>${n.items.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>`,
     )
-    .join("")}</details>`;
+    .join("")}</section>`;
 }
 // Poor shooters pull their detail's average down in Stages A and C, where the
 // score is the detail's hits divided by its firers. Build detail puts one of
@@ -2660,15 +2659,9 @@ $("#main").addEventListener(
   "toggle",
   (e) => {
     const event = e.target.dataset?.event;
-    if (event) {
-      if (e.target.open) openEvents.add(event);
-      else openEvents.delete(event);
-      return;
-    }
-    const id = e.target.dataset?.summary;
-    if (!id) return;
-    if (e.target.open) closedSummaries.delete(id);
-    else closedSummaries.add(id);
+    if (!event) return;
+    if (e.target.open) openEvents.add(event);
+    else openEvents.delete(event);
   },
   true,
 );

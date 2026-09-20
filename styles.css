@@ -1104,15 +1104,14 @@ dialog .error {
   gap: 16px;
   align-content: start;
 }
-.summary > summary {
+/* The summary stays open, so its heading is a plain row with no marker. */
+.summary-head {
   display: flex;
   align-items: baseline;
   gap: 8px;
   padding: 11px 12px;
-  cursor: pointer;
-  list-style: none;
 }
-.summary > summary h3 {
+.summary-head h3 {
   margin: 0;
 }
 .insight {

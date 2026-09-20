@@ -95,6 +95,6 @@ The sub-stage boxes are one unlabelled row with the stage total closing it, beca
 
 Final scores show a stage score on its own, with its sections beside it in small grey type. Only the total carries a denominator.
 
-History is one shape throughout: every record is a closed card with its disclosure marker on the right, so the titles keep a straight left edge and nothing is actionable until it is opened. It carries only what a recount would need; skips, priority changes and stage unlocks are working adjustments and no longer appear.
+The stage summary is always on show and carries no marker of its own; only the groups inside it fold away. History is one shape throughout: every record is a closed card with its disclosure marker on the right, so the titles keep a straight left edge and nothing is actionable until it is opened. It carries only what a recount would need; skips, priority changes and stage unlocks are working adjustments and no longer appear.
 
-Dates are service format — day first, month in letters, 24-hour time, separated so a time is never read as a year (`20 Sep · 1430`). The year appears only where a record is filed or looked up later: the Shoots list, and a shoot's creation.
+Dates are service format — day first, month in letters, 24-hour time, separated so a time is never read as a year (`20 Sep · 14:30`). The year appears only where a record is filed or looked up later: the Shoots list, and a shoot's creation.
