@@ -1018,7 +1018,8 @@ export function restorable(s, id) {
 }
 // Puts a voided score back. One that an edit replaced cannot simply return:
 // the replacement holds its place in the attempt count, so that goes first.
-export function unvoidAttempt(s, id) {
+export function unvoidAttempt(s, id, reason) {
+  if (!reason?.trim()) throw Error("Enter a reason for restoring this score.");
   const a = s.attempts.find((x) => x.id === id);
   if (!a || a.status !== "void") throw Error("That score is not voided.");
   const shared = a.detailAttemptId
@@ -1035,12 +1036,17 @@ export function unvoidAttempt(s, id) {
   const affected = a.detailAttemptId
     ? s.attempts.filter((x) => x.detailAttemptId === a.detailAttemptId)
     : [a];
+  const previous = a.correction?.reason ?? "";
   for (const x of affected) {
     x.status = "valid";
     delete x.correction;
   }
   if (shared) shared.status = "valid";
-  audit(s, "Score restored", { attemptIds: affected.map((x) => x.id) });
+  audit(s, "Score restored", {
+    attemptIds: affected.map((x) => x.id),
+    reason,
+    previous,
+  });
   return affected;
 }
 // Reverses a score just entered: voids it and puts its firers back to awaiting scores.
@@ -2116,6 +2122,61 @@ export function historyFeed(s) {
         reason: a.correction?.reason ?? "",
       })),
     });
+  for (const d of s.shared) {
+    const first = s.attempts.find((x) => x.detailAttemptId === d.id);
+    if (d.status === "valid" || d.revisedBy || !first?.correction) continue;
+    entries.push({
+      id: `void:${d.id}`,
+      at: first.correction.at,
+      kind: "void",
+      stage: d.stage,
+      recordId: d.id,
+      title: detailOf(d.detailId)?.name ?? "Detail",
+      score: d.score,
+      divisor: d.divisor,
+      reason: first.correction.reason,
+      people: d.roster.map((m) => ({ id: m.id, name: nameOf(m.id) })),
+    });
+  }
+  for (const a of s.attempts)
+    if (
+      !a.detailAttemptId &&
+      a.status !== "valid" &&
+      !a.revisedBy &&
+      a.correction
+    )
+      entries.push({
+        id: `void:${a.id}`,
+        at: a.correction.at,
+        kind: "void",
+        stage: a.stage,
+        attemptId: a.id,
+        title: nameOf(a.participantId),
+        score: a.score,
+        reason: a.correction.reason,
+        people: [{ id: a.participantId, name: nameOf(a.participantId) }],
+      });
+  for (const a of s.audit) {
+    if (a.action !== "Score restored") continue;
+    const back = s.attempts.find((x) => x.id === a.attemptIds?.[0]);
+    entries.push({
+      id: `audit:${a.id}`,
+      at: a.at,
+      kind: "restore",
+      stage: back?.stage ?? null,
+      attemptId: back?.id,
+      recordId: back?.detailAttemptId ?? null,
+      title: back?.detailAttemptId
+        ? (detailOf(
+            s.shared.find((d) => d.id === back.detailAttemptId)?.detailId,
+          )?.name ?? "Detail")
+        : (back && nameOf(back.participantId)) || "A score",
+      reason: a.reason || "",
+      people: back
+        ? [{ id: back.participantId, name: nameOf(back.participantId) }]
+        : [],
+    });
+  }
   for (const d of s.dispatches)
     entries.push({
       id: `dispatch:${d.id}`,

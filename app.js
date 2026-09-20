@@ -1111,6 +1111,8 @@ function renderHistory() {
       "temp-detail": ["Detail built", "green"],
       roster: ["Nominal roll", ""],
       note: ["Setup", ""],
+      void: ["Voided", "red"],
+      restore: ["Restored", "green"],
     },
     tags = (e) => {
       const [label, tone] = KINDS[e.kind] ?? ["", ""];
@@ -1133,8 +1135,25 @@ function renderHistory() {
       : "";
   const scoreTable = (e, rows) =>
     `<div class="table-wrap"><table><tbody>${rows.join("")}</tbody></table></div>`;
+  // Both a score and the void that took it out open the same record, where it
+  // can be put back.
+  const openScore = (e) =>
+    e.recordId
+      ? `<button data-detail-score="${esc(e.recordId)}">Open this score</button>`
+      : e.attemptId
+        ? `<button data-attempt="${esc(e.attemptId)}">Open this score</button>`
+        : "";
   const entry = (e) => {
     const max = e.stage ? stageMax(e.stage) : null;
+    if (e.kind === "void" || e.kind === "restore")
+      return flat(
+        e,
+        title(
+          `${esc(e.title)}${e.score != null && max ? ` · ${e.score}/${max}` : ""} ${e.kind === "void" ? "voided" : "restored"}`,
+          e.reason ? esc(e.reason) : "",
+        ),
+        openScore(e),
+      );
     if (e.kind === "detail-score") {
       // A detail's score belongs to the whole detail, so it is corrected as
       // one from here; a single firer cannot be voided out of it.
@@ -1149,7 +1168,7 @@ function renderHistory() {
           `${e.people.length} firers${e.totalOnly ? ` · confirmed on the detail total ${e.aggregate} over ${e.divisor}` : ""} ${voidNote(e)}`,
         ),
         scoreTable(e, rows) +
-          `<div class="event-foot"><button data-detail-score="${esc(e.recordId)}">Edit or void this detail's score</button></div>`,
+          `<div class="event-foot"><button data-detail-score="${esc(e.recordId)}">${e.voided ? "Restore this detail's score" : "Edit or void this detail's score"}</button></div>`,
       );
     }
     if (e.kind === "score") {
@@ -1800,14 +1819,20 @@ function historyDialog(p, back) {
     .forEach(
       (b) =>
         (b.onclick = () => {
-          try {
-            unvoidAttempt(c, b.dataset.unvoid);
-            save();
-            render();
-            historyDialog(p, back);
-          } catch (err) {
-            toast(err.message);
-          }
+          const a = c.attempts.find((x) => x.id === b.dataset.unvoid);
+          restoreDialog(c, {
+            id: a.id,
+            title: p.name,
+            stage: a.stage,
+            score: a.score,
+            max: a.profile.components.find((x) => x.id === a.stage).max,
+            was: a.correction?.reason,
+            back: () => historyDialog(p, back),
+            done: () => {
+              render();
+              historyDialog(p, back);
+            },
+          });
         }),
     );
   $("#dialog")
@@ -1847,6 +1872,23 @@ function detailMenu(detailId) {
         detailMenu(detailId),
       );
 }
+// Putting a score back changes what a firer is graded on, so it is confirmed
+// the way voiding is: what was voided and why, and a reason for undoing it.
+function restoreDialog(c, { id, title, stage, score, max, was, back, done }) {
+  dialog(
+    `Restore ${title} · ${stageLabel(c, stage)}`,
+    `<p class="note warn-note">This score was voided${was ? ` · ${esc(was)}` : ""}. Restoring puts ${ratio(score, max)} back into their record, and back into their total.</p><label class="field"><span>Reason for restoring</span><input name="reason" required autofocus></label>`,
+    "Restore score",
+    (f) => {
+      unvoidAttempt(c, id, f.get("reason"));
+      save();
+      done();
+      toast(`${title} restored.`);
+    },
+    "Back",
+    back,
+  );
+}
 // A single recorded score, corrected on its own. A score fired as part of a
 // detail never reaches here: it belongs to everyone who fired it, so it is
 // corrected from the detail and they all move together.
@@ -1878,16 +1920,17 @@ function scoreEventDialog(attemptId) {
     "Close",
   );
   if (restorable(c, a.id) && !a.detailAttemptId)
-    $("#unvoid-score").onclick = () => {
-      try {
-        unvoidAttempt(c, a.id);
-        save();
-        done();
-        toast(`${p?.name ?? "That score"} restored.`);
-      } catch (err) {
-        toast(err.message);
-      }
-    };
+    $("#unvoid-score").onclick = () =>
+      restoreDialog(c, {
+        id: a.id,
+        title: p?.name ?? "this score",
+        stage: a.stage,
+        score: a.score,
+        max,
+        was: a.correction?.reason,
+        back: () => scoreEventDialog(attemptId),
+        done,
+      });
   if (!live) return;
   $("#edit-score").onclick = () => editScoreDialog(p, a, done);
   $("#void-score").onclick = () =>
@@ -1995,18 +2038,23 @@ function detailHistoryDialog(detailId, stage, back) {
   box.querySelectorAll("[data-unvoid-detail]").forEach(
     (b) =>
       (b.onclick = () => {
-        try {
-          unvoidAttempt(
-            c,
-            c.attempts.find((x) => x.detailAttemptId === b.dataset.unvoidDetail)
-              .id,
+        const record = c.shared.find((x) => x.id === b.dataset.unvoidDetail),
+          first = c.attempts.find(
+            (x) => x.detailAttemptId === b.dataset.unvoidDetail,
           );
-          save();
-          render();
-          here();
-        } catch (err) {
-          toast(err.message);
-        }
+        restoreDialog(c, {
+          id: first.id,
+          title: d ? d.name : "this detail",
+          stage,
+          score: record.score,
+          max,
+          was: first.correction?.reason,
+          back: here,
+          done: () => {
+            render();
+            here();
+          },
+        });
       }),
   );
   box.querySelectorAll("[data-cancel]").forEach(
@@ -2049,16 +2097,17 @@ function detailEventDialog(detailAttemptId) {
   );
   const first = c.attempts.find((x) => x.detailAttemptId === d.id);
   if (restorable(c, first?.id))
-    $("#unvoid-detail-score").onclick = () => {
-      try {
-        unvoidAttempt(c, first.id);
-        save();
-        done();
-        toast(`${detail?.name ?? "Detail"} score restored.`);
-      } catch (err) {
-        toast(err.message);
-      }
-    };
+    $("#unvoid-detail-score").onclick = () =>
+      restoreDialog(c, {
+        id: first.id,
+        title: detail?.name ?? "this detail",
+        stage: d.stage,
+        score: d.score,
+        max,
+        was: reason,
+        back: () => detailEventDialog(detailAttemptId),
+        done,
+      });
   if (!live) return;
   $("#edit-detail-score").onclick = () => editDetailDialog(d.id, done);
   $("#void-detail-score").onclick = () =>

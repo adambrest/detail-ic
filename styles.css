@@ -24,7 +24,7 @@ details > summary::before,
 .expand::before {
   content: "▸";
   color: var(--muted);
-  font-size: 10px;
+  font-size: 13px;
   margin-right: 8px;
   display: inline-block;
 }

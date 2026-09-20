@@ -91,7 +91,7 @@ A name can be corrected at any time, with a reason, and the new name replaces th
 
 Every attempt is kept: the stage, the attempt number, the rifle, the hits or the detail total with its firer count, who else was in the detail, and the time it was confirmed. Scores confirmed together share one timestamp.
 
-Editing a score records a replacement and keeps the original, marked as edited. Voiding one keeps it with its reason, and a voided score can be put back: only one that a live edit has replaced cannot, since the replacement holds its place until it is voided in turn. Corrections to a detail score apply to everyone in that detail. Grades already recorded are never changed by later settings.
+Editing a score records a replacement and keeps the original, marked as edited. Voiding one keeps it with its reason, and the void itself is recorded where it happened, naming the score it took out. A voided score can be put back, with a reason of its own; only one that a live edit has replaced cannot, since the replacement holds its place until it is voided in turn. Corrections to a detail score apply to everyone in that detail. Grades already recorded are never changed by later settings.
 
 ## Poor shooters and strong shooters
 

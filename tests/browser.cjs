@@ -575,19 +575,74 @@ async function addNames(page, names) {
     );
     // A detail's score is corrected as one; no firer can be voided out of it.
     const detailCard = page.locator('.event:has-text("Detail 1 ·")').first();
-    await detailCard.locator("summary").click();
+    if ((await detailCard.getAttribute("open")) === null)
+      await detailCard.locator("summary").click();
     assert.equal(await detailCard.locator("[data-attempt]").count(), 0);
     await detailCard
       .getByRole("button", { name: /Edit or void this detail/ })
       .click();
     assert.ok((await page.locator("#dialog").innerText()).includes("Detail 1"));
-    await click(page, "Close");
+    // Voiding it writes its own entry; the score it took out keeps its own,
+    // struck through, and now offers to put it back.
+    await click(page, "Void");
+    await page.getByLabel("Reason").fill("Wrong target");
+    await click(page, "Void score");
+    await waitFor(page, () =>
+      [...document.querySelectorAll(".event-head strong")].some((h) =>
+        h.textContent.includes("voided"),
+      ),
+    );
+    const openAll = () =>
+      page.evaluate(() =>
+        document
+          .querySelectorAll("details.event")
+          .forEach((d) => (d.open = true)),
+      );
+    await openAll();
+    assert.ok(
+      (await page.locator(".history-feed").innerText()).includes("Wrong target"),
+    );
+    assert.equal(
+      await page
+        .getByRole("button", { name: /Restore this detail's score/ })
+        .count(),
+      1,
+    );
+    // The void's own entry opens the same record.
+    await page
+      .getByRole("button", { name: "Open this score", exact: true })
+      .first()
+      .click();
+    assert.deepEqual(
+      await page.locator("#dialog .actions button").allInnerTexts(),
+      ["Restore this score"],
+    );
+    await click(page, "Restore this score");
+    // Restoring is confirmed, recalls why it was voided, and wants a reason.
+    assert.ok((await page.locator("#dialog").innerText()).includes("Wrong target"));
+    await page.getByLabel("Reason for restoring").fill("Target was right");
+    await click(page, "Restore score");
+    await waitFor(page, () =>
+      [...document.querySelectorAll(".event-head strong")].some((h) =>
+        h.textContent.includes("restored"),
+      ),
+    );
+    assert.ok(
+      await page.evaluate(() =>
+        JSON.parse(localStorage.getItem("detail-ic-v2")).shoots[1].shared.every(
+          (d) => d.status === "valid",
+        ),
+      ),
+      "restoring puts the detail score back for everyone",
+    );
+    await openAll();
     // An individual score is corrected on its own, from its own row.
     const stageB = page
       .locator(".event")
       .filter({ hasText: /\d+ scores? confirmed/ })
       .first();
-    await stageB.locator("summary").click();
+    if ((await stageB.getAttribute("open")) === null)
+      await stageB.locator("summary").click();
     await stageB.locator("[data-attempt]").first().click();
     const one = await page.locator("#dialog").innerText();
     assert.ok(one.includes("Edit") && one.includes("Void"), one);
