@@ -33,7 +33,7 @@ const data = (p) => p.evaluate((k) => JSON.parse(localStorage.getItem(k)), key);
       for (const name of ["Bob Lim", "Alice Tan"])
         for (let i = 1; i <= 4; i++)
           await page
-            .getByLabel(`${name} Part ${i} hits`, { exact: true })
+            .getByLabel(`${name} Practice ${i} hits`, { exact: true })
             .fill(i === 4 ? "1" : "2");
       await page.locator("#search").fill("Bob");
       assert.equal(await page.locator("[data-individual] tbody tr").count(), 2);
@@ -85,13 +85,18 @@ const data = (p) => p.evaluate((k) => JSON.parse(localStorage.getItem(k)), key);
       await page.locator("[data-confirm-all]").click();
       await tab(page, "final");
       assert.equal(await page.locator("tbody tr").count(), 2);
-      assert.equal(await page.locator(".score-breakdown").count(), 3);
+      // Sub-stage figures sit beside each stage score as quiet grey text.
+      assert.equal(await page.locator(".sub-parts").count(), 3);
+      assert.match(
+        await page.locator(".sub-parts").first().innerText(),
+        /^\d+( · \d+)+$/,
+      );
       await tab(page, "history");
       await page.locator("#search").fill("Alice 7/8");
       assert.ok(await page.locator(".event.match").count());
       assert.ok(
         (await page.locator(".event.match").first().innerText()).includes(
-          "Part 4: 1/2",
+          "Practice 4: 1/2",
         ),
       );
       const count = await page.locator(".event").count();
@@ -133,9 +138,11 @@ const data = (p) => p.evaluate((k) => JSON.parse(localStorage.getItem(k)), key);
       await page.reload();
       await page.locator("[data-open-shoot]").click();
       await tab(page, "stage:A");
+      // Skip is per stage and lives in the firer's own menu.
       await page
-        .getByRole("button", { name: "Skip Alpha", exact: true })
+        .getByRole("button", { name: "Options for Alpha", exact: true })
         .click();
+      await page.locator("#person-skip").click();
       assert.ok(
         (await page.locator("[data-detail]").first().innerText()).includes(
           "Too few available",
@@ -163,7 +170,8 @@ const data = (p) => p.evaluate((k) => JSON.parse(localStorage.getItem(k)), key);
         .getByRole("button", { name: "Unskip Alpha", exact: true })
         .first()
         .click();
-      assert.equal((await data(page)).shoots[0].participants[0].skipped, false);
+      const after = await data(page);
+      assert.deepEqual(after.shoots[0].personSkips ?? {}, {});
 
       // A rifle issued more rounds than the stage credits: the real score is
       // entered and kept, the arithmetic uses the credited cap.
@@ -192,13 +200,8 @@ const data = (p) => p.evaluate((k) => JSON.parse(localStorage.getItem(k)), key);
       await page.locator("[data-open-shoot]").click();
       await tab(page, "stage:A");
       const lmg = page.getByLabel("Alpha hits", { exact: true });
-      assert.equal(await lmg.getAttribute("max"), "30");
-      assert.equal(
-        await page
-          .getByLabel("Bravo hits", { exact: true })
-          .getAttribute("max"),
-        "15",
-      );
+      assert.equal(await lmg.getAttribute("inputmode"), "numeric");
+      // Only the LMG's box carries the "what can be credited" note.
       assert.equal(await page.locator(".score-input .info").count(), 1);
       await lmg.fill("22");
       for (const n of ["Bravo", "Charlie", "Delta"])

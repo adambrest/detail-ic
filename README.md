@@ -4,27 +4,25 @@
 
 ## Scoring
 
-V2 requires individual sub-stage scores by default. Define each stage's parts in Settings: one name and maximum per part, with maximums adding up to the stage total.
+V2 requires individual sub-stage scores by default. Each stage is fired in sections; define them in Settings, one name and maximum per section, adding up to the rounds that stage fires.
 
-Layouts ship for the stages whose firing sequence is known:
+Layouts ship for the stages whose firing sequence is known, and are the same for every rifle in that shoot:
 
-| Shoot | Rifle | Stage A | Stage B | Stage C |
-|---|---|---|---|---|
-| BTP | SAR21 | 4 × 4 | 4 × 4 | — |
-| ATP (M) | SAR21 variants | 4 × 6 | 4 × 2 | 4 × 4 |
-| ATP (M) | LMG | *unset* | 4 × 2 | 4 × 12 |
-| ATP (SP) | SAR21 variants | 4 × 4 | 4 × 2 | 4 × 3 |
-| ATP (SP) | LMG | *unset* | 4 × 2 | 4 × 10 |
-| CS (M) | SAR21 variants | 20 | 4 × 2 | 20 |
-| CS (M) | LMG | 30, credited 20 | 4 × 2 | 30, credited 20 |
-| CS (SP) | SAR21 variants | 5 + 10 | 4 × 2 | 5 + 10 |
-| CS (SP) | LMG | 10 + 20, credited 15 | 4 × 2 | 10 + 20, credited 15 |
-| APS | SAR21 | Practices 2–5: 6 each | | |
-| APS (NS) | SAR21 | Practices 1–3: 10 each | | |
+| Shoot | Stage A | Stage B | Stage C |
+|---|---|---|---|
+| BTP | 4 × 4 | 4 × 4 | — |
+| ATP (M) | 4 × 6 | 4 × 2 | 4 × 4 |
+| ATP (SP) | 4 × 4 | 4 × 2 | 4 × 3 |
+| CS (M) | 20 | 4 × 2 | 20 |
+| CS (SP) | 5 + 10 | 4 × 2 | 5 + 10 |
+| APS | Practices 2–5: 6 each | | |
+| APS (NS) | Practices 1–3: 10 each | | |
 
-A stage fired in one go still gets a single part, which keeps per-firer entry required without pretending the stage is subdivided. Sub-sections are not always equal.
+**The LMG has no sub-stage layout in any shoot.** Its firing sequence has not been given, so its sub-stage boxes read *Sub-stages pending* and it is scored on the stage total.
 
-Parts add up to the **rounds fired**, not to what can be credited. A Combat Shoot LMG firer is issued 30 rounds for Stages A and C and breaks the stage down over all 30. Enter the hits actually scored: the box accepts the full allocation and an **i** note beside it says how many can be credited. The stage maximum (20 in CS (M), 15 in CS (SP)) is what enters the detail's total, while the real figure is kept and shown in History and exports.
+A stage fired in one go still gets a single section, which keeps per-firer entry required without pretending the stage is subdivided. Sections are not always equal. The column header names them, so the boxes sit on one line with the stage total at the end; out-of-range entries are flagged as they are typed.
+
+A Combat Shoot LMG is issued 30 rounds for Stages A and C though only 20 (CS (M)) or 15 (CS (SP)) can be credited. Enter the hits actually scored: the box takes the full allocation and an **i** note beside it says how many count. The credited figure is what enters the detail's total, while the real one is kept and shown in History and exports.
 
 Any stage not listed above starts unset and is marked *Set sub-stages* in red in Settings. It cannot be scored while the requirement is on — set it, or turn the requirement off for total-only entry. No layout is ever guessed from a stage total.
 
@@ -38,15 +36,17 @@ Search brings matches to the top and highlights them without hiding anyone. Conf
 
 Automatic order gives pass risk priority, then firers furthest below their target, allowing time to practice. Stage B starts at 7/8; all stage targets adjust as other scores arrive. Once every other stage is scored, advice uses the exact remaining requirement.
 
-Skip makes a firer unavailable across the shoot while preserving earned scores. A short CS detail offers Unskip and Build replacement detail. The proposed replacement respects size, rifle limits and existing bookings, preferring suitable firers who still need the stage. Review the selection before creating it.
+Skip marks a firer as not firing **one stage**, leaving their other stages and earned scores untouched. It sits in the firer's ⋯ menu, shows as a small badge on their row, and is refused while hits are typed for that stage. A short CS detail offers Unskip and Build replacement detail. The proposed replacement respects size, rifle limits and existing bookings, preferring suitable firers who still need the stage. Review the selection before creating it.
 
 You can retry the same detail or use Manual detail. Suggestions based on past scores are optional, not predictions. Summary and additional advice are collapsed so routine scoring stays prominent.
 
 ## History and results
 
-History can be searched by name, detail, score (for example 7/8), or a combination. Matching records open automatically; other records remain available. It retains corrections, voids, restores, skips and stage changes. A detail score is corrected as a whole.
+History can be searched by name, detail, score (for example 7/8), or a combination. Every record is a closed card that opens on a click, with nothing actionable until it does. It keeps what would matter in a recount — scores, corrections, voids, restores and redetails — and leaves working adjustments such as skips, priority changes and stage unlocks out. A detail score is corrected as a whole.
 
-Final scores show each firer once, with the breakdown of the actual attempt contributing each best stage. Shoots are ordered by latest update; searching a name finds matching shoots and opens their history.
+Dates read day-first with the month in letters and times are 24-hour (20 Sep · 1430). The year appears only on the Shoots list and where a shoot was created.
+
+Final scores show each firer once. A stage column shows the score alone, with its sub-stage figures in small grey text; only the total carries a denominator. Shoots are ordered by latest update; searching a name finds matching shoots and opens their history.
 
 ## Offline use and backups
 

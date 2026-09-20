@@ -45,7 +45,9 @@ const { startServer } = require("./server.cjs");
   assert.ok((await page.locator("#main").innerText()).includes("New shoot"));
   assert.deepEqual(errors, []);
   await browser.close();
-  console.log("Update: background install, Update button, reload and offline use passed");
+  console.log(
+    "Update: background install, Update button, reload and offline use passed",
+  );
 })().catch((e) => {
   console.error(e);
   process.exit(1);

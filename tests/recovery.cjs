@@ -33,7 +33,7 @@ const tab = (page, name) =>
     .locator("#tabs")
     .getByRole("button", { name: "Stage A · Day", exact: true })
     .click();
-  const hits = page.getByRole("spinbutton", {
+  const hits = page.getByRole("textbox", {
     name: "Backup Firer hits",
     exact: true,
   });

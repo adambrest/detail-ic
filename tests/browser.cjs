@@ -21,7 +21,7 @@ async function inViewport(page, locator) {
   return box && box.y >= 0 && box.y + box.height <= size.height;
 }
 async function enterHits(page, person, hits) {
-  const input = page.getByRole("spinbutton", {
+  const input = page.getByRole("textbox", {
     name: `${person} hits`,
     exact: true,
   });
@@ -222,14 +222,22 @@ async function addNames(page, names) {
       () => document.querySelectorAll("tr.awaiting").length === 2,
     );
 
-    // Skip greys out only while that entry has hits typed in it.
-    const skipAlex = page.getByRole("button", { name: "Skip Alex Tan" });
+    // Skip lives in the person menu and is per stage. It greys out only while
+    // that firer has hits typed in.
+    const openAlex = () =>
+      page.getByRole("button", { name: "Options for Alex Tan" }).click();
+    const skipAlex = page.locator("#person-skip");
     await enterHits(page, "Alex Tan", "9");
+    await openAlex();
+    assert.match(await skipAlex.innerText(), /^Skip /);
     assert.ok(await skipAlex.isDisabled());
+    await page.getByRole("button", { name: "Close", exact: true }).click();
     await page
-      .getByRole("spinbutton", { name: "Alex Tan hits", exact: true })
+      .getByRole("textbox", { name: "Alex Tan hits", exact: true })
       .fill("");
+    await openAlex();
     assert.ok(await skipAlex.isEnabled());
+    await page.getByRole("button", { name: "Close", exact: true }).click();
 
     // Results show every attempt, and Undo puts a score back.
     await enterHits(page, "Alex Tan", "13");
@@ -466,9 +474,7 @@ async function addNames(page, names) {
     assert.ok((await page.locator("#main").innerText()).includes("Detail 1"));
 
     // Stage A is scored by detail, and confirmed details drop out of the way.
-    await page
-      .getByRole("spinbutton", { name: "Detail 1 total hits" })
-      .fill("43");
+    await page.getByRole("textbox", { name: "Detail 1 total hits" }).fill("43");
     await click(page, "Confirm scores for Detail 1");
     // A total with no hits is allowed, after saying what it costs.
     assert.ok(
@@ -514,7 +520,7 @@ async function addNames(page, names) {
     assert.equal(await page.locator(".detail-head .warn").count(), 2);
     await click(page, "Hide scored details");
     await page
-      .getByRole("spinbutton", { name: "Temp detail 1 total hits" })
+      .getByRole("textbox", { name: "Temp detail 1 total hits" })
       .fill("60");
     await click(page, "Confirm scores for Temp detail 1");
     await click(page, "Confirm total only");
@@ -559,7 +565,7 @@ async function addNames(page, names) {
       .selectOption("SAR21/SAR21 SS/M203");
     await click(page, "Close");
     // Tab skips the rifle and Skip, straight to the next score box.
-    await page.getByRole("spinbutton", { name: "Dana Koh hits" }).fill("6");
+    await page.getByRole("textbox", { name: "Dana Koh hits" }).fill("6");
     await page.keyboard.press("Tab");
     assert.equal(
       await page.evaluate(() =>
@@ -786,8 +792,13 @@ async function addNames(page, names) {
       (await page.locator(sel).first().boundingBox()).y;
     assert.ok((await top(".score-panel")) < (await top(".queue")));
     await tab(page, "Final scores");
-    assert.ok(
-      (await page.locator("tbody tr").first().innerText()).includes("12/20"),
+    // Stage columns show the score alone; only the total carries a denominator.
+    const finalRow = await page.locator("tbody tr").first().innerText();
+    assert.ok(finalRow.includes("12"), finalRow);
+    assert.ok(!finalRow.includes("12/20"), finalRow);
+    assert.match(
+      await page.locator("tbody tr td.num b").first().innerText(),
+      /\/\d+$/,
     );
     assert.equal(await page.locator("#status").count(), 0);
     assert.deepEqual(errors, []);

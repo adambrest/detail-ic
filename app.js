@@ -2,6 +2,7 @@ import {
   PROGRAMS,
   TYPES,
   DETAIL_RULES,
+  NON_SAR,
   isCS,
   typeLabel,
   weaponsFor,
@@ -17,6 +18,8 @@ import {
   availableMembers,
   replacementPlan,
   setPersonSkipped,
+  personSkipped,
+  skippedStages,
   importBackup,
   now,
   newStore,
@@ -156,12 +159,23 @@ const s = () => getShoot(store);
 const format = (v) => (v === null || v === undefined ? "—" : String(v));
 const ratio = (v, max) => `${format(v)}/${max}`;
 const weapons = (c) => weaponsFor(c.program, c.variant);
-const dateLabel = (iso) =>
-  new Date(iso).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+// Service dates read day-first with the month in letters — 20 Sep, 04 Mar — and
+// times are 24-hour. The year is added only where a record is being filed or
+// looked up later, not on today's scoring screens.
+const MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
+const pad = (n) => String(n).padStart(2, "0");
+const dayLabel = (iso, year = false) => {
+  const d = new Date(iso);
+  return `${pad(d.getDate())} ${MONTHS[d.getMonth()]}${year ? ` ${d.getFullYear()}` : ""}`;
+};
+const clockLabel = (iso) => {
+  const d = new Date(iso);
+  return `${pad(d.getHours())}${pad(d.getMinutes())}`;
+};
+const dateLabel = (iso) => dayLabel(iso, true);
+// Separated, so a 24-hour time is never mistaken for a year.
+const stampLabel = (iso, year = false) =>
+  `${dayLabel(iso, year)} · ${clockLabel(iso)}`;
 const stageLabel = (c, stage) => stages(c).find((x) => x.id === stage).label;
 const reduceMotion = () =>
   matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -307,7 +321,7 @@ function borrowedNote(c, d, stage) {
   return `<button class="info warn" type="button" aria-label="${esc(text)}">⚠<span class="tooltip">${esc(text)}</span></button>`;
 }
 function searchBox() {
-  return `<input type="search" id="search" placeholder="Find a name, detail or score" aria-label="Find a name, detail or score" value="${esc(search)}">`;
+  return `<input type="search" id="search" placeholder="Search" aria-label="Find a name, detail or score" value="${esc(search)}">`;
 }
 function render() {
   const current = s(),
@@ -552,15 +566,6 @@ function renderStage(stage) {
   $("#main").innerHTML =
     shootHead(`<span class="spacer"></span>${searchBox()}`) +
     issuesPanel(c) +
-    (c.participants.some((p) => p.skipped)
-      ? `<details class="panel skipped-list"><summary>${c.participants.filter((p) => p.skipped).length} skipped</summary>${c.participants
-          .filter((p) => p.skipped)
-          .map(
-            (p) =>
-              `<button data-person-skip="${p.id}">Unskip ${esc(p.name)}</button>`,
-          )
-          .join(" ")}</details>`
-      : "") +
     (c.activeStage && c.activeStage !== stage
       ? `<div class="panel confirmed"><span>${esc(stageLabel(c, stage))} is locked. ${esc(stageLabel(c, c.activeStage))} is active.</span><button data-unlock-stage="${stage}">Unlock ${esc(stageLabel(c, stage))}</button></div>`
       : "") +
@@ -582,10 +587,7 @@ function issuesPanel(c, link = true) {
 }
 // Short local time, e.g. 9:42 AM, for when a score was confirmed.
 function timeLabel(iso) {
-  return new Date(iso).toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  return clockLabel(iso);
 }
 function entryValue(c, stage, p) {
   return c.entries?.[`${stage}:${p.id}`] ?? "";
@@ -635,7 +637,46 @@ function scoreEditor(c, p, stage, detailId = null, disabled = false) {
       : (c.entryParts?.[`${stage}:${p.id}`] ?? []),
     required = c.settings.requireBreakdown,
     attr = detailId ? `data-cs-hits="${p.id}"` : `data-hits="${p.id}"`;
-  return `${required ? (parts.length ? `<div class="subscores">${parts.map((part, i) => `<label><span>${esc(part.label)} /${part.max}</span><input type="number" min="0" max="${part.max}" step="1" inputmode="numeric" data-part-person="${p.id}" data-part-index="${i}" ${detailId ? `data-part-detail="${detailId}"` : ""} value="${esc(values[i] ?? "")}" aria-label="${esc(p.name)} ${esc(part.label)} hits" ${disabled ? "disabled" : ""}></label>`).join("")}</div>` : `<button data-configure-parts="${esc(weapon)}" data-configure-stage="${stage}">Set sub-stages</button>`) : ""}<div class="score-input"><input type="number" min="0" max="${fired}" step="1" inputmode="numeric" ${attr} value="${esc(value)}" aria-label="${esc(p.name)} hits" placeholder="—" ${required ? "readonly" : ""} ${disabled || (required && !parts.length) ? "disabled" : ""}><span class="muted">/${fired}</span>${fired !== max ? info(creditNote(weapon, fired, max, stageLabel(c, stage))) : ""}</div>`;
+  // No layout and none to set yet: this rifle's sequence has not been given,
+  // so the sub-stage boxes stay closed and the stage is scored on its total.
+  const pending = required && !parts.length && NON_SAR.has(weapon);
+  const cell = (v, i, part) =>
+    `<input type="text" inputmode="numeric" pattern="[0-9]*" data-part-person="${p.id}" data-part-index="${i}" ${detailId ? `data-part-detail="${detailId}"` : ""} value="${esc(v ?? "")}" aria-label="${esc(p.name)} ${esc(part.label)} hits" title="${esc(part.label)} /${part.max}" ${invalidPart(v, part) ? 'aria-invalid="true"' : ""} ${disabled ? "disabled" : ""}>`;
+  return `<div class="hits-row">${
+    required
+      ? parts.length
+        ? `<span class="subscores">${parts.map((part, i) => cell(values[i], i, part)).join("")}</span>`
+        : pending
+          ? `<span class="muted pending-parts" title="No sub-stage sequence has been given for the ${esc(weapon)} yet.">Sub-stages pending</span>`
+          : `<button data-configure-parts="${esc(weapon)}" data-configure-stage="${stage}">Set sub-stages</button>`
+      : ""
+  }<span class="score-input"><input type="text" inputmode="numeric" pattern="[0-9]*" ${attr} value="${esc(value)}" aria-label="${esc(p.name)} hits" placeholder="—" ${required && parts.length ? "readonly" : ""} ${disabled || (required && !parts.length && !pending) ? "disabled" : ""}><span class="muted">/${fired}</span>${fired !== max ? info(creditNote(weapon, fired, max, stageLabel(c, stage))) : ""}</span></div>`;
+}
+// The column header names the sub-stage boxes, so each row can stay bare: one
+// line of small boxes and the stage total at the end.
+function hitsHeader(c, stage) {
+  if (!c.settings.requireBreakdown) return "Hits";
+  const layouts = [
+    ...new Set(
+      weapons(c)
+        .map((w) => breakdownFor(c, w, stage))
+        .filter((parts) => parts.length)
+        .map((parts) => parts.map((x) => x.max).join("+")),
+    ),
+  ];
+  if (layouts.length !== 1) return "Hits";
+  const parts = layouts[0].split("+"),
+    even = new Set(parts).size === 1,
+    shape = even
+      ? `${parts.length > 1 ? `${parts.length} × ` : ""}${parts[0]} rds`
+      : `${parts.join(" + ")} rds`;
+  return `Hits <span class="muted">${esc(shape)}</span>`;
+}
+// A box is wrong when it is not a whole number in range. Flagged as it is
+// typed, rather than only when the whole detail is confirmed.
+function invalidPart(v, part) {
+  if (v === "" || v === null || v === undefined) return false;
+  return !/^\d+$/.test(String(v)) || Number(v) > part.max;
 }
 function layoutDialog(program, variant, weapon, stage) {
   const pr = preset(store, program, variant),
@@ -719,11 +760,11 @@ function individualPanel(c, stage) {
     const max = p.profile.components.find((x) => x.id === stage).max,
       e = entry.get(p.id),
       typed = entryValue(c, stage, p) !== "";
-    return `<tr data-row="${p.id}" class="${[waiting.has(p.id) && "awaiting", e.skipped && "skipped", search && filtered(p) && "match"].filter(Boolean).join(" ")}"><td class="seat">${e.n + 1}</td><td class="name">${esc(p.name)}${abilityMark(c, p, stage, weak, strong)}${multi && !cs && p.weapon !== c.settings.weapon ? `<div class="sub">${esc(p.weapon)}</div>` : ""}<div class="attempt ${waiting.has(p.id) ? "on" : ""}">${e.skipped ? "Skipped · " : ""}Attempt ${e.attempt}${waiting.has(p.id) ? " · redetailed" : ""}</div></td>${cs ? `<td class="rifle">${esc(stageRifle(c, p, stage))}</td>` : ""}<td>${scoreEditor(c, p, stage, null, e.skipped)}</td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell">${skipButton(`person:${p.id}`, p.name, e.skipped, typed)}<button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+    return `<tr data-row="${p.id}" class="${[waiting.has(p.id) && "awaiting", e.skipped && "skipped", search && filtered(p) && "match"].filter(Boolean).join(" ")}"><td class="seat">${e.n + 1}</td><td class="name">${esc(p.name)}${personSkipped(c, p, stage) ? badge("Skipped") : ""}${abilityMark(c, p, stage, weak, strong)}${multi && !cs && p.weapon !== c.settings.weapon ? `<div class="sub">${esc(p.weapon)}</div>` : ""}<div class="attempt ${waiting.has(p.id) ? "on" : ""}">${e.skipped ? "Skipped · " : ""}Attempt ${e.attempt}${waiting.has(p.id) ? " · redetailed" : ""}</div></td>${cs ? `<td class="rifle">${esc(stageRifle(c, p, stage))}</td>` : ""}<td>${scoreEditor(c, p, stage, null, e.skipped)}</td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
   };
   const scoredRow = (p) => {
     const last = scoreHistory(c, p, stage).at(-1);
-    return `<tr data-row="${p.id}" class="${search && filtered(p) ? "match" : ""}"><td class="name">${esc(p.name)}</td><td class="num results">${resultsCell(c, p, stage)}</td><td class="muted when">${last ? esc(timeLabel(last.recordedAt)) : ""}</td><td class="more-cell"><button data-person-skip="${p.id}" aria-label="${p.skipped ? "Unskip" : "Skip"} ${esc(p.name)}">${p.skipped ? "Unskip" : "Skip"}</button><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+    return `<tr data-row="${p.id}" class="${search && filtered(p) ? "match" : ""}"><td class="name">${esc(p.name)}</td><td class="num results">${resultsCell(c, p, stage)}</td><td class="muted when">${last ? esc(timeLabel(last.recordedAt)) : ""}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
   };
   const past = done.length
     ? `<details class="panel past-scores"${search ? " open" : ""}><summary>Past scores · ${done.length} ${done.length === 1 ? "firer" : "firers"}</summary><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Results</th><th>Confirmed</th><th></th></tr></thead><tbody>${matchFirst(done).map(scoredRow).join("")}</tbody></table></div></details>`
@@ -733,7 +774,7 @@ function individualPanel(c, stage) {
     (pastFirst ? past : "") +
     `<section class="panel score-panel" data-individual><div class="detail-head"><h3>${esc(stageLabel(c, stage))}</h3><span class="count">${toShoot.length} in the queue</span>${toShoot.length ? `<div class="actions"><span class="draft-summary">${entered} of ${toShoot.length} entered.</span><button class="primary" data-confirm-all="${stage}">Confirm scores</button></div>` : ""}</div>${cs ? '<p class="note stage-note">Fired individually. Details do not apply to this stage; a firer may use a different rifle for it.</p>' : ""}${
       toShoot.length
-        ? `<div class="table-wrap"><table><thead><tr><th>#</th><th>Full name</th>${cs ? "<th>Rifle</th>" : ""}<th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${toShoot.map(row).join("")}</tbody></table></div>`
+        ? `<div class="table-wrap"><table><thead><tr><th>#</th><th>Full name</th>${cs ? "<th>Rifle</th>" : ""}<th>${hitsHeader(c, stage)}</th><th>Results</th><th></th></tr></thead><tbody>${toShoot.map(row).join("")}</tbody></table></div>`
         : `<div class="panel-body note">Everyone has a ${esc(stageLabel(c, stage))} score. Redetail firers to enter more.</div>`
     }<div class="errors draft-errors" role="alert"></div></section>` +
     (pastFirst ? "" : past)
@@ -786,10 +827,10 @@ function scoredPanel(c, d, stage, weak, strong) {
   const people = members(c, d.id),
     numbers = detailAttemptNumbers(c, d.id, stage),
     hitsOf = (p) => last.roster.find((m) => m.id === p.id)?.rawHits;
-  return `<section class="panel score-panel scored" data-detail="${d.id}"><div class="detail-head">${d.temporary ? '<span class="badge">Temporary</span>' : ""}<h3>${esc(d.name)}</h3>${badge(`Attempt ${numbers.get(last.id) ?? list.length}`)}<span class="count">Scored ${ratio(last.score, cmax)} · ${esc(timeLabel(last.recordedAt))}</span>${borrowedNote(c, d, stage)}<div class="actions"><button class="more" data-detail-history="${d.id}" aria-label="Scores for ${esc(d.name)}">⋯</button></div></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th><th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${people
+  return `<section class="panel score-panel scored" data-detail="${d.id}"><div class="detail-head">${d.temporary ? '<span class="badge">Temporary</span>' : ""}<h3>${esc(d.name)}</h3>${badge(`Attempt ${numbers.get(last.id) ?? list.length}`)}<span class="count">Scored ${ratio(last.score, cmax)} · ${esc(timeLabel(last.recordedAt))}</span>${borrowedNote(c, d, stage)}<div class="actions"><button class="more" data-detail-history="${d.id}" aria-label="Scores for ${esc(d.name)}">⋯</button></div></div><div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th><th>${hitsHeader(c, stage)}</th><th>Results</th><th></th></tr></thead><tbody>${people
     .map(
       (p) =>
-        `<tr data-row="${p.id}" class="${search && filtered(p) ? "match" : ""}"><td class="name">${esc(p.name)}${abilityMark(c, p, stage, weak, strong)}</td><td class="rifle">${esc(rosterWeapon(c, d.id, p))}</td><td class="num">${hitsOf(p) ?? '<span class="muted">—</span>'}</td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button data-person-skip="${p.id}" aria-label="${p.skipped ? "Unskip" : "Skip"} ${esc(p.name)}">${p.skipped ? "Unskip" : "Skip"}</button><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`,
+        `<tr data-row="${p.id}" class="${search && filtered(p) ? "match" : ""}"><td class="name">${esc(p.name)}${personSkipped(c, p, stage) ? badge("Skipped") : ""}${abilityMark(c, p, stage, weak, strong)}</td><td class="rifle">${esc(rosterWeapon(c, d.id, p))}</td><td class="num">${hitsOf(p) ?? '<span class="muted">—</span>'}</td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`,
     )
     .join(
       "",
@@ -839,23 +880,23 @@ function detailPanels(c, stage) {
           draft = getDraft(c, d.id, stage),
           attempt = nextAttempt(c, people, stage),
           e = entry.get(d.id),
-          available = availableMembers(c, d.id),
-          absent = people.filter((p) => p.skipped),
+          available = availableMembers(c, d.id, stage),
+          absent = people.filter((p) => personSkipped(c, p, stage)),
           short = available.length < DETAIL_RULES[c.program].min;
         // Waiting to fire, or part-typed: a form. Otherwise it is a record.
         if (!e && !hasInput(draft))
           return scoredPanel(c, d, stage, weak, strong);
-        return `<section class="panel score-panel ${[d.temporary && "temporary", e?.skipped && "skipped"].filter(Boolean).join(" ")}" data-detail="${d.id}"><div class="detail-head">${e ? `<span class="seat">${e.n + 1}</span>` : ""}<h3>${esc(d.name)}</h3>${badge(`Attempt ${attempt}`)}${borrowedNote(c, d, stage)}<span class="count">${available.length} available${absent.length ? ` · ${absent.length} skipped` : ""}</span><div class="actions">${e && order.length > 1 ? skipButton(`detail:${d.id}`, d.name, e.skipped, hasInput(draft)) : ""}${e?.dispatch ? `<button data-undetail="${e.dispatch.id}" title="Cancel this redetail and put the detail back in the Redetailing list" aria-label="Cancel redetail ${esc(d.name)}">Cancel redetail</button>` : ""}<button data-detail-history="${d.id}" aria-label="History for ${esc(d.name)}">History</button><button class="icon-button" data-reset="${d.id}" title="Clear entries" aria-label="Clear entries for ${esc(d.name)}">↺</button><button class="primary" data-confirm="${d.id}" aria-label="Confirm scores for ${esc(d.name)}" ${e?.skipped || short ? "disabled" : ""}>Confirm scores</button></div></div>${absent.length ? `<div class="issues" role="status">${short ? `Too few available firers: ${available.length}/${DETAIL_RULES[c.program].min}.` : `${absent.length} skipped; this attempt will include ${available.length} firers.`} ${absent.map((p) => `<button data-person-skip="${p.id}">Unskip ${esc(p.name)}</button>`).join(" ")} ${short ? `<button data-replace-detail="${d.id}">Build replacement detail</button>` : ""}</div>` : ""}<div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th><th>Hits</th><th>Results</th><th></th></tr></thead><tbody>${matchFirst(
+        return `<section class="panel score-panel ${[d.temporary && "temporary", e?.skipped && "skipped"].filter(Boolean).join(" ")}" data-detail="${d.id}"><div class="detail-head">${e ? `<span class="seat">${e.n + 1}</span>` : ""}<h3>${esc(d.name)}</h3>${badge(`Attempt ${attempt}`)}${borrowedNote(c, d, stage)}<span class="count">${available.length} available</span><div class="actions">${e && order.length > 1 ? skipButton(`detail:${d.id}`, d.name, e.skipped, hasInput(draft)) : ""}${e?.dispatch ? `<button data-undetail="${e.dispatch.id}" title="Cancel this redetail and put the detail back in the Redetailing list" aria-label="Cancel redetail ${esc(d.name)}">Cancel redetail</button>` : ""}<button data-detail-history="${d.id}" aria-label="History for ${esc(d.name)}">History</button><button class="icon-button" data-reset="${d.id}" title="Clear entries" aria-label="Clear entries for ${esc(d.name)}">↺</button><button class="primary" data-confirm="${d.id}" aria-label="Confirm scores for ${esc(d.name)}" ${e?.skipped || short ? "disabled" : ""}>Confirm scores</button></div></div>${absent.length ? `<div class="issues" role="status">${short ? `Too few available firers: ${available.length}/${DETAIL_RULES[c.program].min}.` : `${absent.length} skipped; this attempt will include ${available.length} firers.`} ${absent.map((p) => `<button data-person-skip="${p.id}">Unskip ${esc(p.name)}</button>`).join(" ")} ${short ? `<button data-replace-detail="${d.id}">Build replacement detail</button>` : ""}</div>` : ""}<div class="table-wrap"><table><thead><tr><th>Full name</th><th>Rifle</th><th>${hitsHeader(c, stage)}</th><th>Results</th><th></th></tr></thead><tbody>${matchFirst(
           people,
         )
           .map((p) => {
             const row = draft.rows.find((r) => r.participantId === p.id),
               mine = nextAttempt(c, p, stage);
-            return `<tr data-row="${p.id}" class="${[p.skipped && "skipped", waiting.has(p.id) && "awaiting", search && filtered(p) && "match"].filter(Boolean).join(" ")}"><td class="name">${esc(p.name)}${abilityMark(c, p, stage, weak, strong)}${mine !== attempt || waiting.has(p.id) ? `<div class="attempt ${waiting.has(p.id) ? "on" : ""}">Attempt ${mine}${waiting.has(p.id) ? " · redetailed" : ""}</div>` : ""}</td><td class="rifle">${esc(rosterWeapon(c, d.id, p))}</td><td>${scoreEditor(c, p, stage, d.id, e?.skipped || p.skipped)}</td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button data-person-skip="${p.id}" aria-label="${p.skipped ? "Unskip" : "Skip"} ${esc(p.name)}">${p.skipped ? "Unskip" : "Skip"}</button><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+            return `<tr data-row="${p.id}" class="${[personSkipped(c, p, stage) && "skipped", waiting.has(p.id) && "awaiting", search && filtered(p) && "match"].filter(Boolean).join(" ")}"><td class="name">${esc(p.name)}${personSkipped(c, p, stage) ? badge("Skipped") : ""}${abilityMark(c, p, stage, weak, strong)}${mine !== attempt || waiting.has(p.id) ? `<div class="attempt ${waiting.has(p.id) ? "on" : ""}">Attempt ${mine}${waiting.has(p.id) ? " · redetailed" : ""}</div>` : ""}</td><td class="rifle">${esc(rosterWeapon(c, d.id, p))}</td><td>${scoreEditor(c, p, stage, d.id, e?.skipped || personSkipped(c, p, stage))}</td><td class="num results">${resultsCell(c, p, stage)}</td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
           })
           .join(
             "",
-          )}</tbody></table></div>${shared && !c.settings.requireBreakdown ? `<div class="aggregate"><label>Detail total <input type="number" min="0" max="${available.length * cmax}" step="1" data-aggregate="${d.id}" value="${esc(draft.aggregate)}" aria-label="${esc(d.name)} total hits" placeholder="—" ${e?.skipped ? "disabled" : ""}></label><span class="muted">/${available.length * cmax} · fills in from the hits</span></div>` : ""}<div class="errors draft-errors">${esc(draftErrors(c, draft).join("\n"))}</div><div class="score-footer"><span class="draft-summary">${esc(e?.skipped ? "Skipped: it has not fired. Unskip to enter scores." : draftSummary(c, draft))}</span></div></section>`;
+          )}</tbody></table></div>${shared && !c.settings.requireBreakdown ? `<div class="aggregate"><label>Detail total <input type="text" inputmode="numeric" pattern="[0-9]*" data-aggregate="${d.id}" value="${esc(draft.aggregate)}" aria-label="${esc(d.name)} total hits" placeholder="—" ${e?.skipped ? "disabled" : ""}></label><span class="muted">/${available.length * cmax} · fills in from the hits</span></div>` : ""}<div class="errors draft-errors">${esc(draftErrors(c, draft).join("\n"))}</div><div class="score-footer"><span class="draft-summary">${esc(e?.skipped ? "Skipped: it has not fired. Unskip to enter scores." : draftSummary(c, draft))}</span></div></section>`;
       })
       .join("") +
     (!shown.length
@@ -892,7 +933,7 @@ function queuePanel(c, stage, q) {
     ["smart", "Automatic"],
     ["lowest", "Lowest score first"],
     ["highest", "Highest score first"],
-    ["first", "Confirmation order"],
+    ["first", "Chronological order"],
   ]
     .map(
       ([key, label]) =>
@@ -1280,7 +1321,18 @@ function renderFinal() {
     )
       .map((p) => {
         const r = result(c, p);
-        return `<tr class="${search && filtered(p) ? "match" : ""}"><td class="name">${esc(p.name)}${p.skipped ? badge("Skipped") : ""}</td><td>${badge(r.status)}</td>${p.profile.components.map((x, i) => `<td class="num">${ratio(r.scores[i], x.max)}${c.attempts.find((a) => a.id === r.bestAttemptIds[i])?.breakdown?.length ? `<details class="score-breakdown"><summary>Parts</summary>${esc(breakdownText(c.attempts.find((a) => a.id === r.bestAttemptIds[i]).breakdown))}</details>` : ""}</td>`).join("")}<td class="num"><b>${ratio(r.total, p.profile.total)}</b></td><td class="more-cell"><button data-person-skip="${p.id}" aria-label="${p.skipped ? "Unskip" : "Skip"} ${esc(p.name)}">${p.skipped ? "Unskip" : "Skip"}</button><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
+        return `<tr class="${search && filtered(p) ? "match" : ""}"><td class="name">${esc(p.name)}${skippedStages(c, p).length ? badge("Skipped") : ""}</td><td>${badge(r.status)}</td>${p.profile.components
+          .map((x, i) => {
+            // Only the total carries a denominator. A stage shows what was
+            // scored, with its sub-stages as quiet figures beside it.
+            const parts = c.attempts.find(
+              (a) => a.id === r.bestAttemptIds[i],
+            )?.breakdown;
+            return `<td class="num">${format(r.scores[i])}${parts?.length ? `<span class="sub-parts">${esc(parts.map((q) => q.hits).join(" · "))}</span>` : ""}</td>`;
+          })
+          .join(
+            "",
+          )}<td class="num"><b>${ratio(r.total, p.profile.total)}</b></td><td class="more-cell"><button class="more" data-person="${p.id}" aria-label="Options for ${esc(p.name)}">⋯</button></td></tr>`;
       })
       .join("")}</tbody></table></div>`;
   $("#main").innerHTML =
@@ -1336,15 +1388,14 @@ function renderHistory() {
       const [label, tone] = KINDS[e.kind] ?? ["", ""];
       return `<span class="event-tags">${e.stage ? `<span class="badge">${esc(stageName(e.stage))}</span>` : ""}${label ? `<span class="badge ${tone}">${label}</span>` : ""}${e.voided ? '<span class="badge red">Voided</span>' : ""}</span>`;
     };
-  const when = (e) => (e.at ? `${dateLabel(e.at)} · ${timeLabel(e.at)}` : ""),
+  const when = (e) => (e.at ? stampLabel(e.at) : ""),
     who = (e) => (e.people ?? []).map((x) => x.name).join(", "),
     mark = (x) => search && x.toLowerCase().includes(search.toLowerCase());
   // A card is a summary you can open. Whether it is open survives a redraw, so
   // typing in the search box does not keep shutting it.
   const card = (e, head, body = "", menu = "") =>
     `<details class="panel event ${search && hit(e) ? "match" : ""} ${e.voided ? "void" : ""}" data-event="${esc(e.id)}" ${openEvents.has(e.id) || (search && hit(e)) ? "open" : ""}><summary><div class="event-head"><div>${tags(e)}${head}</div><span class="when">${esc(when(e))}</span></div></summary>${body}</details>${menu}`;
-  const flat = (e, head, menu = "") =>
-    `<section class="panel event flat ${search && hit(e) ? "match" : ""} ${e.voided ? "void" : ""}"><div class="event-head"><div>${tags(e)}${head}</div><span class="when">${esc(when(e))}</span>${menu}</div></section>`;
+  const flat = (e, head, body = "") => card(e, head, body);
   const title = (main, note) =>
     `<strong>${main}</strong>${note ? `<p class="note">${note}</p>` : ""}`;
   const voidNote = (e) =>
@@ -1370,7 +1421,7 @@ function renderHistory() {
           `${esc(e.title)}${e.score != null && max ? ` · ${e.score}/${max}` : ""} ${e.kind === "void" ? "voided" : "restored"}`,
           e.reason ? esc(e.reason) : "",
         ),
-        openScore(e),
+        `<div class="event-foot">${openScore(e)}</div>`,
       );
     if (e.kind === "detail-score") {
       // A detail's score belongs to the whole detail, so it is corrected as
@@ -1413,20 +1464,23 @@ function renderHistory() {
         `<div class="event-body"><p class="note">${esc(who(e))}</p></div>`,
       );
     if (e.kind === "redetail")
-      return flat(
+      return card(
         e,
         title(
           `${esc(e.title)} redetailed`,
-          `${esc(who(e))} · ${e.status === "canceled" ? "de-detailed" : e.status === "scored" ? "scored since" : "waiting to fire"}`,
+          e.status === "canceled"
+            ? "canceled"
+            : e.status === "scored"
+              ? "scored since"
+              : "waiting to fire",
         ),
+        `<div class="event-body"><p class="note">${esc(who(e))}</p></div>`,
       );
     if (e.kind === "operation")
-      return flat(
+      return card(
         e,
-        title(
-          esc(e.title),
-          esc([who(e), ...(e.lines ?? [])].filter(Boolean).join(" · ")),
-        ),
+        title(esc(e.title), ""),
+        `<div class="event-body"><p class="note">${esc([who(e), ...(e.lines ?? [])].filter(Boolean).join(" · "))}</p></div>`,
       );
     if (e.kind === "roster")
       return card(
@@ -1434,7 +1488,12 @@ function renderHistory() {
         title("Nominal roll", esc(e.summary)),
         `<div class="event-body">${e.lines.map((l) => `<p class="note ${mark(l) ? "match" : ""}">${esc(l)}</p>`).join("")}</div>`,
       );
-    return flat(e, title(esc(e.title), ""));
+    // Setup notes: the one place a full date with the year belongs.
+    return card(
+      e,
+      title(esc(e.title), ""),
+      `<div class="event-body"><p class="note">${esc(stampLabel(e.at, true))}</p></div>`,
+    );
   };
   // Everything in order by default; the buttons narrow it to one stage.
   const chips = [
@@ -1722,7 +1781,7 @@ function manualDetailDialog(
             : []),
         ];
   const row = (p) =>
-    `<div class="manual-row ${picked.has(p.id) ? "on" : ""}"><label class="manual-pick"><input type="checkbox" name="pick" value="${p.id}" aria-label="Include ${esc(p.name)}" ${p.skipped ? "disabled" : ""} ${picked.has(p.id) ? "checked" : ""}><span>${esc(p.name)}${p.skipped ? " · skipped" : ""}${pickMarks(c, p, stage)}${committed(c, stage, p) ? ' <span class="muted">· already booked</span>' : ""}</span></label><span class="rifle">${esc(p.weapon)}</span></div>`;
+    `<div class="manual-row ${picked.has(p.id) ? "on" : ""}"><label class="manual-pick"><input type="checkbox" name="pick" value="${p.id}" aria-label="Include ${esc(p.name)}" ${personSkipped(c, p, stage) ? "disabled" : ""} ${picked.has(p.id) ? "checked" : ""}><span>${esc(p.name)}${personSkipped(c, p, stage) ? " · skipped" : ""}${pickMarks(c, p, stage)}${committed(c, stage, p) ? ' <span class="muted">· already booked</span>' : ""}</span></label><span class="rifle">${esc(p.weapon)}</span></div>`;
   // Why this plan is what it is, and whether waiting would give a better one.
   const advisories = [];
   if (plan?.short)
@@ -1917,15 +1976,35 @@ function personDialog(id) {
           d.status === "awaiting" &&
           d.roster.some((m) => m.id === p.id),
       ),
-    scored = stage && best(c, p, stage) !== null;
+    scored = stage && best(c, p, stage) !== null,
+    // Skipping is uncommon, so it lives in here rather than on every row, and
+    // it applies to this stage alone. Hits already typed for this stage are
+    // held back first, so a skip cannot quietly strand them.
+    skipped = personSkipped(c, p, stage),
+    typed =
+      stage &&
+      (entryValue(c, stage, p) !== "" ||
+        (c.entryParts?.[`${stage}:${p.id}`] ?? []).some((v) => v !== ""));
   dialog(
     p.name,
-    `<p class="note">${esc(stage && isCS(c) ? stageRifle(c, p, stage) : p.weapon)}${isCS(c) ? "" : ` · ${esc(p.profile.components.map((x) => `${x.label} ${ratio(best(c, p, x.id), x.max)}`).join(" · "))}`}</p>${swappable ? `<label class="field inline"><span>Rifle for ${esc(stageLabel(c, stage))}</span><select id="swap-rifle" ${scored ? "disabled" : ""}>${option(weapons(c), stageRifle(c, p, stage))}</select></label>${scored ? '<p class="note">Already scored this stage, so the rifle is fixed. Edit the score in History to change it.</p>' : ""}` : ""}<div class="actions"><button type="button" id="history">History</button>${p.profile.excluded?.length ? '<button type="button" id="sighting">Sighting</button>' : ""}${sent ? `<button type="button" id="undetail" title="Cancel this redetail and put them back in the Redetailing list">Cancel redetail</button>` : ""}</div>`,
+    `<p class="note">${esc(stage && isCS(c) ? stageRifle(c, p, stage) : p.weapon)}${isCS(c) ? "" : ` · ${esc(p.profile.components.map((x) => `${x.label} ${ratio(best(c, p, x.id), x.max)}`).join(" · "))}`}</p>${swappable ? `<label class="field inline"><span>Rifle for ${esc(stageLabel(c, stage))}</span><select id="swap-rifle" ${scored ? "disabled" : ""}>${option(weapons(c), stageRifle(c, p, stage))}</select></label>${scored ? '<p class="note">Already scored this stage, so the rifle is fixed. Edit the score in History to change it.</p>' : ""}` : ""}<div class="actions"><button type="button" id="history">History</button>${p.profile.excluded?.length ? '<button type="button" id="sighting">Sighting</button>' : ""}${sent ? `<button type="button" id="undetail" title="Cancel this redetail and put them back in the Redetailing list">Cancel redetail</button>` : ""}${stage ? `<button type="button" id="person-skip" ${typed ? "disabled" : ""} title="${typed ? "Clear the hits typed for this stage first." : skipped ? `Put ${esc(p.name)} back in ${esc(stageLabel(c, stage))}` : `${esc(p.name)} is not firing ${esc(stageLabel(c, stage))}`}">${skipped ? "Unskip" : "Skip"} ${esc(stageLabel(c, stage))}</button>` : ""}</div>`,
     null,
     null,
     "Close",
   );
   $("#history").onclick = () => historyDialog(p);
+  if ($("#person-skip"))
+    $("#person-skip").onclick = () => {
+      setPersonSkipped(c, p.id, stage, !skipped);
+      save();
+      $("#dialog").close();
+      render();
+      toast(
+        skipped
+          ? `${p.name} is firing ${stageLabel(c, stage)} again.`
+          : `${p.name} is not firing ${stageLabel(c, stage)}.`,
+      );
+    };
   if ($("#undetail"))
     $("#undetail").onclick = () => {
       cancelDispatch(c, sent.id);
@@ -2009,7 +2088,7 @@ function historyDialog(p, back) {
                   .map((m) => `${esc(m.name)} (${esc(m.weapon)})`)
                   .join(", ")
               : "";
-          return `<div class="history-row ${a.status === "void" ? "void" : ""}"><div><b>${esc(stageLabel(c, a.stage))} · ${number ? `attempt ${number}` : "not counted"} · ${ratio(a.score, max)}</b> ${a.status === "void" ? badge(a.revisedBy ? "Edited" : "Voided") : ""}<p>${esc(source)}${roster ? `<br>With: ${roster}` : ""}${a.breakdown?.length ? `<br>${esc(breakdownText(a.breakdown))}` : ""}<br>${new Date(a.recordedAt).toLocaleString("en-US")}${a.correction ? `<br>${esc(a.correction.reason)}` : ""}</p></div>${a.status === "valid" ? `<div class="actions"><button type="button" data-edit="${a.id}">Edit</button><button type="button" class="danger" data-correct="${a.id}">Void</button></div>` : !a.detailAttemptId && restorable(c, a.id) ? `<div class="actions"><button type="button" data-unvoid="${a.id}">Restore</button></div>` : ""}</div>`;
+          return `<div class="history-row ${a.status === "void" ? "void" : ""}"><div><b>${esc(stageLabel(c, a.stage))} · ${number ? `attempt ${number}` : "not counted"} · ${ratio(a.score, max)}</b> ${a.status === "void" ? badge(a.revisedBy ? "Edited" : "Voided") : ""}<p>${esc(source)}${roster ? `<br>With: ${roster}` : ""}${a.breakdown?.length ? `<br>${esc(breakdownText(a.breakdown))}` : ""}<br>${esc(stampLabel(a.recordedAt))}${a.correction ? `<br>${esc(a.correction.reason)}` : ""}</p></div>${a.status === "valid" ? `<div class="actions"><button type="button" data-edit="${a.id}">Edit</button><button type="button" class="danger" data-correct="${a.id}">Void</button></div>` : !a.detailAttemptId && restorable(c, a.id) ? `<div class="actions"><button type="button" data-unvoid="${a.id}">Restore</button></div>` : ""}</div>`;
         })
         .join("") +
       (c.sightings || [])
@@ -2155,7 +2234,7 @@ function scoreEventDialog(attemptId) {
     };
   dialog(
     `${p?.name ?? "Removed firer"} · ${stageLabel(c, a.stage)}`,
-    `<p class="note">${ratio(a.score, max)} · ${esc(a.weapon)}${number ? ` · attempt ${number}` : ""}<br>${esc(new Date(a.recordedAt).toLocaleString("en-US"))}</p>${
+    `<p class="note">${ratio(a.score, max)} · ${esc(a.weapon)}${number ? ` · attempt ${number}` : ""}<br>${esc(stampLabel(a.recordedAt))}</p>${
       a.status === "valid"
         ? ""
         : `<p class="note warn-note">Already voided${a.correction?.reason ? ` · ${esc(a.correction.reason)}` : ""}.</p>`
@@ -2258,7 +2337,7 @@ function detailHistoryDialog(detailId, stage, back) {
           const hits = a.roster
             .map((m) => `${m.name} ${m.rawHits ?? "—"}`)
             .join(", ");
-          return `<div class="history-row ${a.status === "void" ? "void" : ""}"><div><b>${number ? `Attempt ${number}` : "Not counted"} · ${ratio(a.score, max)}</b> ${a.status === "void" ? badge(a.revisedBy || list.some((x) => x.revisionOf === a.id) ? "Edited" : "Voided") : ""}<p>${esc(a.inputMode === "aggregate" ? `Detail total ${a.aggregateHits} over ${a.divisor} firers` : `${hits} · total ${a.aggregateHits} over ${a.divisor} firers`)}${a.breakdown?.length ? `<br>${esc(breakdownText(a.breakdown))}` : ""}<br>${new Date(a.recordedAt).toLocaleString("en-US")}${a.correction ? `<br>${esc(a.correction.reason)}` : ""}</p></div>${a.status === "valid" ? `<div class="actions"><button type="button" data-edit-detail="${a.id}">Edit</button><button type="button" class="danger" data-void-detail="${a.id}">Void</button></div>` : restorable(c, c.attempts.find((x) => x.detailAttemptId === a.id)?.id) ? `<div class="actions"><button type="button" data-unvoid-detail="${a.id}">Restore</button></div>` : ""}</div>`;
+          return `<div class="history-row ${a.status === "void" ? "void" : ""}"><div><b>${number ? `Attempt ${number}` : "Not counted"} · ${ratio(a.score, max)}</b> ${a.status === "void" ? badge(a.revisedBy || list.some((x) => x.revisionOf === a.id) ? "Edited" : "Voided") : ""}<p>${esc(a.inputMode === "aggregate" ? `Detail total ${a.aggregateHits} over ${a.divisor} firers` : `${hits} · total ${a.aggregateHits} over ${a.divisor} firers`)}${a.breakdown?.length ? `<br>${esc(breakdownText(a.breakdown))}` : ""}<br>${esc(stampLabel(a.recordedAt))}${a.correction ? `<br>${esc(a.correction.reason)}` : ""}</p></div>${a.status === "valid" ? `<div class="actions"><button type="button" data-edit-detail="${a.id}">Edit</button><button type="button" class="danger" data-void-detail="${a.id}">Void</button></div>` : restorable(c, c.attempts.find((x) => x.detailAttemptId === a.id)?.id) ? `<div class="actions"><button type="button" data-unvoid-detail="${a.id}">Restore</button></div>` : ""}</div>`;
         })
         .join("") +
       (!list.length && !waitingOn.length
@@ -2348,7 +2427,7 @@ function detailEventDialog(detailAttemptId) {
     };
   dialog(
     `${detail?.name ?? "Detail"} · ${stageLabel(c, d.stage)}`,
-    `<p class="note">${ratio(d.score, max)} over ${d.divisor} firers${number ? ` · attempt ${number}` : ""}<br>${esc(new Date(d.recordedAt).toLocaleString("en-US"))}</p><p class="note">${esc(d.inputMode === "aggregate" ? `Confirmed on the detail total ${d.aggregateHits}.` : d.roster.map((m) => `${m.name} ${m.rawHits ?? "—"}`).join(", "))}</p>${
+    `<p class="note">${ratio(d.score, max)} over ${d.divisor} firers${number ? ` · attempt ${number}` : ""}<br>${esc(stampLabel(d.recordedAt))}</p><p class="note">${esc(d.inputMode === "aggregate" ? `Confirmed on the detail total ${d.aggregateHits}.` : d.roster.map((m) => `${m.name} ${m.rawHits ?? "—"}`).join(", "))}</p>${
       live
         ? `<p class="note warn-note">Voiding takes ${esc(stageLabel(c, d.stage))} away from all ${d.roster.length} firers who fired it: ${esc(names(d.roster.map((m) => m.name)))}.</p>`
         : `<p class="note warn-note">Voided${reason ? ` · ${esc(reason)}` : ""}.</p>`
@@ -2507,7 +2586,12 @@ $("#main").addEventListener("input", (e) => {
       values = detail
         ? (row.parts ??= parts.map(() => ""))
         : (c.entryParts[`${stage}:${id}`] ??= parts.map(() => ""));
-    values[Number(t.dataset.partIndex)] = t.value;
+    const index = Number(t.dataset.partIndex);
+    values[index] = t.value;
+    // Mark a bad box as it is typed rather than waiting for Confirm.
+    if (invalidPart(t.value, parts[index]))
+      t.setAttribute("aria-invalid", "true");
+    else t.removeAttribute("aria-invalid");
     let total = "";
     try {
       total = String(parseBreakdown(c, weapon, stage, values).total);
@@ -2915,8 +2999,9 @@ $("#main").addEventListener("click", (e) => {
       return;
     }
     if (b.dataset.personSkip) {
-      const p = c.participants.find((p) => p.id === b.dataset.personSkip);
-      setPersonSkipped(c, p.id, !p.skipped);
+      const p = c.participants.find((p) => p.id === b.dataset.personSkip),
+        st = b.dataset.personSkipStage ?? tab.split(":")[1];
+      setPersonSkipped(c, p.id, st, !personSkipped(c, p, st));
       save();
       render();
       return;
@@ -2964,7 +3049,8 @@ $("#main").addEventListener("click", (e) => {
     }
     if (b.dataset.skip?.startsWith("person:")) {
       const p = c.participants.find((p) => p.id === b.dataset.skip.slice(7));
-      setPersonSkipped(c, p.id, !p.skipped);
+      const st = tab.split(":")[1];
+      setPersonSkipped(c, p.id, st, !personSkipped(c, p, st));
       save();
       render();
       return;

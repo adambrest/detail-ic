@@ -13,6 +13,7 @@ P = pass minimum, M = marksman minimum. Both are whole numbers of hits against t
 | ATP (M) | SAR21 SS/HK416 | 48 | 32 | 39 |
 | ATP (M) | LMG | 126 | 32 | 63 |
 | ATP (SP) | SAR21/SAR21 MMS/M203 | 36 | 18 | 29 |
+| ATP (SP) | LMG | 108 | 27 | 54 |
 | CS (M) | SAR21/SAR21 SS/M203 | 48 | 24 | 39 |
 | CS (M) | LMG | 48 | 24 | 39 |
 | CS (SP) | SAR21/SAR21 SS | 38 | 19 | 31 |
@@ -24,7 +25,7 @@ A total at or above M is Marksman, at or above P is Pass, below P is Fail. A tot
 
 Rifles share one option only when their requirement is identical. The SAR21 SS keeps its own option in ATP (M) because it passes at 32, not 24; in Combat Shoot every SAR21 variant passes at the same mark, so they are one option. M16 is out of service and is not offered; rosters that still name it are moved to the SAR21 option, which scores the same.
 
-LMG is not offered for BTP, ATP (SP) or APS: those tables carry no LMG standard, and one is never borrowed from another shoot type.
+ATP and Combat Shoot are fired with the full range of weapons, so the LMG is offered in both, on its own standard. It is not offered for BTP or APS: those tables carry no LMG standard, and one is never borrowed from another shoot type.
 
 ## Stages
 
@@ -33,7 +34,8 @@ LMG is not offered for BTP, ATP (SP) or APS: those tables carry no LMG standard,
 | BTP | Stage A · Day 16, Stage B · Night 16 | — |
 | ATP (M), rifles | A 24, B 8, C 16 | — |
 | ATP (M), LMG | A 70, B 8, C 48 | — |
-| ATP (SP) | A 16, B 8, C 12 | — |
+| ATP (SP), rifles | A 16, B 8, C 12 | — |
+| ATP (SP), LMG | A 60, B 8, C 40 | — |
 | CS (M) | A 20, B 8, C 20 | — |
 | CS (SP) | A 15, B 8, C 15 | — |
 | APS | Practices 2–5, 6 each | Sighting 1A and 1B, 3 each |
@@ -75,15 +77,17 @@ A temporary detail scores one stage with any mix of firers, for swaps and reruns
 
 Hits are whole numbers from zero to that stage's maximum. A blank is missing, not zero, and a missing stage leaves the total ungraded.
 
-With the sub-stage requirement enabled (the V2 default), enter every part for each firer. Part maximums sum to the rounds that stage fires, which is not always the same as what it credits: the Combat Shoot LMG fires 30 in Stages A and C but is credited at the stage maximum, 20 in CS (M) and 15 in CS (SP). Individual stage hits are the sum of that attempt's parts, capped at the stage maximum, and CS averages are computed from those capped hits. The true entry is retained. Definitions and hits are kept with each attempt. Missing is not zero, and parts from different attempts are never combined.
+With the sub-stage requirement enabled (the V2 default), enter every section for each firer. Section maximums sum to the rounds that stage fires, which is not always what it credits. Individual stage hits are the sum of that attempt's sections, capped at the stage maximum, and CS averages are computed from those capped hits. Definitions and hits are kept with each attempt. Missing is not zero, and sections from different attempts are never combined.
 
-A stage whose sub-sections have not been stated ships no layout and cannot be scored until one is set in Settings or the requirement is turned off. Stage A of the ATP LMG is in that position.
+A rifle issued more rounds than the stage credits is entered on what it actually scored and credited at the maximum: the Combat Shoot LMG is issued 30 rounds for Stages A and C but can be credited only 20 in CS (M) and 15 in CS (SP). The true entry is retained in History and exports; only the arithmetic uses the lower figure.
+
+A stage whose sections have not been stated ships no layout and cannot be scored until one is set in Settings or the requirement is turned off. The LMG is in that position in every shoot and stage, so it is scored on the stage total.
 
 When the requirement is disabled, for Stages A and C enter each firer's hits or the detail total. Entering hits fills the total; a total typed by hand must match the hits exactly, and a mismatch blocks confirmation.
 
 A detail confirmed on its total alone records no individual hits, but the total still bounds them. With `n` firers and a stage maximum of `m`, a total of `t` leaves no firer below `t − (n − 1)m` and none above `min(m, t)`. A detail that shot well enough proves a good score for everyone in it: 140 over 7 firers of 20 puts every one of them on 20. Proving a poor shot takes a total under what a pass asks of the stage, so only a dreadful detail gives one away. A firer counts as a strong shot when even the lowest they can have fired is on course for Marksman, and as a poor one when even the highest falls short of a pass.
 
-Every available firer on the detail is included in a new attempt. Skip makes a firer unavailable across the shoot without altering any past attempt or divisor. Too few available firers blocks scoring until the user unskips someone or creates a valid replacement detail. A partially entered draft cannot silently change its roster.
+Every available firer on the detail is included in a new attempt. Skip marks a firer as not firing one stage, without altering any past attempt or divisor, and leaves their other stages alone. Too few available firers blocks scoring until the user unskips someone or creates a valid replacement detail. A partially entered draft cannot silently change its roster.
 
 ## ATP rifles
 
@@ -111,7 +115,7 @@ Each stage has a threshold that decides who is listed for a reshoot. Once a fire
 
 Only one stage is open for score entry at a time. Beginning entry activates it; explicitly unlocking another stage locks the previous one. Historical corrections preserve their original confirmation time and do not consume a pending reshoot.
 
-Confirmation order means the order score groups were confirmed, with lane order retained inside each group. Search changes visual priority only and never changes lane order or confirmation scope.
+Chronological order means the order score groups were confirmed, with lane order retained inside each group. Search changes visual priority only and never changes lane order or confirmation scope.
 
 The ATP/CS Stage B starting target is 7/8. It adjusts using other stage scores like every other stage; when all other scores are known, the exact qualification gap takes precedence over a starting target.
 

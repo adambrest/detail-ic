@@ -12,25 +12,35 @@
 * {
   box-sizing: border-box;
 }
-/* One disclosure marker everywhere: a triangle that turns as it opens. */
+/* One disclosure marker everywhere: a triangle that turns as it opens. It sits
+   at the far right so every label in a list starts on the same left edge. */
 details > summary {
   list-style: none;
   cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
 }
 details > summary::-webkit-details-marker {
   display: none;
 }
-details > summary::before,
-.expand::before {
+details > summary::after,
+.expand::after {
   content: "▸";
   color: var(--muted);
   font-size: 13px;
-  margin-right: 8px;
+  margin-left: auto;
+  padding-left: 8px;
   display: inline-block;
 }
-details[open] > summary::before,
-.preset.open .expand::before,
-.rifle-set.open .expand::before {
+.expand {
+  display: flex;
+  align-items: baseline;
+  width: 100%;
+}
+details[open] > summary::after,
+.preset.open .expand::after,
+.rifle-set.open .expand::after {
   content: "▾";
 }
 
@@ -1669,27 +1679,67 @@ tr.duplicate-name input {
   font-weight: 600;
 }
 
-.subscores {
+/* Sub-stage boxes sit on one line with the stage total at the end. The column
+   header names them, so no box carries a label of its own. */
+.hits-row {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 6px;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
-.subscores label {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 11px;
+/* The total closes the row, set off from the sub-stages that feed it. */
+.hits-row .score-input {
+  padding-left: 10px;
+  border-left: 1px solid var(--line);
+}
+.subscores {
+  display: inline-flex;
+  gap: 4px;
 }
 .subscores input {
-  width: 55px;
-  min-height: 40px;
+  width: 34px;
+  min-height: 30px;
+  padding: 2px 4px;
+  text-align: center;
+  font-size: 13px;
+}
+/* The total is the one that carries a denominator, so it reads as the sum. */
+.hits-row .score-input input {
+  width: 44px;
+  min-height: 30px;
+  padding: 2px 4px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+}
+.hits-row .score-input input[readonly] {
+  background: var(--panel-2, #f4f5f7);
+}
+.hits-row .score-input .muted {
+  font-size: 11px;
+}
+.pending-parts {
+  font-size: 11px;
+  font-style: italic;
+}
+[aria-invalid="true"] {
+  border-color: #b42318;
+  background: #fff5f4;
 }
 .score-breakdown {
   font-size: 12px;
   white-space: normal;
   text-align: left;
   max-width: 200px;
+}
+/* Sub-stage figures sit beside the stage score, quiet enough to skim past. */
+.sub-parts {
+  margin-left: 6px;
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 400;
+  white-space: nowrap;
 }
 .breakdown-toggle {
   display: flex;

@@ -113,19 +113,23 @@ test("Skip preserves scores, excludes reshoots, and replacement fills a short de
   const draft = c.getDraft(s, d.id, "A");
   draft.aggregate = "40";
   c.saveDetail(s, draft);
-  c.setPersonSkipped(s, person.id, true);
+  c.setPersonSkipped(s, person.id, "A", true);
   assert.equal(c.best(s, person, "A"), 10);
-  assert.equal(c.availableMembers(s, d.id).length, 3);
-  assert.match(c.stageCompositionErrors(s, d.id, "C").join(" "), /Too few/);
+  assert.equal(c.availableMembers(s, d.id, "A").length, 3);
+  // Skipping Stage A leaves Stage C untouched: availability is per stage.
+  assert.deepEqual(c.stageCompositionErrors(s, d.id, "C"), []);
+  assert.match(c.stageCompositionErrors(s, d.id, "A").join(" "), /Too few/);
+  c.setPersonSkipped(s, person.id, "B", true);
   assert.equal(
     c.queue(s, "B").some((e) => e.members.includes(person)),
     false,
   );
-  const plan = c.replacementPlan(s, d.id, "C");
+  c.setPersonSkipped(s, person.id, "B", false);
+  const plan = c.replacementPlan(s, d.id, "A");
   assert.equal(plan.length, 4);
   assert.ok(!plan.includes(person));
-  c.setPersonSkipped(s, person.id, false);
-  assert.equal(c.availableMembers(s, d.id).length, 4);
+  c.setPersonSkipped(s, person.id, "A", false);
+  assert.equal(c.availableMembers(s, d.id, "A").length, 4);
 });
 test("Changing availability cannot silently change a partly entered detail", () => {
   const { s, people } = setup("CS_SP", 5);
@@ -134,7 +138,7 @@ test("Changing availability cannot silently change a partly entered detail", () 
   const d = s.details[0],
     draft = c.getDraft(s, d.id, "A");
   draft.rows[0].hits = "10";
-  c.setPersonSkipped(s, people[1].id, true);
+  c.setPersonSkipped(s, people[1].id, "A", true);
   assert.throws(() => c.saveDetail(s, draft), /Roster changed/);
   assert.equal(s.attempts.length, 0);
 });
@@ -246,21 +250,18 @@ test("Shipped sub-stage layouts match the stated firing sequence", () => {
       B: [2, 2, 2, 2],
       C: [4, 4, 4, 4],
     },
-    // Stage A of the ATP (M) LMG awaits its breakdown; 70 rounds do not fit.
-    "ATP_M LMG": { B: [2, 2, 2, 2], C: [12, 12, 12, 12] },
+    // No LMG sequence has been stated for any stage yet.
+    "ATP_M LMG": {},
     "ATP_SP SAR21/SAR21 MMS/M203": {
       A: [4, 4, 4, 4],
       B: [2, 2, 2, 2],
       C: [3, 3, 3, 3],
     },
-    // Stage A of the ATP (SP) LMG likewise awaits its breakdown.
-    "ATP_SP LMG": { B: [2, 2, 2, 2], C: [10, 10, 10, 10] },
+    "ATP_SP LMG": {},
     "CS_M SAR21/SAR21 SS/M203": { A: [20], B: [2, 2, 2, 2], C: [20] },
-    // The LMG fires 30 in A and C though only 20 can be credited.
-    "CS_M LMG": { A: [30], B: [2, 2, 2, 2], C: [30] },
+    "CS_M LMG": {},
     "CS_SP SAR21/SAR21 SS": { A: [5, 10], B: [2, 2, 2, 2], C: [5, 10] },
-    // 30 rounds fired in A and C, of which only 15 can be credited.
-    "CS_SP LMG": { A: [10, 20], B: [2, 2, 2, 2], C: [10, 20] },
+    "CS_SP LMG": {},
     "APS SAR21": { 2: [6], 3: [6], 4: [6], 5: [6] },
     "APS:ns SAR21": { 1: [10], 2: [10], 3: [10] },
   };
@@ -301,45 +302,45 @@ test("Shipped sub-stage layouts match the stated firing sequence", () => {
 test("A stage with no stated layout cannot be scored", () => {
   const { s, p } = setup("ATP_M");
   c.updateParticipant(s, p.id, { name: p.name, weapon: "LMG" });
-  assert.deepEqual(c.breakdownFor(s, "LMG", "A"), []);
+  for (const stage of ["A", "B", "C"])
+    assert.deepEqual(c.breakdownFor(s, "LMG", stage), [], stage);
   assert.throws(
     () => score(s, s.participants[0], "A", 40),
     /breakdown in Settings/,
   );
-  // Its Stage B is stated, so it is scored as normal.
-  assert.equal(score(s, s.participants[0], "B", "", [2, 2, 2, 1]).score, 7);
+  // A SAR21 firer in the same shoot is unaffected.
+  const [other] = c.addParticipants(s, "Rifleman", s.settings.weapon);
+  assert.equal(score(s, other, "A", "", [6, 6, 6, 6]).score, 24);
 });
 // The LMG fires more rounds than Combat Shoot credits. The entry is kept whole
 // and the cap is applied when the detail's hits are summed.
-test("A CS LMG breakdown covers 30 rounds but is credited at the stage maximum", () => {
+test("A CS LMG is entered over 30 rounds but credited at the stage maximum", () => {
   const { s, people } = setup("CS_SP", 4);
+  s.settings.requireBreakdown = false;
   c.autoDetail(s);
   c.updateParticipant(s, people[0].id, {
     name: people[0].name,
     weapon: "LMG",
     detailId: people[0].detailId,
   });
-  assert.deepEqual(
-    c.breakdownFor(s, "LMG", "A").map((x) => x.max),
-    [10, 20],
+  // 30 rounds are issued for Stages A and C though only 15 can be credited.
+  const lmg = profileFor("CS_SP", "standard", "LMG").components.find(
+    (x) => x.id === "A",
   );
+  assert.equal(lmg.inputMax, 30);
+  assert.equal(lmg.max, 15);
   const draft = c.getDraft(s, s.details[0].id, "A");
   draft.rows.forEach((r) => {
-    const lmg =
-      s.participants.find((p) => p.id === r.participantId).weapon === "LMG";
-    r.parts = lmg ? [10, 20] : [5, 10];
+    r.hits = r.participantId === people[0].id ? "22" : "15";
   });
   const d = c.saveDetail(s, draft);
-  // The LMG firer entered 30 but is credited 15, so the detail totals 60.
-  assert.equal(
-    s.attempts.find((a) => a.participantId === people[0].id).rawHits,
-    30,
-  );
+  const a = s.attempts.find((x) => x.participantId === people[0].id);
+  assert.equal(a.rawHits, 22, "the real score is kept");
+  assert.equal(a.score, 15, "credited at the stage maximum");
   assert.equal(d.aggregateHits, 60);
   assert.equal(d.score, 15);
 });
-// Stage ids and rifle names differ between types, so anything keyed by them
-// has to go. A stale key left the saved store unloadable on the next start.
+
 test("Changing shoot type clears everything keyed by the old stages", () => {
   const { store, s } = setup();
   c.activateStage(s, "C");
@@ -377,7 +378,7 @@ test("Half-entered sub-stage scores are not treated as an empty draft", () => {
   const draft = c.getDraft(s, s.details[0].id, "A");
   draft.rows.forEach((r) => (r.parts = ["5", ""]));
   assert.equal(Object.keys(s.drafts).length, 1);
-  c.setPersonSkipped(s, people[4].id, true);
+  c.setPersonSkipped(s, people[4].id, "A", true);
   assert.equal(Object.keys(s.drafts).length, 1, "skip discarded the draft");
   c.assignDetail(s, people[1].id, 2);
   assert.equal(Object.keys(s.drafts).length, 1, "reassigning discarded it");
@@ -385,7 +386,7 @@ test("Half-entered sub-stage scores are not treated as an empty draft", () => {
 test("Redetailing a skipped firer reports them instead of crashing", () => {
   const { s, p } = setup("ATP_M", 3);
   c.activateStage(s, "A");
-  c.setPersonSkipped(s, p.id, true);
+  c.setPersonSkipped(s, p.id, "A", true);
   assert.throws(() => c.dispatch(s, "A", [`person:${p.id}`]), /Unskip/);
 });
 // A skipped firer's requirement must not drive what their detail is told to aim
@@ -407,19 +408,21 @@ test("Weak-detail advice ignores firers who are skipped", () => {
   c.activateStage(s, "B");
   people.forEach((p, i) => c.recordIndividual(s, p, "B", i === 4 ? "2" : "8"));
   const weakest = c.insights(s, "A").find((n) => n.title === "Weak details");
-  c.setPersonSkipped(s, people[4].id, true);
+  c.setPersonSkipped(s, people[4].id, "A", true);
   const after = c.insights(s, "A").find((n) => n.title === "Weak details");
   assert.notDeepEqual(after?.items, weakest?.items);
 });
-test("History exposes skips and per-rifle score denominators", () => {
+test("History keeps score records and leaves working adjustments out", () => {
   const { s, p } = setup();
   s.settings.requireBreakdown = false;
   c.updateParticipant(s, p.id, { name: p.name, weapon: "LMG" });
   score(s, p, "A", 60);
-  c.setPersonSkipped(s, p.id, true);
+  c.setPersonSkipped(s, p.id, "A", true);
   const feed = c.historyFeed(s);
-  assert.ok(
-    feed.some((e) => e.title === "Firer skipped" && e.people[0].id === p.id),
+  assert.equal(
+    feed.some((e) => /skip/i.test(e.title ?? "")),
+    false,
+    "a skip is not a recountable change",
   );
   assert.equal(feed.find((e) => e.kind === "score").people[0].max, 70);
 });

@@ -204,33 +204,10 @@ export function stages(s) {
 // it in Settings rather than inventing a layout from a stage total.
 const SECTIONS = {
   BTP: { A: [4, 4, 4, 4], B: [4, 4, 4, 4] },
-  // ATP (M) LMG Stage A awaits its breakdown; 70 rounds do not fit 4 × 6.
-  ATP_M: {
-    A: [6, 6, 6, 6],
-    B: [2, 2, 2, 2],
-    C: [4, 4, 4, 4],
-    LMG: { C: [12, 12, 12, 12] },
-  },
-  // ATP (SP) LMG Stage A likewise awaits its breakdown; its Stage C splits four
-  // ways like the SAR21's.
-  ATP_SP: {
-    A: [4, 4, 4, 4],
-    B: [2, 2, 2, 2],
-    C: [3, 3, 3, 3],
-    LMG: { C: [10, 10, 10, 10] },
-  },
-  CS_M: {
-    A: [20],
-    B: [2, 2, 2, 2],
-    C: [20],
-    LMG: { A: [30], C: [30] },
-  },
-  CS_SP: {
-    A: [5, 10],
-    B: [2, 2, 2, 2],
-    C: [5, 10],
-    LMG: { A: [10, 20], C: [10, 20] },
-  },
+  ATP_M: { A: [6, 6, 6, 6], B: [2, 2, 2, 2], C: [4, 4, 4, 4] },
+  ATP_SP: { A: [4, 4, 4, 4], B: [2, 2, 2, 2], C: [3, 3, 3, 3] },
+  CS_M: { A: [20], B: [2, 2, 2, 2], C: [20] },
+  CS_SP: { A: [5, 10], B: [2, 2, 2, 2], C: [5, 10] },
   APS: { 2: [6], 3: [6], 4: [6], 5: [6] },
   "APS:ns": { 1: [10], 2: [10], 3: [10] },
 };
@@ -238,9 +215,12 @@ export function defaultBreakdowns(program, variant = "standard") {
   const plan = SECTIONS[variant === "ns" ? `${program}:ns` : program];
   if (!plan) return {};
   const rows = [];
-  for (const weapon of weaponsFor(program, variant))
+  for (const weapon of weaponsFor(program, variant)) {
+    // No LMG sequence has been stated for any stage, so it gets no layout and
+    // its sub-stages stay closed until one is given.
+    if (NON_SAR.has(weapon)) continue;
     for (const c of profileFor(program, variant, weapon).components) {
-      const sections = plan[weapon]?.[c.id] ?? plan[c.id];
+      const sections = plan[c.id];
       if (!sections) continue;
       // The guard that keeps an unstated stage unset: a default that does not
       // account for every round this weapon fires is not this weapon's layout.
@@ -248,12 +228,15 @@ export function defaultBreakdowns(program, variant = "standard") {
         continue;
       rows.push([
         `${weapon}:${c.id}`,
+        // A stage fired in one go is named after itself. Where it is split, each
+        // section is a practice of so many rounds, not a "part".
         sections.map((max, i) => ({
-          label: sections.length === 1 ? c.label : `Part ${i + 1}`,
+          label: sections.length === 1 ? c.label : `Practice ${i + 1}`,
           max,
         })),
       ]);
     }
+  }
   return Object.fromEntries(rows);
 }
 // Every scored stage can be given a starting threshold. On a two-stage shoot

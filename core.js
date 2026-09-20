@@ -107,14 +107,30 @@ export function requireActiveStage(s, stage) {
     throw Error("This stage is locked. Unlock it before entering scores.");
   if (!s.activeStage) activateStage(s, stage);
 }
-export function availableMembers(s, detailId) {
-  return members(s, detailId).filter((p) => !p.skipped);
+// Availability belongs to a stage, not to the whole shoot: a firer who sits out
+// Stage B may still fire Stage C the same morning.
+export function personSkipped(s, p, stage) {
+  if (!stage || !p) return false;
+  return !!s.personSkips?.[`${stage}:${typeof p === "string" ? p : p.id}`];
+}
+export function skippedStages(s, p) {
+  return stages(s)
+    .map((c) => c.id)
+    .filter((id) => personSkipped(s, p, id));
+}
+export function availableMembers(s, detailId, stage = null) {
+  return members(s, detailId).filter((p) => !personSkipped(s, p, stage));
 }
 export function replacementPlan(s, detailId, stage) {
-  const picked = availableMembers(s, detailId).slice(),
+  const picked = availableMembers(s, detailId, stage).slice(),
     rule = DETAIL_RULES[s.program];
   const pool = s.participants
-    .filter((p) => !p.skipped && !picked.includes(p) && !committed(s, stage, p))
+    .filter(
+      (p) =>
+        !personSkipped(s, p, stage) &&
+        !picked.includes(p) &&
+        !committed(s, stage, p),
+    )
     .toSorted(
       (a, b) =>
         Number(nothingToGain(s, a, stage)) -
@@ -140,16 +156,23 @@ export function draftStarted(draft) {
     )
   );
 }
-export function setPersonSkipped(s, id, on) {
+export function setPersonSkipped(s, id, stage, on) {
   const p = s.participants.find((p) => p.id === id);
   if (!p) throw Error("Participant not found.");
-  p.skipped = !!on;
+  if (!stages(s).some((c) => c.id === stage)) throw Error("Unknown stage.");
+  s.personSkips ??= {};
+  if (on) s.personSkips[`${stage}:${id}`] = true;
+  else delete s.personSkips[`${stage}:${id}`];
   // An unconfirmed draft must never silently acquire a different divisor.
   for (const [key, draft] of Object.entries(s.drafts)) {
+    if (draft.stage !== stage) continue;
     if (!members(s, draft.detailId).some((x) => x.id === id)) continue;
     if (!draftStarted(draft)) delete s.drafts[key];
   }
-  audit(s, on ? "Firer skipped" : "Firer unskipped", { participantId: id });
+  audit(s, on ? "Firer skipped" : "Firer unskipped", {
+    participantId: id,
+    stage,
+  });
 }
 // A backup can replace a local shoot only when its audit contains every local
 // event. Divergent copies are never silently treated as newer by wall-clock time.
@@ -315,7 +338,7 @@ export function createTempDetail(
     person: s.participants.find((p) => p.id === e.participantId),
     weapon: e.weapon,
   }));
-  if (rows.some((r) => r.person?.skipped))
+  if (rows.some((r) => personSkipped(s, r.person, stage)))
     throw Error("Unskip firers before adding them to a detail.");
   if (!rows.length || rows.some((r) => !r.person))
     throw Error("Choose the firers in this detail.");
@@ -647,8 +670,8 @@ export function getDraft(s, detailId, stage) {
     detailId,
     stage,
     createdAt: now(),
-    rosterIds: availableMembers(s, detailId).map((p) => p.id),
-    rows: availableMembers(s, detailId).map((p) => ({
+    rosterIds: availableMembers(s, detailId, stage).map((p) => p.id),
+    rows: availableMembers(s, detailId, stage).map((p) => ({
       participantId: p.id,
       hits: "",
     })),
@@ -804,7 +827,7 @@ function scoreRows(s, stage, input, aggregateInput, errors) {
   };
 }
 export function validateDraft(s, draft) {
-  const roster = availableMembers(s, draft.detailId),
+  const roster = availableMembers(s, draft.detailId, draft.stage),
     errors = [];
   const ids = roster.map((p) => p.id),
     rowIds = draft.rows.map((r) => r.participantId);
@@ -1056,7 +1079,8 @@ export function recordIndividual(
     );
   if (!reason) {
     requireActiveStage(s, stage);
-    if (p.skipped) throw Error("Unskip this firer before recording scores.");
+    if (personSkipped(s, p, stage))
+      throw Error("Unskip this firer before recording scores.");
   }
   const profile = profileFor(s.program, s.variant, weapon);
   const component = profile.components.find((c) => c.id === stage);
@@ -1399,16 +1423,16 @@ export function advice(s, p, stage) {
 // firers close to failing, poor shooters, weak details, and firers not improving.
 export function insights(s, stage = null) {
   const people = s.participants
-      .filter((p) => !p.skipped)
+      .filter((p) => !personSkipped(s, p, stage))
       .map((p) => ({ p, st: standing(s, p) })),
     notes = [];
   const add = (level, title, items) =>
     items.length && notes.push({ level, title, items });
   const count = (fn) => people.filter(fn).length;
   add("info", "Overview", [
-    ...(s.participants.some((p) => p.skipped)
+    ...(s.participants.some((p) => personSkipped(s, p, stage))
       ? [
-          `${s.participants.filter((p) => p.skipped).length} skipped; ${people.length} available`,
+          `${s.participants.filter((p) => personSkipped(s, p, stage)).length} skipped this stage; ${people.length} available`,
         ]
       : []),
     `Marksman: ${count(({ st }) => st.marksman === "made")} made, ${count(({ st }) => st.marksman === "possible")} still possible, ${count(({ st }) => st.marksman === "missed")} not possible on current scores`,
@@ -1421,7 +1445,9 @@ export function insights(s, stage = null) {
               ).length,
               waiting = new Set(
                 q.flatMap((e) =>
-                  e.members.filter((p) => !p.skipped).map((p) => p.id),
+                  e.members
+                    .filter((p) => !personSkipped(s, p, stage))
+                    .map((p) => p.id),
                 ),
               ).size,
               skipped = q
@@ -1535,7 +1561,7 @@ export function insights(s, stage = null) {
       // A figure only where one was written down; a detail total is the
       // detail's business, not a score to hang on a firer.
       weakFirers(s, stage)
-        .filter(({ p }) => !p.skipped)
+        .filter(({ p }) => !personSkipped(s, p, stage))
         .map(({ p }) => {
           const d = detailed && s.details.find((x) => x.id === p.detailId),
             a = detailed ? null : advice(s, p, stage),
@@ -1548,7 +1574,7 @@ export function insights(s, stage = null) {
       "warn",
       "Not improving",
       s.participants
-        .filter((p) => !p.skipped)
+        .filter((p) => !personSkipped(s, p, stage))
         .map((p) => ({
           p,
           vals: s.attempts
@@ -1598,7 +1624,7 @@ export function insights(s, stage = null) {
             const list = records(d),
               // Only the firers who will actually fire it again; a skipped
               // firer's requirement must not drive the detail's advice.
-              people = availableMembers(s, d.id);
+              people = availableMembers(s, d.id, stage);
             if (!list.length || !people.length) return null;
             const top = list.reduce((a, b) => (b.score > a.score ? b : a));
             // Aim for the highest Marksman recommendation among its firers, or
@@ -1659,7 +1685,7 @@ export function entities(s, stage) {
     ? stageDetails(s, stage).map((d) => ({
         key: `detail:${d.id}`,
         detail: d,
-        members: availableMembers(s, d.id),
+        members: availableMembers(s, d.id, stage),
       }))
     : s.participants.map((p) => ({
         key: `person:${p.id}`,
@@ -1676,8 +1702,8 @@ export function stageDetails(s, stage) {
       members(s, d.id).length,
   );
 }
-export function stageMembers(s, detailId) {
-  return availableMembers(s, detailId).map((p) => ({
+export function stageMembers(s, detailId, stage = null) {
+  return availableMembers(s, detailId, stage).map((p) => ({
     ...p,
     weapon: rosterWeapon(s, detailId, p),
   }));
@@ -1685,7 +1711,7 @@ export function stageMembers(s, detailId) {
 export function stageCompositionErrors(s, detailId, stage) {
   if (!isCS(s)) return [];
   const draft = s.drafts[draftKey(detailId, stage)],
-    roster = availableMembers(s, detailId);
+    roster = availableMembers(s, detailId, stage);
   if (!roster.length) return ["Detail has no participants."];
   const booked = roster.filter(
     (p) =>
@@ -1721,7 +1747,7 @@ export function stageCompositionErrors(s, detailId, stage) {
     )
   )
     return ["Score entries are out of date. Clear them before redetailing."];
-  return compositionErrors(s, stageMembers(s, detailId));
+  return compositionErrors(s, stageMembers(s, detailId, stage));
 }
 export function notYetShot(s, stage) {
   return s.participants.filter((p) => best(s, p, stage) === null);
@@ -1735,7 +1761,10 @@ export function setPriority(s, key, tag) {
 // Priority and the chosen order sort this list only, never the firing queue.
 export function queue(s, stage) {
   const rows = entities(s, stage)
-    .filter((e) => e.members.length && e.members.some((p) => !p.skipped))
+    .filter(
+      (e) =>
+        e.members.length && e.members.some((p) => !personSkipped(s, p, stage)),
+    )
     .filter(
       (e) =>
         !s.dispatches.some(
@@ -1889,7 +1918,7 @@ export function dispatch(s, stage, keys) {
     const errors = e.detail
       ? stageCompositionErrors(s, e.detail.id, stage)
       : [];
-    if (e.members.some((p) => p.skipped))
+    if (e.members.some((p) => personSkipped(s, p, stage)))
       errors.push("Unskip the firer first.");
     // An individual entity has no detail, and a skipped firer is exactly the
     // case that reaches here, so name the firer rather than a detail.
@@ -2005,7 +2034,7 @@ export function owesFirst(s, stage, e) {
 // temporary detail that has not put its scores in yet. Building another detail
 // around them would double-book them on the range.
 export function committed(s, stage, p) {
-  if (p.skipped) return true;
+  if (personSkipped(s, p, stage)) return true;
   if (
     s.dispatches.some(
       (d) =>
@@ -2182,7 +2211,10 @@ export function buildAround(s, stage, weakId) {
       ...s.participants.filter((p) => committed(s, stage, p)).map((p) => p.id),
     ]),
     pool = s.participants
-      .filter((p) => !p.skipped && p.id !== weakId && !skip.has(p.id))
+      .filter(
+        (p) =>
+          !personSkipped(s, p, stage) && p.id !== weakId && !skip.has(p.id),
+      )
       .map((p) => ({
         p,
         hits: hitsRange(s, p, stage).low ?? best(s, p, stage),
@@ -2231,7 +2263,7 @@ export function buildAround(s, stage, weakId) {
     borrowed = chosen.filter((x) => x.p.id !== weakId && x.cleared),
     held = s.participants.filter(
       (p) =>
-        !p.skipped &&
+        !personSkipped(s, p, stage) &&
         p.id !== weakId &&
         skip.has(p.id) &&
         isStrong(s, p, stage) &&
@@ -2271,7 +2303,7 @@ export function planRest(s, stage, weakId, picked) {
     hits = (p) => hitsRange(s, p, stage).low ?? best(s, p, stage),
     rest = members(s, home.id).filter(
       (p) =>
-        !p.skipped &&
+        !personSkipped(s, p, stage) &&
         !picked.includes(p.id) &&
         !queued.has(p.id) &&
         best(s, p, stage) !== null &&
@@ -2330,7 +2362,7 @@ export function isSkipped(s, stage, key) {
 // A skip holds only for the attempt it was made on, so it clears itself once
 // that entry is scored.
 function skipOf(s, stage, e) {
-  if (!e.detail && e.members[0]?.skipped)
+  if (!e.detail && personSkipped(s, e.members[0], stage))
     return { at: s.updatedAt, attempt: nextAttempt(s, e.members, stage) };
   const skip = s.skips?.[`${stage}:${e.key}`];
   return skip?.attempt === nextAttempt(s, e.members, stage) ? skip : null;
@@ -2397,18 +2429,9 @@ export function historyFeed(s) {
         people: [],
       });
   for (const a of s.audit) {
-    if (
-      ![
-        "Firer skipped",
-        "Firer unskipped",
-        "Stage unlocked",
-        "Priority changed",
-        "Skipped in the firing order",
-        "Unskipped",
-        "Redetail canceled",
-      ].includes(a.action)
-    )
-      continue;
+    // Only changes that would matter when recounting a score. Skips, priority
+    // changes and stage unlocks are working adjustments, not part of the count.
+    if (!["Redetail canceled"].includes(a.action)) continue;
     const ids = a.participantId
       ? [a.participantId]
       : a.key?.startsWith("person:")

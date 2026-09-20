@@ -26,7 +26,7 @@ Corrections from History are exempt: they pass a `reason` and bypass the check, 
 
 ## Availability (Skip)
 
-`setPersonSkipped` marks a participant unavailable for the whole shoot rather than for one stage or queue entry. Skipped firers keep every earned score and stay in historical detail rosters, but are excluded from queues, dispatch, helper selection and replacement plans, and cannot have new scores recorded.
+`setPersonSkipped` marks a participant as not firing **one stage**, keyed `stage:id` on the shoot. Availability belongs to a stage, not to the day: a firer who sits out Stage B may still fire Stage C the same morning. It is refused while hits are typed for that stage, and lives in the firer's ⋯ menu rather than on every row, since it is uncommon. Skipped firers keep every earned score and stay in historical detail rosters, but are excluded from queues, dispatch, helper selection and replacement plans, and cannot have new scores recorded.
 
 `availableMembers` is used for live operational membership; `members` still returns the full historical roster. This distinction is what keeps a CS detail's divisor honest — a skipped firer does not retroactively change what a past attempt was scored over.
 
@@ -36,7 +36,7 @@ Changing availability while a detail has partly entered scores throws rather tha
 
 ## Sub-stage breakdowns
 
-Stages can be scored as parts. `store.requireBreakdown` is on by default; per-shoot it is `settings.requireBreakdown`. When required, the total input is read-only and computed from the parts, so a total can never disagree with its breakdown.
+Stages can be scored in sections. `store.requireBreakdown` is on by default; per-shoot it is `settings.requireBreakdown`. When required, the total input is read-only and computed from the parts, so a total can never disagree with its breakdown.
 
 Layouts are defined per rifle and stage in Settings and are stored on the shoot, so a shoot keeps the layout it was scored under. Once a layout has recorded scores it cannot be changed for that version.
 
@@ -44,11 +44,13 @@ Layouts are derived from a stated firing sequence per shoot — see the table in
 
 A layout's parts sum to the **rounds fired** (`inputMax`), not to the credited maximum. A Combat Shoot LMG fires 30 in Stages A and C but is credited 20 (CS (M)) or 15 (CS (SP)), so the cap is applied in `scoreRows` via `Math.min(value, component.max)` while `rawHits` retains the true entry. `parseBreakdown` and `validateStore` both validate against `inputMax ?? max`; they disagreed at one point, which would have let a correct LMG layout save but fail at scoring.
 
-Where a rifle is issued more rounds than the stage credits, the score box accepts all of them, shows the real figure, and carries an **i** note saying how many can be credited. The arithmetic uses the lower of the two. Three places had to agree for this to work: the score box's own maximum, which previously came from the participant's profile rather than the rifle they fired that stage on; the detail total the UI fills in as hits are typed, which summed raw hits and so refused its own figure as out of range; and the layout dialog in Settings, which validated against the credited maximum and therefore rejected the shipped LMG layout.
+Where a rifle is issued more rounds than the stage credits, the score box accepts all of them, shows the real figure, and carries an **i** note saying how many can be credited. The arithmetic uses the lower of the two.
 
-Sub-sections are not always equal — CS (SP) Stages A and C are 5 + 10 for a SAR21 and 10 + 20 for an LMG — so `SECTIONS` records the rounds in each section rather than a count to divide by. A weapon name inside a shoot's entry overrides the default for that weapon alone.
+Entry boxes are numeric text rather than `type="number"`: the spinner arrows sit under the thumb on a phone and were easy to nudge. Out-of-range and non-numeric entries are marked as they are typed instead. Three places had to agree for this to work: the score box's own maximum, which previously came from the participant's profile rather than the rifle they fired that stage on; the detail total the UI fills in as hits are typed, which summed raw hits and so refused its own figure as out of range; and the layout dialog in Settings, which validated against the credited maximum and therefore rejected the shipped LMG layout.
 
-The safety net is a sum check: a layout ships only when its sections add up to the rounds that weapon actually fires in that stage. That is what leaves **Stage A of the ATP LMG** unset — 70 rounds in ATP (M) and 60 in ATP (SP) fit no stated split, so nothing is shipped and Settings asks. Their Stage C splits four ways like the SAR21's. Earlier drafts generated `Part 1..4` layouts by dividing each stage total by four; that invented standards that were never confirmed, and is now blocked by a test that checks every shipped layout against the stated sequence.
+Sections are not always equal — CS (SP) Stages A and C are 5 + 10 — so `SECTIONS` records the rounds in each section rather than a count to divide by.
+
+**The LMG is excluded from every shipped layout**, because no firing sequence has been stated for it in any stage. Its sub-stage boxes read *Sub-stages pending* and it is scored on the stage total. A second safety net backs this up: a layout ships only when its sections add up to the rounds that weapon actually fires in that stage, so a SAR21 default can never be applied to a rifle issued a different allocation. Earlier drafts generated `Part 1..4` layouts by dividing each stage total by four; that invented standards that were never confirmed, and is now blocked by a test that checks every shipped layout against the stated sequence.
 
 Breakdowns are stored on the attempt, survive edits, appear in History, Final scores and CSV, and are never recombined across attempts — a best stage shows the breakdown of the attempt that actually earned it.
 
@@ -58,7 +60,7 @@ Search previously hid non-matching rows while Confirm scores still saved the hid
 
 ## Lane and confirmation order
 
-Attempts record a `batchId` (the confirmation group) and a `lane` within it, assigned in queue order rather than object-key or typing order. Confirmation order sorts by last-fired time and then by lane, which keeps a stable order for scores confirmed together. The order option previously labelled *Chronological* is now **Confirmation order**, because confirmation time is what is actually recorded.
+Attempts record a `batchId` (the confirmation group) and a `lane` within it, assigned in queue order rather than object-key or typing order. Chronological order sorts by last-fired time and then by lane, which keeps a stable order for scores confirmed together instead of falling back on however the entries happened to be keyed.
 
 ## Advice uses the exact requirement
 
@@ -86,3 +88,13 @@ Ordering policy is unchanged on purpose. Automatic still puts pass risk first, t
 
 - `npm test` — scoring, availability, locks, breakdowns, import and validation.
 - `npm run test:browser` — Chromium and WebKit workflows, mobile and offline use, recovery, service-worker updates, and the V2 scenarios.
+
+## Presentation
+
+The sub-stage boxes are one unlabelled row with the stage total closing it, because the column header already names the shape of the stage ("Hits 4 × 2 rds"). Sections are practices, not "parts".
+
+Final scores show a stage score on its own, with its sections beside it in small grey type. Only the total carries a denominator.
+
+History is one shape throughout: every record is a closed card with its disclosure marker on the right, so the titles keep a straight left edge and nothing is actionable until it is opened. It carries only what a recount would need; skips, priority changes and stage unlocks are working adjustments and no longer appear.
+
+Dates are service format — day first, month in letters, 24-hour time, separated so a time is never read as a year (`20 Sep · 1430`). The year appears only where a record is filed or looked up later: the Shoots list, and a shoot's creation.
