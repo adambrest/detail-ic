@@ -777,6 +777,13 @@ async function addNames(page, names) {
     await server.stop();
     if (name === "chromium") await context.setOffline(true);
     await page.reload();
+    // A reload lands on the chooser: a shoot's own tabs appear once it is open.
+    assert.equal(
+      await page.locator("#tabs").getByRole("button").count(),
+      2,
+      "only Shoots and Settings before a shoot is opened",
+    );
+    await page.locator("[data-open-shoot]").first().click();
     await tab(page, "Stage A");
     assert.equal(await page.locator(".score-panel").count(), 1);
     await page.setViewportSize({ width: 390, height: 844 });

@@ -32,6 +32,8 @@ The first score entry activates that stage. Other stages stay readable and locke
 
 Search brings matches to the top and highlights them without hiding anyone. Confirm scores still confirms every entered score. Lane order comes from the queue, not search order or typing order. Each confirmation is recorded as a group.
 
+Shoots is a chooser: a shoot's own tabs appear once you open one, and going back to Shoots closes it again.
+
 ## Redetailing and Skip
 
 Automatic order gives pass risk priority, then firers furthest below their target, allowing time to practice. Stage B starts at 7/8; all stage targets adjust as other scores arrive. Once every other stage is scored, advice uses the exact remaining requirement.

@@ -130,6 +130,9 @@ let store,
   storageError = false,
   unsaved = false,
   tab = "shoots",
+  // Shoots is a chooser: a shoot's own tabs appear only once one is opened,
+  // so the row never implies a shoot is already in hand.
+  openedShoot = false,
   search = "",
   selected = new Set(),
   openPresets = new Set(),
@@ -326,7 +329,7 @@ function render() {
   const current = s(),
     tabs = [
       ["shoots", "Shoots"],
-      ...(current
+      ...(current && openedShoot
         ? [
             ["participants", "Participants"],
             ...stages(current).map((c) => [`stage:${c.id}`, c.label]),
@@ -2545,6 +2548,7 @@ $("#tabs").onclick = (e) => {
   if (!b) return;
   const previous = tab;
   tab = b.dataset.tab;
+  if (tab === "shoots") openedShoot = false;
   addMode = null;
   selected.clear();
   // The tab row is redrawn before the page below it, so a failure there would
@@ -2878,6 +2882,7 @@ $("#main").addEventListener("submit", (e) => {
         f.get("name").trim() ||
           `${typeLabel(program, variant)} · ${dateLabel(now())}`,
       );
+      openedShoot = true;
       tab = "participants";
       search = "";
       selected.clear();
@@ -2933,6 +2938,7 @@ $("#main").addEventListener("click", (e) => {
           deleteShoot(store, shoot.id);
           save();
           $("#dialog").close();
+          openedShoot = false;
           tab = "shoots";
           render();
           toast(`${shoot.name} deleted.`);
@@ -2943,6 +2949,7 @@ $("#main").addEventListener("click", (e) => {
     }
     if (b.dataset.openShoot) {
       store.active = b.dataset.openShoot;
+      openedShoot = true;
       const opened = s();
       tab = opened.locked
         ? search.trim()
