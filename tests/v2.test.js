@@ -240,6 +240,27 @@ test("A thresholds correction leaves a shoot under way intact", () => {
   assert.equal(c.best(s, s.participants[0], "A"), 24, "and a new one counts");
   assert.equal(c.scoreHistory(s, s.participants[0], "A").length, 2);
 });
+// A correction moves who a reshoot is suggested for, so the shoot says so
+// rather than letting the lists change under the user.
+test("A thresholds correction is announced, not applied silently", () => {
+  const { s, p } = setup("ATP_M");
+  s.settings.requireBreakdown = false;
+  score(s, p, "A", 20);
+  assert.deepEqual(c.standardsMoved(s), [], "nothing to say before a change");
+  // The shipped standard has moved since that score was fired.
+  s.attempts[0].profile.pass = 26;
+  s.attempts[0].profile.marksman = 41;
+  const moved = c.standardsMoved(s);
+  assert.equal(moved.length, 1);
+  assert.deepEqual(moved[0].changes, [
+    "Pass 24, was 26",
+    "Marksman 39, was 41",
+  ]);
+  const note = c.insights(s, "A").find((x) => x.title === "Thresholds updated");
+  assert.equal(note.level, "warn");
+  assert.match(note.items.join(" "), /Scores already recorded are unchanged/);
+  assert.equal(c.best(s, s.participants[0], "A"), 20, "the score is untouched");
+});
 // Grades are read from the current standard, so editing the thresholds inside a
 // backup cannot promote anyone.
 test("A backup cannot carry its own thresholds", () => {

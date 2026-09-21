@@ -1553,6 +1553,28 @@ test("Repeated names are reported before scoring starts", () => {
   setRosterLock(s, true);
   assert.equal(s.locked, true);
 });
+// A name has to fit a rank and a full name without letting a stray pasted line
+// break a table or the detail picker.
+test("A roster name is capped at 60 characters", () => {
+  const { s } = setup("ATP_M");
+  const weapon = s.settings.weapon;
+  assert.equal(
+    addParticipants(s, "3SG Muhammad Nur Firdaus bin Abdullah", weapon)[0].name
+      .length,
+    37,
+  );
+  assert.equal(addParticipants(s, "B".repeat(60), weapon)[0].name.length, 60);
+  assert.throws(
+    () => addParticipants(s, "C".repeat(61), weapon),
+    /is 61 characters. A name can be at most 60/,
+  );
+  const p = s.participants[0];
+  assert.throws(
+    () =>
+      updateParticipant(s, p.id, { name: "D".repeat(61), weapon: p.weapon }),
+    /A name can be at most 60/,
+  );
+});
 // One firer typed twice is still one firer: a stray double space, a different
 // case, or a full-width character must not quietly create a second record.
 test("Repeated names are matched past case, spacing and width", () => {

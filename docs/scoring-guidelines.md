@@ -23,7 +23,7 @@ P = pass minimum, M = marksman minimum, both whole hits against the scored total
 
 At or above M is Marksman, at or above P is Pass, below P is Fail. A total is graded only once every stage has a score; no stage carries its own pass mark.
 
-Thresholds are read from the current standard. If one is corrected, results and advice follow the corrected figure straight away — including for a shoot already under way. What a firer hit is a fact and never moves, so their scores stand and scores taken after the correction count normally; only the number they have to reach changes.
+Thresholds are read from the current standard. If one is corrected, results and advice follow the corrected figure straight away, including for a shoot already under way. What a firer hit is a fact and never moves, so their scores stand and scores taken after the correction count normally; only the number they have to reach changes. Because that also changes who a reshoot is suggested for, the shoot's summary says which figures moved rather than letting the lists change unannounced.
 
 Rifles share an option only when their requirement is identical — the SAR21 SS keeps its own in ATP (M) because it passes at 32. The LMG is offered in ATP and Combat Shoot on its own standard, and not in BTP or APS, whose tables carry no LMG standard.
 
@@ -111,7 +111,7 @@ Automatic order puts pass risk first, then the firers furthest below their targe
 
 Only one stage is open for entry at a time; unlocking another locks the previous one. Historical corrections keep their original confirmation time and do not consume a pending reshoot. Chronological order means the order score groups were confirmed, with lane order kept inside each group. Search changes visual priority only — never lane order, and never what a confirmation covers.
 
-Repeated roster names block scoring and are highlighted; they are matched past case, spacing and full-width characters, and are never merged automatically.
+A name is at most 60 characters. Repeated roster names block scoring and are highlighted; they are matched past case, spacing and full-width characters, and are never merged automatically.
 
 A rifle may be changed freely until a score has been fired on it, and again once every score fired on it has been voided. A voided score stays in History and counts for nothing.
 

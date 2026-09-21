@@ -434,6 +434,16 @@ export function ensureDetail(s, number) {
   );
 }
 // Reads "Name", "Name,2", "Name<tab>2" or "Name 2". Numbers are only read for detailed shoots.
+// Long enough for any rank and full name, short enough that a stray pasted
+// line cannot break a table or the detail picker.
+export const NAME_LIMIT = 60;
+function checkName(name) {
+  if (name.length > NAME_LIMIT)
+    throw Error(
+      `${name.slice(0, 20)}… is ${name.length} characters. A name can be at most ${NAME_LIMIT}.`,
+    );
+  return name;
+}
 export function parseRoster(text, detailed) {
   return text
     .split(/\r?\n/)
@@ -442,8 +452,11 @@ export function parseRoster(text, detailed) {
     .map((line) => {
       const m = detailed && line.match(/^(.*?)(?:\s*[,\t;]\s*|\s+)(\d{1,3})$/);
       return m && m[1].trim()
-        ? { name: m[1].trim(), detail: Number(m[2]) }
-        : { name: line.replace(/[,\t;]+$/, "").trim(), detail: null };
+        ? { name: checkName(m[1].trim()), detail: Number(m[2]) }
+        : {
+            name: checkName(line.replace(/[,\t;]+$/, "").trim()),
+            detail: null,
+          };
     });
 }
 export function assignDetail(s, id, number) {
@@ -644,6 +657,7 @@ export function updateParticipant(
     throw Error(
       "This participant is awaiting scores. Record or cancel that first.",
     );
+  checkName(name);
   const changed = { ...p, name, weapon, detailId };
   const previous = structuredClone(p);
   if (p.name !== name)
@@ -1452,6 +1466,41 @@ export function advice(s, p, stage) {
     text: `${exact ? "needs" : "recommended"} ${t} ${g.objective === "marksman" ? "for Marksman" : "to pass"}`,
   };
 }
+// Scores already recorded never move when a threshold is corrected, but what
+// they have to reach does, so the firers a reshoot is suggested for can change
+// under the user. Compares each rifle actually fired against the standard in
+// force now, and reports only the figures that really moved.
+export function standardsMoved(s) {
+  const moved = [];
+  const fired = new Set(
+    s.attempts.filter((a) => a.status === "valid").map((a) => a.weapon),
+  );
+  for (const weapon of fired) {
+    const was = s.attempts.find(
+      (a) => a.status === "valid" && a.weapon === weapon,
+    )?.profile;
+    let now;
+    try {
+      now = profileFor(s.program, s.variant, weapon);
+    } catch {
+      continue;
+    }
+    if (!was) continue;
+    const changes = [];
+    for (const f of ["pass", "marksman"])
+      if (was[f] !== now[f])
+        changes.push(
+          `${f === "pass" ? "Pass" : "Marksman"} ${now[f]}, was ${was[f]}`,
+        );
+    for (const c of now.components) {
+      const old = was.components?.find((x) => x.id === c.id);
+      if (old && old.max !== c.max)
+        changes.push(`${c.label} out of ${c.max}, was ${old.max}`);
+    }
+    if (changes.length) moved.push({ weapon, changes });
+  }
+  return moved;
+}
 // Critical warnings only, so the list stays short on a shoot of 100 or more:
 // results out of reach on current scores and the reshoot that would fix them,
 // firers close to failing, poor shooters, weak details, and firers not improving.
@@ -1463,6 +1512,16 @@ export function insights(s, stage = null) {
   const add = (level, title, items) =>
     items.length && notes.push({ level, title, items });
   const count = (fn) => people.filter(fn).length;
+  // A corrected threshold changes who a reshoot is suggested for, so say so
+  // rather than letting the lists move on their own.
+  add(
+    "warn",
+    "Thresholds updated",
+    standardsMoved(s).flatMap(({ weapon, changes }) => [
+      `${weapon}: ${changes.join("; ")}`,
+      `Scores already recorded are unchanged; who is suggested for a reshoot follows the new figure.`,
+    ]),
+  );
   add("info", "Overview", [
     ...(s.participants.some((p) => personSkipped(s, p, stage))
       ? [
