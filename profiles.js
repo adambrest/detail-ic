@@ -21,7 +21,7 @@ export const typeLabel = (program, variant = "standard") =>
   (PROGRAMS[program] || program) + (variant === "ns" ? " (NS)" : "");
 // Rifles share an option when their requirement is identical. In ATP the
 // SAR21 SS passes at 32, so it stays separate; in Combat Shoot every SAR21
-// variant scores the same, so they are one option. M16 is out of service.
+// variant scores the same, so they are one option.
 export const NON_SAR = new Set(["LMG"]);
 // Combat Shoot detail sizes; ATP (SP) limits how many fire at a time.
 export const DETAIL_RULES = {
@@ -57,10 +57,6 @@ function rules(
       id: "ABCDEF"[i],
       label: `Stage ${"ABCDEF"[i]}`,
       max,
-      // No conduct issues a weapon more rounds than its stage credits: in
-      // Combat Shoot the LMG is issued the same allocation as the rifles. A
-      // stage that ever does states `inputMax`, and the cap is applied when the
-      // detail's hits are summed while the true entry is kept.
       shared: program.startsWith("CS_") && i !== 1,
     })),
     ...extra,
@@ -148,11 +144,7 @@ export const PROFILES = [
     excluded: [{ label: "Sighter", max: 6 }],
   }),
 ];
-// Reference evidence that is intentionally excluded from selectors and grading.
-// ATP (SP) LMG used to sit here; it is now a supported rifle, since ATP and
-// Combat Shoot are fired with the full range of weapons.
-export const REFERENCE_ONLY = [];
-// Rifles a whole shoot can be set to. Combat Shoot assigns M16 and LMG per firer,
+// Rifles a whole shoot can be set to. Combat Shoot assigns the LMG per firer,
 // after the details are settled.
 export function baseWeapons(program, variant = "standard") {
   const all = weaponsFor(program, variant);
@@ -189,18 +181,16 @@ export function profileFor(program, variant, weapon) {
 export function stages(s) {
   return profileFor(s.program, s.variant, s.settings.weapon).components;
 }
-// How each stage is fired, as stated for the real shoot: the rounds in each
-// sub-section, in order. Sections are not always equal, and the numbers are
-// rounds fired, so they add up to what is issued rather than to what can be
-// credited. A stage fired in one go still gets a single section, which keeps
-// per-firer entry required without pretending the stage is subdivided.
+// How each stage is fired: the rounds in each section, in order. Sections are
+// not always equal. A stage fired in one go still gets a single section, which
+// keeps per-firer entry required without pretending the stage is subdivided.
 //
-// A weapon name inside a shoot overrides the default for that weapon only,
-// since the LMG is issued more rounds for the same stage.
+// A weapon name inside a shoot overrides the default for that weapon only: the
+// ATP LMG is issued its own allocation and fires its own sequence.
 //
-// A stage is shipped only when its sections add up to the rounds that stage
-// actually fires. Anything else is left unset on purpose, and the app asks for
-// it in Settings rather than inventing a layout from a stage total.
+// A stage ships only when its sections add up to that stage's rounds. Anything
+// else is left unset on purpose, and the app asks for it in Settings rather
+// than inventing a layout from a stage total.
 const SECTIONS = {
   BTP: { A: [4, 4, 4, 4], B: [4, 4, 4, 4] },
   ATP_M: {
@@ -234,8 +224,7 @@ export function defaultBreakdowns(program, variant = "standard") {
       if (!sections) continue;
       // The guard that keeps an unstated stage unset: a default that does not
       // account for every round this weapon fires is not this weapon's layout.
-      if (sections.reduce((n, x) => n + x, 0) !== (c.inputMax ?? c.max))
-        continue;
+      if (sections.reduce((n, x) => n + x, 0) !== c.max) continue;
       rows.push([
         `${weapon}:${c.id}`,
         // A stage fired in one go is named after itself. Where it is split, each

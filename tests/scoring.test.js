@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  REFERENCE_ONLY,
   VERSION,
   weaponsFor,
   baseWeapons,
@@ -197,7 +196,7 @@ test("Only plain SAR21 variants share an option; a shoot is set on a base rifle"
     profileFor("ATP_M", "standard", "SAR21/SAR21 MMS/M203").pass,
     24,
   );
-  // M16 and LMG are given out per firer, after the details are set.
+  // The LMG is given out per firer, after the details are set.
   assert.deepEqual(baseWeapons("CS_M"), ["SAR21/SAR21 SS/M203"]);
   assert.deepEqual(baseWeapons("CS_SP"), ["SAR21/SAR21 SS"]);
   assert.deepEqual(baseWeapons("ATP_M"), weaponsFor("ATP_M"));
@@ -208,7 +207,6 @@ test("Unsupported rifles stay out of selectors and scoring", () => {
   assert.throws(() => profileFor("BTP", "standard", "LMG"));
   assert.throws(() => profileFor("APS", "standard", "LMG"));
   assert.throws(() => profileFor("APS", "ns", "LMG"));
-  assert.deepEqual(REFERENCE_ONLY, []);
   for (const program of ["ATP_M", "ATP_SP", "CS_M", "CS_SP"])
     assert.ok(
       weaponsFor(program).includes("LMG"),

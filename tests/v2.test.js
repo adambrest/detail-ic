@@ -314,7 +314,7 @@ test("Shipped sub-stage layouts match the stated firing sequence", () => {
         );
         assert.equal(
           parts.reduce((n, p) => n + p.max, 0),
-          comp.inputMax ?? comp.max,
+          comp.max,
           k,
         );
       }
@@ -362,8 +362,7 @@ test("A CS LMG fires and is credited the same as the rifles", () => {
   const lmg = profileFor("CS_SP", "standard", "LMG").components.find(
     (x) => x.id === "A",
   );
-  assert.equal(lmg.inputMax ?? lmg.max, 15, "issued the rifles' allocation");
-  assert.equal(lmg.max, 15);
+  assert.equal(lmg.max, 15, "issued the rifles' allocation");
   assert.deepEqual(
     c.breakdownFor(s, "LMG", "A").map((x) => x.max),
     c.breakdownFor(s, s.settings.weapon, "A").map((x) => x.max),

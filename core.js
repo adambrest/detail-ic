@@ -753,13 +753,11 @@ export function parseBreakdown(s, weapon, stage, values) {
     throw Error(
       "Set this stage's sub-stage breakdown in Settings before entering scores.",
     );
-  // Parts add up to what is fired, not what can be credited: a rifle issued more
-  // rounds than the stage counts (CS LMG) breaks down over the rounds it fires.
-  // The credited cap is applied later, when the detail's hits are summed.
+  // A layout's sections add up to the rounds that stage fires.
   const component = profileFor(s.program, s.variant, weapon).components.find(
     (c) => c.id === stage,
   );
-  validateBreakdownLayout(parts, component.inputMax ?? component.max);
+  validateBreakdownLayout(parts, component.max);
   if (!Array.isArray(values) || values.length !== parts.length)
     throw Error("Enter every sub-stage score.");
   const scores = parts.map((part, i) => {
@@ -793,7 +791,7 @@ function scoreRows(s, stage, input, aggregateInput, errors) {
       errors.push(e.message);
     }
     const parsed = component
-      ? parseHits(row.hits, component.inputMax ?? component.max)
+      ? parseHits(row.hits, component.max)
       : { error: "Unsupported weapon." };
     return { ...row, profile, component, parsed };
   });
@@ -832,10 +830,7 @@ function scoreRows(s, stage, input, aggregateInput, errors) {
           `${r.person?.name || "Unknown participant"}: ${r.parsed.error}`,
         );
     if (rows.every((r) => !r.parsed.error)) {
-      const sum = rows.reduce(
-        (n, r) => n + Math.min(r.parsed.value, r.component.max),
-        0,
-      );
+      const sum = rows.reduce((n, r) => n + r.parsed.value, 0);
       if (shared && hasAggregate && aggregate !== null && sum !== aggregate)
         errors.push(
           `Totals do not tally: the hits add up to ${sum}, the detail total is ${aggregate} (difference ${Math.abs(sum - aggregate)}).`,
@@ -926,8 +921,6 @@ function recordDetailAttempt(s, stage, detailId, v, extra = {}) {
       weapon: r.weapon,
       profile: structuredClone(r.profile),
       rawHits: r.hits === "" ? null : r.parsed.value,
-      creditedHits:
-        r.hits === "" ? null : Math.min(r.parsed.value, r.component.max),
       breakdown: r.breakdown ?? null,
       accounted: true,
     }));
@@ -963,7 +956,6 @@ function recordDetailAttempt(s, stage, detailId, v, extra = {}) {
       weapon: row.weapon,
       profile: row.profile,
       rawHits: row.rawHits,
-      creditedHits: row.creditedHits,
       breakdown: row.breakdown,
       score: v.shared ? v.score : row.rawHits,
       detailAttemptId,
@@ -2567,10 +2559,7 @@ export function historyFeed(s) {
         id: m.id,
         name: nameOf(m.id),
         hits: m.rawHits,
-        creditedHits: m.creditedHits,
-        max:
-          m.profile.components.find((c) => c.id === d.stage)?.inputMax ??
-          m.profile.components.find((c) => c.id === d.stage)?.max,
+        max: m.profile.components.find((c) => c.id === d.stage)?.max,
         breakdown: m.breakdown,
       })),
     });
@@ -2801,7 +2790,7 @@ export function validateStore(store) {
         weapon,
       ).components.find((c) => c.id === stage);
       if (!component) throw Error("Invalid breakdown stage.");
-      validateBreakdownLayout(parts, component.inputMax ?? component.max);
+      validateBreakdownLayout(parts, component.max);
     }
     for (const p of s.participants) {
       const profile = profileFor(s.program, s.variant, p.weapon);
@@ -2833,10 +2822,7 @@ export function validateStore(store) {
       )
         throw Error("Invalid score record.");
       if (a.breakdown?.length) {
-        validateBreakdownLayout(
-          a.breakdown,
-          component.inputMax ?? component.max,
-        );
+        validateBreakdownLayout(a.breakdown, component.max);
         if (
           a.breakdown.some((p) => parseHits(p.hits, p.max).error) ||
           a.breakdown.reduce((n, p) => n + p.hits, 0) !== a.rawHits

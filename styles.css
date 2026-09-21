@@ -797,14 +797,6 @@ tr.drop-before td {
   font-size: 10px;
   margin: 2px 0 0;
 }
-.queue-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 11px 12px;
-  border-top: 1px solid var(--line);
-  gap: 8px;
-}
 .info {
   position: relative;
   min-height: 16px;
@@ -986,14 +978,6 @@ tr.drop-before td {
   border-color: #b42318;
   color: #b42318;
 }
-.settings-section {
-  border-top: 1px solid var(--line);
-  margin-top: 20px;
-  padding-top: 16px;
-}
-.settings-section h3 {
-  margin-bottom: 10px;
-}
 .seg {
   display: flex;
   gap: 4px;
@@ -1029,11 +1013,6 @@ dialog .dialog-actions {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 16px;
-}
-dialog .form-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
 }
 dialog .error {
   font-size: 12px;
@@ -1143,16 +1122,6 @@ dialog .error {
 /* The History feed: one card per thing that happened, filed under its stage. */
 .history-feed {
   max-width: 760px;
-}
-.event-group {
-  margin-bottom: 22px;
-}
-.event-group > h2 {
-  font-size: 13px;
-  margin: 0 0 8px;
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
 }
 .event {
   padding: 0;
@@ -1357,14 +1326,6 @@ details.event > summary .event-head {
   gap: 5px;
   align-items: center;
 }
-details.reference {
-  margin-top: 12px;
-  color: var(--muted);
-  font-size: 11px;
-}
-details.reference summary {
-  cursor: pointer;
-}
 .attempt {
   font-size: 10px;
   color: var(--muted);
@@ -1389,9 +1350,6 @@ details.reference summary {
 }
 .results b {
   font-size: 13px;
-}
-input.invalid {
-  border-color: var(--danger);
 }
 tr.awaiting td.name .attempt.on {
   font-weight: 700;
@@ -1527,11 +1485,6 @@ select.assign {
 .unassigned {
   border-color: #fcd34d;
 }
-.detail-picks {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
 .pick {
   min-width: 32px;
   min-height: 30px;
@@ -1548,12 +1501,6 @@ select.assign {
     animation: none !important;
     transition: none !important;
   }
-}
-.small-id {
-  font:
-    9px ui-monospace,
-    monospace;
-  color: var(--muted);
 }
 @media (max-width: 850px) {
   .grid {
@@ -1643,9 +1590,6 @@ select.assign {
   .detail-head {
     padding: 10px;
   }
-  .form-grid {
-    grid-template-columns: 1fr !important;
-  }
   .tooltip {
     width: 225px;
   }
@@ -1655,9 +1599,6 @@ select.assign {
   .detail-head button {
     font-size: 11px;
     padding: 6px 8px;
-  }
-  .queue-footer .note {
-    font-size: 10px;
   }
   .preset-body {
     padding: 11px;
@@ -1740,12 +1681,6 @@ tr.duplicate-name input {
 [aria-invalid="true"] {
   border-color: #b42318;
   background: #fff5f4;
-}
-.score-breakdown {
-  font-size: 12px;
-  white-space: normal;
-  text-align: left;
-  max-width: 200px;
 }
 /* Sub-stage figures sit beside the stage score, quiet enough to skim past. */
 .sub-parts {

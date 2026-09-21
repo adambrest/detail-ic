@@ -612,23 +612,6 @@ function breakdownText(parts) {
     ? parts.map((p) => `${p.label}: ${p.hits}/${p.max}`).join(" · ")
     : "";
 }
-// What one firer's hits contribute to their detail's total: their real score,
-// capped at what the stage credits for the rifle they fired it on.
-function creditedHits(c, detailId, stage, row) {
-  const p = c.participants.find((x) => x.id === row.participantId);
-  if (!p) return 0;
-  const max = profileFor(
-    c.program,
-    c.variant,
-    rosterWeapon(c, detailId, p),
-  ).components.find((x) => x.id === stage).max;
-  return Math.min(Number(row.hits), max);
-}
-// Some rifles are issued more rounds than the stage can credit. The real score
-// is recorded and shown; only the arithmetic uses the lower figure.
-function creditNote(weapon, fired, max, label) {
-  return `${weapon} fires ${fired} rounds in ${label}. Enter the hits actually scored: up to ${max} count towards this firer's ${label} score, and anything above that is kept on record but not added in.`;
-}
 function scoreEditor(c, p, stage, detailId = null, disabled = false) {
   const weapon = detailId
       ? rosterWeapon(c, detailId, p)
@@ -639,9 +622,6 @@ function scoreEditor(c, p, stage, detailId = null, disabled = false) {
       (x) => x.id === stage,
     ),
     max = component.max,
-    // What this rifle actually fires. Entry accepts all of it; only `max` is
-    // credited, and the note below says so.
-    fired = component.inputMax ?? max,
     row = detailId
       ? getDraft(c, detailId, stage).rows.find((r) => r.participantId === p.id)
       : null,
@@ -663,7 +643,7 @@ function scoreEditor(c, p, stage, detailId = null, disabled = false) {
           // the LMG is no longer a special case with no way forward.
           `<button data-configure-parts="${esc(weapon)}" data-configure-stage="${stage}">Set sub-stages</button>`
       : ""
-  }<span class="score-input"><input type="text" inputmode="numeric" pattern="[0-9]*" ${attr} value="${esc(value)}" aria-label="${esc(p.name)} hits" placeholder="—" ${required && parts.length ? "readonly" : ""} ${disabled || (required && !parts.length) ? "disabled" : ""}><span class="muted">/${fired}</span>${fired !== max ? info(creditNote(weapon, fired, max, stageLabel(c, stage))) : ""}</span></div>`;
+  }<span class="score-input"><input type="text" inputmode="numeric" pattern="[0-9]*" ${attr} value="${esc(value)}" aria-label="${esc(p.name)} hits" placeholder="—" ${required && parts.length ? "readonly" : ""} ${disabled || (required && !parts.length) ? "disabled" : ""}><span class="muted">/${max}</span></span></div>`;
 }
 // The column header names the sub-stage boxes, so each row can stay bare: one
 // line of small boxes and the stage total at the end.
@@ -702,12 +682,10 @@ function layoutDialog(program, variant, weapon, stage) {
       (c) => c.id === stage,
     ),
     parts = pr.breakdowns?.[`${weapon}:${stage}`] ?? [],
-    // Parts cover the rounds fired. Where a rifle is issued more than the stage
-    // credits, say so, or the figure looks like a mistake.
-    fired = component.inputMax ?? component.max;
+    max = component.max;
   dialog(
     `${component.label} sub-stages · ${weapon}`,
-    `<p>One part per line: name, maximum hits. Maximums must total ${fired}.${fired !== component.max ? ` ${weapon} fires ${fired} rounds here; at most ${component.max} can be credited.` : ""}</p><label class="field"><span>Sub-stages</span><textarea name="layout" rows="8" placeholder="Part 1, 2">${esc(parts.map((p) => `${p.label}, ${p.max}`).join("\n"))}</textarea></label>`,
+    `<p>One part per line: name, maximum hits. Maximums must total ${max}.</p><label class="field"><span>Sub-stages</span><textarea name="layout" rows="8" placeholder="Part 1, 2">${esc(parts.map((p) => `${p.label}, ${p.max}`).join("\n"))}</textarea></label>`,
     "Save breakdown",
     (f) => {
       const layout = String(f.get("layout"))
@@ -718,7 +696,7 @@ function layoutDialog(program, variant, weapon, stage) {
           if (!m) throw Error("Use name, maximum hits on each line.");
           return { label: m[1].trim(), max: Number(m[2]) };
         });
-      validateBreakdownLayout(layout, fired);
+      validateBreakdownLayout(layout, max);
       if (
         store.shoots.some(
           (s) =>
@@ -2660,14 +2638,7 @@ $("#main").addEventListener("input", (e) => {
       if (draft.autoTotal !== false) {
         const all = draft.rows.every((r) => /^\d+$/.test(r.hits));
         draft.aggregate = all
-          ? String(
-              draft.rows.reduce(
-                (n, r) =>
-                  n +
-                  creditedHits(c, panel.dataset.detail, tab.split(":")[1], r),
-                0,
-              ),
-            )
+          ? String(draft.rows.reduce((n, r) => n + Number(r.hits), 0))
           : "";
         const box = panel.querySelector("[data-aggregate]");
         if (box) box.value = draft.aggregate;
