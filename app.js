@@ -53,6 +53,7 @@ import {
   removeParticipant,
   clearParticipants,
   compositionErrors,
+  nameKey,
   getDraft,
   resetDraft,
   validateDraft,
@@ -442,9 +443,8 @@ function renderParticipants() {
     multi = weapons(c).length > 1,
     locked = c.locked,
     duplicate = (p) =>
-      c.participants.filter(
-        (x) => x.name.trim().toLowerCase() === p.name.trim().toLowerCase(),
-      ).length > 1,
+      c.participants.filter((x) => nameKey(x.name) === nameKey(p.name)).length >
+      1,
     matches = (p) => search && filtered(p),
     highest = Math.max(
       0,
@@ -1625,11 +1625,9 @@ function detailPicker(c) {
         );
         return;
       }
-      const byName = new Map(
-          c.participants.map((p) => [p.name.trim().toLowerCase(), p]),
-        ),
+      const byName = new Map(c.participants.map((p) => [nameKey(p.name), p])),
         rows = parseRoster(f.get("roster"), true),
-        unknown = rows.filter((r) => !byName.has(r.name.toLowerCase()));
+        unknown = rows.filter((r) => !byName.has(nameKey(r.name)));
       if (unknown.length)
         throw Error(
           `Not on the list: ${unknown.map((r) => r.name).join(", ")}.`,

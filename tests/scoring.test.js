@@ -1553,6 +1553,28 @@ test("Repeated names are reported before scoring starts", () => {
   setRosterLock(s, true);
   assert.equal(s.locked, true);
 });
+// One firer typed twice is still one firer: a stray double space, a different
+// case, or a full-width character must not quietly create a second record.
+test("Repeated names are matched past case, spacing and width", () => {
+  for (const variant of [
+    "PERSON 1",
+    "person  1",
+    "  Person 1  ",
+    "Ｐｅｒｓｏｎ 1",
+  ]) {
+    const { s, people } = setup("BTP", "standard", 2);
+    people[1].name = variant;
+    assert.match(
+      rosterIssues(s).join(" "),
+      /Same name more than once/,
+      variant,
+    );
+    assert.throws(() => setRosterLock(s, true), /Same name/, variant);
+  }
+  // Genuinely different names are still fine.
+  const { s } = setup("BTP", "standard", 2);
+  assert.deepEqual(rosterIssues(s), []);
+});
 test("Priority tags put firers first or last, sorted within each group", () => {
   const { s, people } = setup("BTP", "standard", 4);
   [5, 11, 8, 2].forEach((hits, i) =>

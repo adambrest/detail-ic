@@ -506,20 +506,22 @@ export function autoDetail(s) {
   audit(s, "Auto-detailed", { sizes, count: waiting.length });
   return sizes;
 }
+// Two roster entries are the same firer typed twice when they differ only by
+// case, spacing or a compatibility character: "Tan  Ah Kow" and "TAN AH KOW"
+// are one person, and a stray double space should not create a second record.
+export const nameKey = (name) =>
+  name.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
 // Problems that stop a shoot from being scored.
 export function rosterIssues(s) {
   const issues = [],
     seen = new Map();
   for (const p of s.participants) {
-    const key = p.name.trim().toLowerCase();
+    const key = nameKey(p.name);
     seen.set(key, (seen.get(key) ?? 0) + 1);
   }
   const repeated = [...seen]
     .filter(([, n]) => n > 1)
-    .map(
-      ([key]) =>
-        s.participants.find((p) => p.name.trim().toLowerCase() === key).name,
-    );
+    .map(([key]) => s.participants.find((p) => nameKey(p.name) === key).name);
   if (repeated.length)
     issues.push(
       `Same name more than once: ${repeated.join(", ")}. Give each firer a different name.`,
