@@ -1130,6 +1130,10 @@ dialog .error {
 details.event > summary {
   display: flex;
   align-items: baseline;
+  padding-left: 0;
+}
+details.event > summary::after {
+  margin-left: 0;
   padding-left: 12px;
 }
 details.event > summary .event-head {
