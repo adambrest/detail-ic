@@ -52,7 +52,6 @@ function rules(
     source,
     provenance: "photographed",
     method: program.startsWith("CS_") ? "floor_detail_A_C" : "individual_sum",
-    equivalence: program.startsWith("CS_") ? `${program}:${VERSION}` : null,
     components: limits.map((max, i) => ({
       id: "ABCDEF"[i],
       label: `Stage ${"ABCDEF"[i]}`,

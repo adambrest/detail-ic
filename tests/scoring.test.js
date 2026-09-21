@@ -1621,11 +1621,26 @@ test("CSV export escapes formulas and lists details only for Combat Shoot", () =
       .includes("Detail"),
   );
 });
-test("Unknown or incompatible profile versions cannot enter best score selection", () => {
-  const { s, p } = setup();
+// Correcting a threshold changes what a firer has to reach, not what they hit.
+// A score keeps counting across a revision; what still separates scores is the
+// standard they were fired to.
+test("A thresholds correction does not disturb what a score counts for", () => {
+  const { s, p } = setup("ATP_M");
   recordIndividual(s, p, "A", "16");
   s.attempts[0].profile.version = "older";
-  assert.equal(best(s, p, "A"), null);
+  assert.equal(best(s, p, "A"), 16, "an earlier revision still counts");
+  p.profile.version = "newer";
+  assert.equal(best(s, p, "A"), 16, "and so does a later one");
+  recordIndividual(s, p, "A", "20");
+  assert.equal(
+    best(s, p, "A"),
+    20,
+    "a score taken after the change counts too",
+  );
+  // A score fired to a different standard still does not.
+  s.attempts[0].weapon = "LMG";
+  s.attempts[0].profile = profileFor(s.program, s.variant, "LMG");
+  assert.equal(best(s, p, "A"), 20, "the LMG score is not the rifle's");
 });
 test("Backup round trip keeps shoots, drafts and best attempt IDs", () => {
   const store = newStore();

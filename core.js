@@ -1182,12 +1182,17 @@ export function eligible(s, p, a) {
     )
       return false;
   }
-  return isCS(s)
-    ? a.profile.equivalence === p.profile.equivalence
-    : a.recordId === p.recordId &&
-        a.weapon === p.weapon &&
-        a.profile.id === p.profile.id &&
-        a.profile.version === p.profile.version;
+  // Correcting a threshold changes what a firer has to reach, never what they
+  // already hit, so a score never depends on the profile revision it was
+  // recorded under. What still separates scores is the standard they were fired
+  // to: in Combat Shoot every rifle scores alike, so the program and variant
+  // checked above are the whole test; elsewhere it is the rifle and its record.
+  return (
+    isCS(s) ||
+    (a.recordId === p.recordId &&
+      a.weapon === p.weapon &&
+      a.profile.id === p.profile.id)
+  );
 }
 // Every counted score for a stage, oldest first.
 export function scoreHistory(s, p, stage) {
@@ -2739,6 +2744,40 @@ export function exportCsv(s) {
     )
     .join("\r\n");
 }
+// What a stored profile must satisfy to make sense. The thresholds themselves
+// are not compared with the current ones, because a shoot may predate a
+// correction; what is checked is that the snapshot is coherent and describes
+// the same conduct and stages.
+function profileProblem(snap, live) {
+  if (!snap || typeof snap !== "object") return "profile is missing";
+  if (snap.id !== live.id)
+    return `profile.id is ${JSON.stringify(snap.id)}, expected ${JSON.stringify(live.id)}`;
+  if (typeof snap.version !== "string" || !snap.version)
+    return "profile.version must be a non-empty string";
+  if (!Array.isArray(snap.components) || !snap.components.length)
+    return "profile.components must be a non-empty array";
+  for (const f of ["pass", "marksman", "total"])
+    if (!Number.isInteger(snap[f]) || snap[f] < 0)
+      return `profile.${f} must be a whole number of hits, not ${JSON.stringify(snap[f])}`;
+  if (snap.pass > snap.marksman)
+    return `profile.pass (${snap.pass}) is above profile.marksman (${snap.marksman})`;
+  if (snap.marksman > snap.total)
+    return `profile.marksman (${snap.marksman}) is above profile.total (${snap.total})`;
+  const ids = snap.components.map((c) => c.id).join(", "),
+    liveIds = live.components.map((c) => c.id).join(", ");
+  if (ids !== liveIds)
+    return `profile.components cover stages ${ids || "(none)"}, expected ${liveIds}`;
+  for (const c of snap.components)
+    if (!Number.isInteger(c.max) || c.max < 0)
+      return `profile.components ${c.id}.max must be a whole number, not ${JSON.stringify(c.max)}`;
+  const sum = snap.components.reduce((n, c) => n + c.max, 0);
+  if (sum !== snap.total)
+    return `profile.components add up to ${sum} but profile.total is ${snap.total}`;
+  return null;
+}
+// Everything a stored or imported file has to satisfy. Each message names the
+// path into the JSON and the values that disagree, so a backup that will not
+// load can be corrected by hand.
 export function validateStore(store) {
   if (
     store?.schema !== 4 ||
@@ -2747,89 +2786,138 @@ export function validateStore(store) {
     typeof store.presets !== "object"
   )
     throw Error("Use a V2 backup. Earlier backup formats are not supported.");
-  const unique = (rows, label) => {
-    if (
-      rows.some((x) => typeof x.id !== "string" || !x.id) ||
-      new Set(rows.map((x) => x.id)).size !== rows.length
-    )
-      throw Error(`Invalid or duplicate ${label} IDs.`);
+  const unique = (where, rows, label) => {
+    if (rows.some((x) => typeof x.id !== "string" || !x.id))
+      throw Error(`${where}: every ${label} needs a non-empty string id.`);
+    const seen = new Set(),
+      dupe = rows.find((x) => seen.size === seen.add(x.id).size);
+    if (dupe) throw Error(`${where}: ${label} id ${dupe.id} appears twice.`);
   };
-  unique(store.shoots, "shoot");
-  for (const s of store.shoots) {
-    if (
-      typeof s.id !== "string" ||
-      typeof s.name !== "string" ||
-      !PROGRAMS[s.program] ||
-      !["standard", "ns"].includes(s.variant) ||
-      !Array.isArray(s.participants) ||
-      !Array.isArray(s.attempts) ||
-      !Array.isArray(s.shared) ||
-      !Array.isArray(s.details) ||
-      !Array.isArray(s.audit) ||
-      !s.drafts ||
-      !s.priorities ||
-      !Array.isArray(s.dispatches) ||
-      !Array.isArray(s.manualQueue) ||
-      !s.settings ||
-      !["marksman", "pass"].includes(s.settings.objective) ||
-      !s.settings.targets
-    )
-      throw Error("Invalid shoot data.");
-    unique(s.participants, "participant");
-    unique(s.attempts, "attempt");
-    unique(s.shared, "detail attempt");
-    unique(s.details, "detail");
-    unique(s.audit, "audit");
+  unique("shoots", store.shoots, "shoot");
+  store.shoots.forEach((s, si) => {
+    const at = (field, i) =>
+      `shoots[${si}] ${JSON.stringify(s.name ?? "")} ${field}${i === undefined ? "" : `[${i}]`}`;
+    const here = `shoots[${si}]`;
+    if (typeof s.id !== "string" || typeof s.name !== "string")
+      throw Error(`${here}: id and name must be strings.`);
+    if (!PROGRAMS[s.program])
+      throw Error(
+        `${here}: program ${JSON.stringify(s.program)} is not one of ${Object.keys(PROGRAMS).join(", ")}.`,
+      );
+    if (!["standard", "ns"].includes(s.variant))
+      throw Error(
+        `${here}: variant ${JSON.stringify(s.variant)} must be "standard" or "ns".`,
+      );
+    for (const f of [
+      "participants",
+      "attempts",
+      "shared",
+      "details",
+      "audit",
+      "dispatches",
+      "manualQueue",
+    ])
+      if (!Array.isArray(s[f])) throw Error(`${here}: ${f} must be an array.`);
+    for (const f of ["drafts", "priorities", "settings"])
+      if (!s[f]) throw Error(`${here}: ${f} is missing.`);
+    if (!["marksman", "pass"].includes(s.settings.objective))
+      throw Error(
+        `${here}: settings.objective must be "marksman" or "pass", not ${JSON.stringify(s.settings.objective)}.`,
+      );
+    if (!s.settings.targets)
+      throw Error(`${here}: settings.targets is missing.`);
+    unique(here, s.participants, "participant");
+    unique(here, s.attempts, "attempt");
+    unique(here, s.shared, "detail attempt");
+    unique(here, s.details, "detail");
+    unique(here, s.audit, "audit");
     if (s.activeStage && !stages(s).some((c) => c.id === s.activeStage))
-      throw Error("Invalid active stage.");
+      throw Error(
+        `${here}: activeStage ${JSON.stringify(s.activeStage)} is not a stage of ${typeLabel(s.program, s.variant)}.`,
+      );
     for (const [key, parts] of Object.entries(s.settings.breakdowns ?? {})) {
       const split = key.lastIndexOf(":"),
         weapon = key.slice(0, split),
         stage = key.slice(split + 1);
-      const component = profileFor(
-        s.program,
-        s.variant,
-        weapon,
-      ).components.find((c) => c.id === stage);
-      if (!component) throw Error("Invalid breakdown stage.");
+      let component;
+      try {
+        component = profileFor(s.program, s.variant, weapon).components.find(
+          (c) => c.id === stage,
+        );
+      } catch {
+        throw Error(
+          `${here}: settings.breakdowns has ${JSON.stringify(key)}, but ${JSON.stringify(weapon)} is not a rifle of ${typeLabel(s.program, s.variant)}.`,
+        );
+      }
+      if (!component)
+        throw Error(
+          `${here}: settings.breakdowns has ${JSON.stringify(key)}, but ${JSON.stringify(stage)} is not one of its stages.`,
+        );
       validateBreakdownLayout(parts, component.max);
     }
-    for (const p of s.participants) {
-      const profile = profileFor(s.program, s.variant, p.weapon);
+    s.participants.forEach((p, i) => {
+      const where = at("participants", i);
+      if (typeof p.id !== "string" || typeof p.name !== "string")
+        throw Error(`${where}: id and name must be strings.`);
+      if (!p.recordId) throw Error(`${where}: recordId is missing.`);
       if (
-        typeof p.id !== "string" ||
-        typeof p.name !== "string" ||
-        !p.recordId ||
-        (isCS(s) &&
-          p.detailId !== null &&
-          !s.details.some((d) => d.id === p.detailId)) ||
-        typeof p.profile?.version !== "string" ||
-        !p.profile.components?.length ||
-        p.profile.id !== profile.id
+        isCS(s) &&
+        p.detailId !== null &&
+        !s.details.some((d) => d.id === p.detailId)
       )
-        throw Error("Invalid participant or profile.");
-    }
-    for (const a of s.attempts) {
-      const profile = profileFor(s.program, s.variant, a.weapon),
-        component = profile.components.find((c) => c.id === a.stage);
-      if (
-        !Number.isInteger(a.score) ||
-        a.score < 0 ||
-        !component ||
-        a.score > component.max ||
-        !s.participants.some((p) => p.id === a.participantId) ||
-        a.profile?.id !== profile.id ||
-        typeof a.profile?.version !== "string" ||
-        !["valid", "void"].includes(a.status)
-      )
-        throw Error("Invalid score record.");
+        throw Error(`${where}: detailId ${p.detailId} is not a detail here.`);
+      let live;
+      try {
+        live = profileFor(s.program, s.variant, p.weapon);
+      } catch (e) {
+        throw Error(`${where}: ${e.message}`);
+      }
+      const bad = profileProblem(p.profile, live);
+      if (bad) throw Error(`${where}: ${bad}.`);
+    });
+    s.attempts.forEach((a, i) => {
+      const where = at("attempts", i);
+      let live;
+      try {
+        live = profileFor(s.program, s.variant, a.weapon);
+      } catch (e) {
+        throw Error(`${where}: ${e.message}`);
+      }
+      const component = live.components.find((c) => c.id === a.stage);
+      if (!component)
+        throw Error(
+          `${where}: stage ${JSON.stringify(a.stage)} is not one of ${live.components.map((c) => c.id).join(", ")}.`,
+        );
+      if (!Number.isInteger(a.score) || a.score < 0)
+        throw Error(
+          `${where}: score must be a whole number of hits, not ${JSON.stringify(a.score)}.`,
+        );
+      if (a.score > component.max)
+        throw Error(
+          `${where}: score ${a.score} is above the ${component.label} maximum of ${component.max}.`,
+        );
+      if (!s.participants.some((p) => p.id === a.participantId))
+        throw Error(
+          `${where}: participantId ${a.participantId} is not on this roster.`,
+        );
+      if (!["valid", "void"].includes(a.status))
+        throw Error(
+          `${where}: status must be "valid" or "void", not ${JSON.stringify(a.status)}.`,
+        );
+      const bad = profileProblem(a.profile, live);
+      if (bad) throw Error(`${where}: ${bad}.`);
       if (a.breakdown?.length) {
         validateBreakdownLayout(a.breakdown, component.max);
-        if (
-          a.breakdown.some((p) => parseHits(p.hits, p.max).error) ||
-          a.breakdown.reduce((n, p) => n + p.hits, 0) !== a.rawHits
-        )
-          throw Error("Invalid sub-stage score record.");
+        const wrong = a.breakdown.find((x) => parseHits(x.hits, x.max).error);
+        if (wrong)
+          throw Error(
+            `${where}: sub-stage ${JSON.stringify(wrong.label)} has ${JSON.stringify(wrong.hits)}, which must be 0–${wrong.max}.`,
+          );
+        const sum = a.breakdown.reduce((n, x) => n + x.hits, 0);
+        if (sum !== a.rawHits)
+          throw Error(
+            `${where}: sub-stage scores add up to ${sum} but rawHits is ${JSON.stringify(a.rawHits)}.`,
+          );
       }
       if (
         a.detailAttemptId &&
@@ -2839,31 +2927,57 @@ export function validateStore(store) {
             d.roster.some((p) => p.id === a.participantId),
         )
       )
-        throw Error("Score has no matching detail attempt.");
-    }
-    for (const d of s.shared) {
-      if (
-        !Array.isArray(d.roster) ||
-        !d.roster.length ||
-        d.divisor !== d.roster.length ||
-        !Number.isInteger(d.aggregateHits) ||
-        d.aggregateHits < 0 ||
-        d.score !== Math.floor(d.aggregateHits / d.divisor)
-      )
-        throw Error("Invalid detail score.");
-      unique(d.roster, "detail roster");
-      const max = d.roster.reduce(
-        (n, p) =>
-          n +
-          profileFor(s.program, s.variant, p.weapon).components.find(
-            (c) => c.id === d.stage,
-          ).max,
-        0,
-      );
-      if (d.aggregateHits > max) throw Error("Detail score exceeds maximum.");
-    }
-  }
+        throw Error(
+          `${where}: detailAttemptId ${a.detailAttemptId} has no detail score listing this firer.`,
+        );
+    });
+    s.shared.forEach((d, i) => {
+      const where = at("shared", i);
+      if (!Array.isArray(d.roster) || !d.roster.length)
+        throw Error(`${where}: roster must list the firers in the detail.`);
+      unique(where, d.roster, "detail roster");
+      if (d.divisor !== d.roster.length)
+        throw Error(
+          `${where}: divisor is ${JSON.stringify(d.divisor)} but the roster holds ${d.roster.length} firers.`,
+        );
+      if (!Number.isInteger(d.aggregateHits) || d.aggregateHits < 0)
+        throw Error(
+          `${where}: aggregateHits must be a whole number, not ${JSON.stringify(d.aggregateHits)}.`,
+        );
+      const expected = Math.floor(d.aggregateHits / d.divisor);
+      if (d.score !== expected)
+        throw Error(
+          `${where}: score is ${JSON.stringify(d.score)} but ${d.aggregateHits} over ${d.divisor} firers is ${expected}.`,
+        );
+      let max = 0;
+      for (const m of d.roster) {
+        let live;
+        try {
+          live = profileFor(s.program, s.variant, m.weapon);
+        } catch (e) {
+          throw Error(`${where}: ${e.message}`);
+        }
+        const component = live.components.find((c) => c.id === d.stage);
+        if (!component)
+          throw Error(
+            `${where}: stage ${JSON.stringify(d.stage)} is not a stage of ${typeLabel(s.program, s.variant)}.`,
+          );
+        max += component.max;
+      }
+      if (d.aggregateHits > max)
+        throw Error(
+          `${where}: aggregateHits ${d.aggregateHits} is above the ${max} its ${d.divisor} firers could score.`,
+        );
+    });
+  });
   if (store.active !== null && !store.shoots.some((s) => s.id === store.active))
     store.active = null;
+  // Thresholds move when a transcription is corrected. What a firer hit never
+  // changes, but what it has to reach does, so each participant carries the
+  // current standard rather than the one in force when they were added. Every
+  // attempt keeps its own snapshot as the record of what it was fired to.
+  for (const s of store.shoots)
+    for (const p of s.participants)
+      p.profile = profileFor(s.program, s.variant, p.weapon);
   return store;
 }

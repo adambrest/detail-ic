@@ -23,6 +23,8 @@ P = pass minimum, M = marksman minimum, both whole hits against the scored total
 
 At or above M is Marksman, at or above P is Pass, below P is Fail. A total is graded only once every stage has a score; no stage carries its own pass mark.
 
+Thresholds are read from the current standard. If one is corrected, results and advice follow the corrected figure straight away — including for a shoot already under way. What a firer hit is a fact and never moves, so their scores stand and scores taken after the correction count normally; only the number they have to reach changes.
+
 Rifles share an option only when their requirement is identical — the SAR21 SS keeps its own in ATP (M) because it passes at 32. The LMG is offered in ATP and Combat Shoot on its own standard, and not in BTP or APS, whose tables carry no LMG standard.
 
 ## Stages and firing sequences
@@ -93,7 +95,7 @@ A name can be corrected at any time, with a reason, and replaces the old one whe
 
 Every attempt is kept — the stage, attempt number, rifle, hits or detail total with its firer count, who else was in the detail, and the confirmation time. Scores confirmed together share one timestamp.
 
-Editing a score records a replacement and keeps the original, marked as edited. Voiding one keeps it with its reason. A voided score can be put back, with a reason of its own; one that a live edit has replaced cannot, since the replacement holds its place until it is voided in turn. Grades already recorded are never changed by later settings.
+Editing a score records a replacement and keeps the original, marked as edited. Voiding one keeps it with its reason. A voided score can be put back, with a reason of its own; one that a live edit has replaced cannot, since the replacement holds its place until it is voided in turn. A shoot's own settings never change a grade already recorded.
 
 ## Poor and strong shooters
 
@@ -111,4 +113,8 @@ Only one stage is open for entry at a time; unlocking another locks the previous
 
 Repeated roster names block scoring and are highlighted; they are matched past case, spacing and full-width characters, and are never merged automatically.
 
+A rifle may be changed freely until a score has been fired on it, and again once every score fired on it has been voided. A voided score stays in History and counts for nothing.
+
 Backups are schema 4; older formats are rejected rather than migrated. A shoot is replaced only when the incoming copy contains every local audit event and attempt plus newer events, so divergent copies keep the local shoot and new shoot IDs import independently. Wall-clock time is never used to decide.
+
+A backup that will not load names the record and the values that disagree — the path into the JSON and the two numbers — so it can be corrected by hand. A backup carries what was hit, never what it takes to pass: thresholds always come from the app, so editing them in a file changes nothing.

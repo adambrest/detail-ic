@@ -217,7 +217,97 @@ test("V2 rejects old formats and invalid imported scores", () => {
   s.settings.requireBreakdown = false;
   score(s, p, "B", 7);
   s.attempts[0].score = 99;
-  assert.throws(() => c.validateStore(store), /Invalid score/);
+  assert.throws(
+    () => c.validateStore(store),
+    /attempts\[0\]: score 99 is above the Stage B maximum of 8/,
+  );
+});
+// A correction to the thresholds is a correction to what a firer must reach.
+// It must not disturb a shoot already under way: the scores stand, and scores
+// taken after it stand too.
+test("A thresholds correction leaves a shoot under way intact", () => {
+  const { s, p } = setup("ATP_M");
+  s.settings.requireBreakdown = false;
+  score(s, p, "A", 20);
+  // The shoot began before the correction; the participant keeps that snapshot.
+  s.participants[0].profile.version = "2026-09-20.1";
+  assert.equal(
+    c.best(s, s.participants[0], "A"),
+    20,
+    "the earned score stands",
+  );
+  score(s, s.participants[0], "A", 24);
+  assert.equal(c.best(s, s.participants[0], "A"), 24, "and a new one counts");
+  assert.equal(c.scoreHistory(s, s.participants[0], "A").length, 2);
+});
+// Grades are read from the current standard, so editing the thresholds inside a
+// backup cannot promote anyone.
+test("A backup cannot carry its own thresholds", () => {
+  const { store, s, p } = setup("ATP_M");
+  s.settings.requireBreakdown = false;
+  for (const [stage, hits] of [
+    ["A", 2],
+    ["B", 1],
+    ["C", 1],
+  ])
+    score(s, p, stage, hits);
+  assert.equal(c.result(s, s.participants[0]).status, "Fail");
+  const doctored = structuredClone(store);
+  for (const sh of doctored.shoots) {
+    for (const q of sh.participants) {
+      q.profile.pass = 0;
+      q.profile.marksman = 0;
+    }
+    sh.audit.push({ id: "pad", at: c.now(), action: "pad" });
+  }
+  const fresh = c.newStore();
+  c.importBackup(fresh, doctored);
+  const sh = fresh.shoots[0];
+  assert.equal(c.result(sh, sh.participants[0]).status, "Fail");
+  assert.equal(
+    sh.participants[0].profile.pass,
+    24,
+    "the real threshold is used",
+  );
+});
+// A backup that will not load has to say what to change, naming the path into
+// the JSON and the values that disagree.
+test("Validation errors name the record and the numbers that disagree", () => {
+  const { store, s, p } = setup("ATP_M");
+  s.settings.requireBreakdown = false;
+  score(s, p, "A", 10);
+  const broken = [
+    [
+      (d) => (d.shoots[0].participants[0].profile.pass = 99),
+      /profile\.pass \(99\) is above profile\.marksman \(39\)/,
+    ],
+    [
+      (d) => (d.shoots[0].participants[0].profile.components[0].max = 5),
+      /profile\.components add up to 29 but profile\.total is 48/,
+    ],
+    [
+      (d) => (d.shoots[0].attempts[0].stage = "Z"),
+      /stage "Z" is not one of A, B, C/,
+    ],
+    [
+      (d) => (d.shoots[0].attempts[0].score = 1.5),
+      /score must be a whole number of hits, not 1\.5/,
+    ],
+    [
+      (d) => (d.shoots[0].attempts[0].status = "ok"),
+      /status must be "valid" or "void", not "ok"/,
+    ],
+    [(d) => (d.shoots[0].program = "XYZ"), /program "XYZ" is not one of/],
+    [
+      (d) => d.shoots[0].attempts.push({ ...d.shoots[0].attempts[0] }),
+      /attempt id .* appears twice/,
+    ],
+  ];
+  for (const [mutate, expected] of broken) {
+    const copy = structuredClone(store);
+    mutate(copy);
+    assert.throws(() => c.validateStore(copy), expected);
+  }
 });
 // The withdrawn light support weapon must not appear as a rifle option, nor
 // anywhere in the shipped source, not even as an unsupported or legacy mention.
