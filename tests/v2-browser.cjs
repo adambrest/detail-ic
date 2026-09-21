@@ -85,7 +85,7 @@ const data = (p) => p.evaluate((k) => JSON.parse(localStorage.getItem(k)), key);
       await page.locator("[data-confirm-all]").click();
       await tab(page, "final");
       assert.equal(await page.locator("tbody tr").count(), 2);
-      // Sub-stage figures sit beside each stage score as quiet grey text.
+      // Sub-stage figures sit beside each stage score as quiet gray text.
       assert.equal(await page.locator(".sub-parts").count(), 3);
       assert.match(
         await page.locator(".sub-parts").first().innerText(),
@@ -222,7 +222,7 @@ const data = (p) => p.evaluate((k) => JSON.parse(localStorage.getItem(k)), key);
       assert.deepEqual(credited, { raw: 12, score: 14, total: 57 });
 
       // A locked stage is readable but nothing on it can be acted on, and the
-      // summary says how urgent it is by colour rather than by a label.
+      // summary says how urgent it is by color rather than by a label.
       await page.evaluate(async (k) => {
         const c = await import("./core.js"),
           store = c.newStore();
@@ -243,7 +243,7 @@ const data = (p) => p.evaluate((k) => JSON.parse(localStorage.getItem(k)), key);
       assert.equal(
         (await page.locator(".summary").innerText()).includes("to review"),
         false,
-        "the summary labels urgency with colour, not a count",
+        "the summary labels urgency with color, not a count",
       );
       // Unlocking B locks A; A's redetail controls must all go dead.
       await tab(page, "stage:B");

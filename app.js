@@ -190,7 +190,7 @@ function later(fn) {
   else fn();
 }
 document.addEventListener("pointerdown", () => (pointerDown = true), true);
-// A touch that turns into a scroll is cancelled and never sends pointerup, and
+// A touch that turns into a scroll is canceled and never sends pointerup, and
 // a press that ends off the window may not either. Without these the waiting
 // redraw would never run and the page would stop responding to taps.
 function released() {
@@ -951,7 +951,7 @@ function queuePanel(c, stage, q) {
 // What the operator should know before choosing who fires next.
 // The summary itself is always on show; only the groups inside it fold away.
 // Nothing announces that all is well: with nothing to act on it falls back to
-// the overview alone, and where there is, the colour of the group says so.
+// the overview alone, and where there is, the color of the group says so.
 function summaryPanel(c, stage = null) {
   const all = insights(c, stage),
     live = all.filter((x) => x.level !== "info"),

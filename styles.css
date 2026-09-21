@@ -1248,7 +1248,7 @@ details.event > summary .event-head {
 .insight-info strong {
   color: var(--accent);
 }
-/* The summary says how urgent it is by colour, not by a label. A critical
+/* The summary says how urgent it is by color, not by a label. A critical
    group tints the whole panel; a caution marks only its own edge. */
 .summary-bad {
   border-color: var(--danger);

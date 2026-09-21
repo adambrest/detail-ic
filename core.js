@@ -2746,7 +2746,7 @@ export function exportCsv(s) {
       s.settings.weapon,
     ).components,
     cs = isCS(s),
-    // A sub-score gets its own column, so the file can be totalled and sorted
+    // A sub-score gets its own column, so the file can be totaled and sorted
     // like any other sheet rather than parsed out of one crowded cell. The
     // shoot's own rifle sets the shape; a rifle with no layout leaves blanks.
     sections = components

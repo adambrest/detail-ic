@@ -706,7 +706,7 @@ test("Skipped entries wait below everyone, even later redetails", () => {
   // Person 1 falls out.
   setSkipped(s, "A", `person:${people[0].id}`, true);
   assert.deepEqual(order(), ["Person 2", "Person 3", "Person 1 (skipped)"]);
-  // A redetail sent afterwards still goes above the skipped firer.
+  // A redetail sent afterward still goes above the skipped firer.
   dispatch(s, "A", [`person:${people[3].id}`]);
   assert.deepEqual(order(), [
     "Person 2",

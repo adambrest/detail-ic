@@ -13,7 +13,7 @@ Create a shoot, confirm the roster, then enter scores as they come in. Combat Sh
 - **History** keeps every attempt, correction and void, searchable by name, detail or score (`7/8`). A detail score is corrected as a whole.
 - **Final scores** grade once every stage has a score. Done shooting closes the shoot and is reversible.
 
-Warnings say how urgent something is by colour, and name the firers behind the count.
+Warnings say how urgent something is by color, and name the firers behind the count.
 
 ## Offline and backups
 
