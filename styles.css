@@ -267,11 +267,18 @@ header h1 .logo {
   background: var(--panel2);
   color: var(--text);
 }
+/* Square, and exactly as tall as the text button beside it. */
 .feedback.icon {
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 7px;
+  padding: 0;
+  width: calc(1em * 1.35 + 18px);
+  height: calc(1em * 1.35 + 18px);
+}
+.feedback.icon svg {
+  display: block;
 }
 .required {
   font-size: 12px;
