@@ -267,6 +267,12 @@ header h1 .logo {
   background: var(--panel2);
   color: var(--text);
 }
+.feedback.icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px;
+}
 .required {
   font-size: 12px;
   font-weight: 650;
