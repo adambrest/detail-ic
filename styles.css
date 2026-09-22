@@ -44,12 +44,16 @@ details[open] > summary::after,
   content: "▾";
 }
 
-/* Always leave room for the scrollbar, so opening a section cannot shove the
-   whole page sideways. */
-html {
-  scrollbar-gutter: stable;
+/* As in the converter, the header stays put and only the page below it
+   scrolls, so the header's line runs the full width. The scroller always leaves
+   room for its scrollbar, so opening a section cannot shove the page sideways. */
+html,
+body {
+  height: 100%;
 }
 body {
+  display: flex;
+  flex-direction: column;
   margin: 0;
   background: var(--bg);
   color: var(--text);
@@ -429,6 +433,13 @@ td.rifle,
 .manual-row input[type="number"] {
   width: 64px;
 }
+#scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  container-type: size;
+}
 main {
   max-width: 1120px;
   margin: 0 auto;
@@ -619,7 +630,7 @@ td {
   border-top: 2px solid var(--accent);
   position: sticky;
   top: 12px;
-  max-height: calc(100vh - 24px);
+  max-height: calc(100cqh - 24px);
   display: flex;
   flex-direction: column;
 }

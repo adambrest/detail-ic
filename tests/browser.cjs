@@ -790,7 +790,9 @@ async function addNames(page, names) {
     await page.screenshot({ path: `tests/${name}-mobile.png`, fullPage: true });
     assert.equal(
       await page.evaluate(
-        () => document.documentElement.scrollWidth > innerWidth,
+        () =>
+          document.documentElement.scrollWidth > innerWidth ||
+          scroll.scrollWidth > scroll.clientWidth,
       ),
       false,
     );
